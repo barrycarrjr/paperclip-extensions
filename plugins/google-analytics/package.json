@@ -1,0 +1,31 @@
+{
+  "name": "paperclip-plugin-google-analytics",
+  "version": "0.1.0",
+  "description": "Paperclip plugin exposing GA4 + Google Search Console as agent tools. Service-account auth via the encrypted secrets store.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0",
+    "google-auth-library": "^9.14.0",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr"
+}

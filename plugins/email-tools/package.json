@@ -1,0 +1,34 @@
+{
+  "name": "paperclip-plugin-email-tools",
+  "version": "0.2.0",
+  "description": "Paperclip plugin that exposes email_send as an agent tool. Multi-mailbox SMTP via nodemailer; smart provider defaults (Gmail, O365, Rackspace).",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0",
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "@types/nodemailer": "^6.4.17",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr",
+  "contributors": [
+    "Tony Allard"
+  ]
+}

@@ -1,0 +1,28 @@
+# Per-machine / per-developer overrides
+.env
+.env.local
+.env.*
+*.local
+
+# Credential / key material — should never be tracked
+*.pem
+*.key
+credentials.json
+service-account*.json
+secrets/
+.secrets/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.iml
+
+# Build artifacts (skills shouldn't have these but just in case)
+node_modules/
+dist/
+build/

@@ -1,0 +1,32 @@
+{
+  "name": "paperclip-plugin-social-poster",
+  "version": "0.1.0",
+  "description": "Paperclip plugin that posts to Facebook Pages, Instagram Business, and X (Twitter) via their public APIs. Encrypted credentials, brand-variant guardrails, optional scheduling.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr",
+  "contributors": [
+    "Tony Allard"
+  ]
+}
