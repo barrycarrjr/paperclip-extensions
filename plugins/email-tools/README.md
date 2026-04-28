@@ -9,12 +9,20 @@ with smart provider defaults (Gmail, Office365, Rackspace, Fastmail, etc.).
 cd %USERPROFILE%\paperclip-extensions\plugins\email-tools
 pnpm install
 pnpm build
-npx paperclipai plugin install --local %USERPROFILE%\paperclip-extensions\plugins\email-tools
+
+# Then from your paperclip checkout:
+cd %USERPROFILE%\paperclip
+pnpm --filter paperclipai exec tsx src/index.ts plugin install --local %USERPROFILE%\paperclip-extensions\plugins\email-tools
 ```
 
 The plugin worker reloads automatically when the install finishes (and
 again whenever its instance config is saved). No manual paperclip restart
 needed.
+
+> Don't use `npx paperclipai` for any of the CLI commands — that fetches
+> the published `paperclipai` package from npm, which won't have your
+> fork's changes. Always run the CLI through pnpm from the paperclip
+> workspace.
 
 ## Configure (v0.2.0+)
 

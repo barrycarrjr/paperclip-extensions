@@ -50,11 +50,18 @@ paperclip-extensions/
 ```bash
 cd <plugin-folder>
 pnpm install && pnpm build
-npx paperclipai plugin install --local <plugin-folder>
+
+# Then from inside your paperclip checkout:
+cd /path/to/paperclip
+pnpm --filter paperclipai exec tsx src/index.ts plugin install --local <plugin-folder>
 ```
 
 The plugin worker reloads automatically; no manual paperclip restart
 needed.
+
+> Don't use `npx paperclipai` — that fetches the published `paperclipai`
+> package from npm, which won't have your fork's changes. Always run the
+> CLI through pnpm from the paperclip workspace.
 
 ## Components currently here
 
