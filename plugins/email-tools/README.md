@@ -121,7 +121,7 @@ POST /api/plugins/tools/execute
   "tool": "email-tools.email_send",
   "params": {
     "mailbox": "personal",
-    "to": "barrycarrjr@gmail.com",
+    "to": "you@example.com",
     "subject": "Hello",
     "body": "Plain-text body."
   },

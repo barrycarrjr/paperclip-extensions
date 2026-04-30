@@ -51,7 +51,7 @@ use it; `["*"]` for portfolio-wide; empty = unusable).
 |---|---|
 | Display name | e.g. "Brand A FB" |
 | Identifier | e.g. `acme` — short stable ID agents pass as the `page` parameter |
-| Allowed companies | e.g. `["m3-media-uuid"]` |
+| Allowed companies | e.g. `["company-uuid"]` |
 | Page ID | Numeric Page ID — Page Settings → About |
 | Page Access Token | Paste the secret UUID from step 2 |
 | Brand variant | `standard` (default) or `kids` (rejects adult content patterns) |
