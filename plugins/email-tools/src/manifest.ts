@@ -50,7 +50,7 @@ const manifest: PaperclipPluginManifestV1 = {
               type: "string",
               title: "Identifier",
               description:
-                "Short stable ID agents pass when calling this mailbox (e.g. 'personal', 'acme'). Lowercase, no spaces. Once skills or heartbeats reference it, don't change it — that's why it's separate from Display name. Must be unique across mailboxes.",
+                "Short stable ID agents pass when calling this mailbox (e.g. 'personal', 'sales'). Lowercase, no spaces. Once skills or heartbeats reference it, don't change it — that's why it's separate from Display name. Must be unique across mailboxes.",
             },
             allowedCompanies: {
               type: "array",
