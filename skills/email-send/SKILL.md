@@ -69,7 +69,7 @@ Available parameters (all under `parameters`):
 
 | Param | Type | Required | Notes |
 |---|---|---|---|
-| `mailbox` | string | yes | Mailbox key (e.g., `personal`, or an entity-specific key configured by the operator) |
+| `mailbox` | string | yes | Mailbox identifier (e.g., `personal`, or an entity-specific identifier configured by the operator) |
 | `to` | string \| string[] | yes | Recipient address(es). RFC 5322 names allowed |
 | `cc` | string \| string[] | no | |
 | `bcc` | string \| string[] | no | |
@@ -80,13 +80,10 @@ Available parameters (all under `parameters`):
 | `references` | string[] | no | Older Message-IDs in the thread |
 | `reply_to` | string | no | Reply-To header override |
 
-To discover what mailbox keys are valid, look at the operator's
+To discover what mailbox identifiers are valid, look at the operator's
 `email-tools` plugin config (UI: `/instance/settings/plugins/email-tools`,
 or `GET /api/plugins/email-tools/config` → `configJson.mailboxes[].key`).
-Older mailboxes may still live in
-`%USERPROFILE%\.paperclip\instances\default\email-tools.env` under
-`IMAP_MAILBOXES=`. Both sources work — config wins when a key appears in
-both. Or just try `personal` for personal mail.
+Or just try `personal` for personal mail.
 
 **Voice rules:**
 - Personal emails: warm, casual, signed with the operator's first name or initial.
@@ -159,24 +156,24 @@ This is the audit trail for "did the email actually send."
 - **Plugin not installed / not ready** → the API call returns 404 or 503.
   Report and ask the board to verify `email-tools` plugin status.
 - **Sending disabled** → `{"error": "Sending is disabled. Set 'allowSend' true on the email-tools plugin settings page..."}`.
-  Operator flips `allowSend` on the plugin config page (or sets `IMAP_ALLOW_SEND=true`
-  in the env file as a fallback).
-- **Invalid mailbox key** → `{"error": "Mailbox \"X\" not configured..."}`.
+  Operator flips `allowSend` on the plugin config page.
+- **Invalid mailbox identifier** → `{"error": "Mailbox \"X\" not configured..."}`.
   Pick a valid mailbox or ask the board.
 - **SMTP errors (auth, connection, send refused)** → `{"error": "[EAUTH] Invalid login..."}`.
   Report with exact error in a comment. Do NOT retry — auth failures usually
   mean the password rotated. Operator rotates the secret in
-  `<COMPANY>/company/settings/secrets` (or fixes `.env` for unmigrated mailboxes).
+  `<COMPANY>/company/settings/secrets`.
 
 ## Pre-requisites for this skill to work
 
 The `email-tools` plugin must be installed and `ready` in paperclip
 (check via `/instance/settings/plugins`), and at least one mailbox must
-be configured. As of v0.2.0 there are two configuration paths:
+be configured. As of v0.3.0, all configuration lives in plugin instance
+config at `/instance/settings/plugins/email-tools`:
 
-**Primary (recommended):** plugin instance config at
-`/instance/settings/plugins/email-tools`. For each mailbox:
-- `key` (e.g. `personal`)
+- `name` — display label (free-form)
+- `key` — short stable identifier agents pass (e.g. `personal`)
+- `allowedCompanies` — list of company UUIDs allowed to use this mailbox
 - `imapHost`, `user`
 - `pass` — the UUID of a secret created in the company's secrets page
   (`<COMPANY-PREFIX>/company/settings/secrets`)
@@ -184,10 +181,4 @@ be configured. As of v0.2.0 there are two configuration paths:
 
 Master toggle: `allowSend = true`.
 
-**Fallback (legacy / unmigrated mailboxes):**
-`%USERPROFILE%\.paperclip\instances\default\email-tools.env` with
-`IMAP_ALLOW_SEND=true` plus per-mailbox `IMAP_<KEY>_HOST/USER/PASS` blocks.
-
-The worker prefers the plugin config; it falls back to the env file only
-for mailboxes that aren't in config. See the plugin's README for the full
-schema and the env-file format.
+See the plugin's README for the full schema.
