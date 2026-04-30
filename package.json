@@ -1,0 +1,15 @@
+{
+  "name": "paperclip-extensions",
+  "private": true,
+  "type": "module",
+  "description": "First-party Paperclip plugins. Each plugin under plugins/ is its own self-contained pnpm package; this root package only exists to host the multi-plugin pack and release-prep scripts.",
+  "scripts": {
+    "build:all": "node scripts/build-all.mjs",
+    "pack:all": "node scripts/pack-all.mjs"
+  },
+  "devDependencies": {
+    "jszip": "^3.10.1"
+  },
+  "license": "MIT",
+  "author": "Barry Carr"
+}

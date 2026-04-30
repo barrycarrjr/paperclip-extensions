@@ -47,6 +47,31 @@ paperclip-extensions/
 
 ## Installing a plugin in paperclip
 
+Three ways, easiest first:
+
+### From the Plugin Library (zero hoops)
+
+Open paperclip → Plugin Manager. The **Plugin Library** section at the top
+lists every plugin in this repo's latest GitHub release. Click **Install**
+and you're done. No clone, no node, no build step.
+
+(Requires the paperclip server to have network access to GitHub. The
+library defaults to `barrycarrjr/paperclip-extensions`; override per-instance
+with the `PAPERCLIP_PLUGIN_LIBRARY_REPO` environment variable.)
+
+### From a `.pcplugin` file
+
+Hand someone a single `<plugin-id>-<version>.pcplugin` archive. They open
+Plugin Manager → **Install Plugin** → **Upload .pcplugin**, drop the file,
+done. Build one yourself with:
+
+```bash
+paperclipai plugin pack <plugin-folder>
+# → <plugin-id>-<version>.pcplugin in the current directory
+```
+
+### From a local path (dev workflow)
+
 ```bash
 cd <plugin-folder>
 pnpm install && pnpm build
@@ -57,11 +82,32 @@ pnpm --filter paperclipai exec tsx src/index.ts plugin install --local <plugin-f
 ```
 
 The plugin worker reloads automatically; no manual paperclip restart
-needed.
+needed. Best for active development — the source folder stays linked so
+clicking **↻ Reinstall** in the UI re-reads after each `pnpm build`.
 
 > Don't use `npx paperclipai` — that fetches the published `paperclipai`
 > package from npm, which won't have your fork's changes. Always run the
 > CLI through pnpm from the paperclip workspace.
+
+## Releasing plugins
+
+`.github/workflows/release.yml` watches for tag pushes (`v*`). When you tag:
+
+```bash
+# Bump per-plugin versions in plugins/<id>/src/manifest.ts (and package.json)
+# as needed, commit, then:
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+CI:
+1. Builds every plugin under `plugins/` (esbuild)
+2. Packs each into a `.pcplugin` zip
+3. Generates an `index.json` listing all packed plugins with their metadata
+4. Creates a GitHub release with the `.pcplugin` files + `index.json` attached
+
+The Plugin Library UI in any paperclip instance pointed at this repo
+auto-picks up the new release on next page load (cached for 60s server-side).
 
 ## Components currently here
 

@@ -12,7 +12,7 @@
     "worker": "./dist/worker.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node esbuild.config.mjs",
     "clean": "rimraf dist",
     "typecheck": "tsc --noEmit"
   },
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
+    "esbuild": "^0.27.3",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.3"
   },

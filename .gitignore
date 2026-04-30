@@ -26,6 +26,7 @@ Thumbs.db
 node_modules/
 dist/
 build/
+dist-pcplugins/
 
 # Local smoke-test scripts (not part of the published plugins)
 .smoke-tests/

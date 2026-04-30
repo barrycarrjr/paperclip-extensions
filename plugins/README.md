@@ -184,22 +184,64 @@ Full text in `plugin-plans/README.md`. The bare minimum:
 plugins/<plugin-id>/
   package.json          ← name: paperclip-plugin-<id>, paperclipPlugin: { manifest, worker }
   tsconfig.json         ← copy from email-tools verbatim
+  esbuild.config.mjs    ← copy from email-tools verbatim (uses createPluginBundlerPresets)
   README.md             ← setup walkthrough, tool reference, error codes
   src/
     index.ts            ← re-exports manifest + worker (copy from email-tools)
     manifest.ts         ← PaperclipPluginManifestV1 with instanceConfigSchema + tool decls
     companyAccess.ts    ← copy verbatim from any reference plugin
     worker.ts           ← definePlugin({ setup }) + runWorker(plugin, import.meta.url)
-  dist/                 ← built artifacts (gitignored at repo root)
+  dist/                 ← built artifacts (gitignored at repo root). Worker is
+                          a single bundled file with all runtime deps inlined;
+                          no node_modules needed at runtime.
 ```
 
-Build with `pnpm build`. Install locally with:
+### Build
+
+`pnpm build` runs esbuild via `esbuild.config.mjs`. Two outputs:
+
+- `dist/manifest.js` — transpiled (no bundling). Type-only imports erased.
+- `dist/worker.js` — bundled with `bundle: true`, plus a small `createRequire`
+  banner that lets bundled CJS deps (nodemailer, googleapis, etc.) work
+  inside ESM. Don't strip this banner.
+
+The bundle pulls in all `dependencies`. After build the source folder's
+`node_modules/` is no longer needed at runtime — paperclip's install path
+copies only `dist/` and a sanitized `package.json`.
+
+### Install
+
+Three install paths, all of which converge on the same managed plugin
+directory (`~/.paperclip/installed-plugins/<plugin-id>/`):
 
 ```bash
-pnpm --filter paperclipai exec tsx src/index.ts plugin install --local <absolute-path>
+# 1. From a local source folder (dev workflow — also remembers the source path
+#    so the Reinstall button can re-read after a rebuild)
+paperclipai plugin install --local <absolute-path>
+
+# 2. From a packed .pcplugin archive (single-file distribution)
+paperclipai plugin pack <plugin-folder>          # → <plugin-id>-<version>.pcplugin
+paperclipai plugin install --file <pcplugin>     # OR upload via the UI
+
+# 3. From the npm registry
+paperclipai plugin install paperclip-plugin-<id>
 ```
 
-(Run from inside the paperclip checkout, not from `paperclip-extensions/`.)
+After install:
+- Worker spawns from `~/.paperclip/installed-plugins/<plugin-id>/dist/worker.js`.
+- The original source folder can be moved or deleted; the installed plugin
+  keeps working.
+- For local installs only, the original source path is recorded as
+  `localSourcePath` so the Reinstall button (and `paperclipai plugin
+  reinstall`) can re-read freshly-rebuilt artifacts after `pnpm build`.
+
+### Distribute
+
+Hand someone a `.pcplugin` file. They:
+- Open `/instance/settings/plugins`, click **Install Plugin** → **Upload .pcplugin**, drop the file
+- Or run `paperclipai plugin install --file <path>` from their shell
+
+No source code, no node_modules, no clone-this-repo step.
 
 ---
 

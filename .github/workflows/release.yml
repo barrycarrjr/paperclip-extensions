@@ -1,0 +1,54 @@
+name: Release plugins
+
+# Tag the repo with `v<version>` (or any tag matching the pattern below) to
+# trigger a release. The workflow builds every plugin under `plugins/`, packs
+# each into a `<plugin-id>-<version>.pcplugin` archive, and attaches all
+# `.pcplugin` files as assets on a GitHub release.
+#
+# Operators can then install plugins from this release directly inside
+# paperclip via the Plugin Library panel — no clone, no npm, no build step on
+# their end.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install root deps (jszip for the pack script)
+        run: pnpm install
+
+      - name: Build every plugin
+        run: pnpm run build:all
+
+      - name: Pack every plugin into .pcplugin archives
+        run: pnpm run pack:all
+
+      - name: Upload .pcplugin + index.json to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-pcplugins/*.pcplugin
+            dist-pcplugins/index.json
+          generate_release_notes: true
+          fail_on_unmatched_files: true
