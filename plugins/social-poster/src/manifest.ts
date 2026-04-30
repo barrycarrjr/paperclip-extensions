@@ -10,7 +10,7 @@ const manifest: PaperclipPluginManifestV1 = {
   displayName: "Social Poster",
   description:
     "Posts to Facebook Pages, Instagram Business accounts, and X (Twitter) via their official APIs. Brand-variant aware; optional scheduling.",
-  author: "Barry Carr",
+  author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
     "agent.tools.register",

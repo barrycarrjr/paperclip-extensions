@@ -10,7 +10,7 @@ const manifest: PaperclipPluginManifestV1 = {
   displayName: "Google Analytics",
   description:
     "Read GA4 reports, GA4 realtime data, and Search Console search analytics. Service-account JSON is stored encrypted; one secret can be shared across many sites.",
-  author: "Barry Carr",
+  author: "Barry Carr & Tony Allard",
   categories: ["connector"],
   capabilities: [
     "agent.tools.register",
