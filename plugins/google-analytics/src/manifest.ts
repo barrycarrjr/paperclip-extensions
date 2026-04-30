@@ -32,7 +32,7 @@ const manifest: PaperclipPluginManifestV1 = {
           "Each site exposes a GA4 property and/or a Search Console property. The serviceAccountJson secret can be reused across sites that share a service account. Every site must list the company UUIDs allowed to read it under 'Allowed companies' — empty list = unusable (fail-safe default deny).",
         items: {
           type: "object",
-          required: ["key", "name", "serviceAccountJson", "allowedCompanies"],
+          required: ["key", "serviceAccountJson", "allowedCompanies"],
           properties: {
             name: {
               type: "string",

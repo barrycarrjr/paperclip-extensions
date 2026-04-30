@@ -22,7 +22,7 @@ order, before any plugin-specific fields:
 
 | Field | JSON property | Form title | Purpose |
 |---|---|---|---|
-| Display name | `name` | `Display name` | Human-readable label shown as the row heading in the settings form. Free-form. The user can rename it later without breaking anything. |
+| Display name | `name` | `Display name` | Human-readable label shown as the row heading in the settings form. Free-form. **Optional** — when empty the form falls back to `key`. The user can rename it later without breaking anything. |
 | Identifier | `key` | `Identifier` | Short stable ID agents pass when calling tools (e.g. `mailbox: "personal"`). Lowercase, no spaces, unique within the array. **Don't rename once skills reference it.** |
 | Allowed companies | `allowedCompanies` | `Allowed companies` | Array of Paperclip company UUIDs allowed to use this resource. The form renders this as a multi-select picker (one checkbox per company + a "Portfolio-wide" toggle) when items declare `format: "company-id"`. Stored as `["*"]` for portfolio-wide or specific UUIDs otherwise. Empty/missing = unusable (fail-safe deny). |
 | (rest of fields) | — | — | Plugin-specific (host, token, page ID, etc.). |
@@ -36,7 +36,7 @@ load-bearing. The form titles are what the user reads ("Display name",
 ```ts
 items: {
   type: "object",
-  required: ["name", "key", "allowedCompanies", /* + your required fields */],
+  required: ["key", "allowedCompanies", /* + your required fields */],
   properties: {
     name: {
       type: "string",

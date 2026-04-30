@@ -38,7 +38,7 @@ const manifest: PaperclipPluginManifestV1 = {
           "Each mailbox the plugin can send from. The 'Display name' is what humans see in this form; the 'Identifier' is the short stable ID agents pass as the mailbox parameter. Every mailbox must list the company UUIDs allowed to use it under 'Allowed companies' — leaving it empty makes the mailbox unusable (fail-safe default deny).",
         items: {
           type: "object",
-          required: ["key", "name", "imapHost", "user", "pass", "allowedCompanies"],
+          required: ["key", "imapHost", "user", "pass", "allowedCompanies"],
           properties: {
             name: {
               type: "string",

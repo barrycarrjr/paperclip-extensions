@@ -32,7 +32,7 @@ const manifest: PaperclipPluginManifestV1 = {
           "Each Facebook Page the plugin can post to. Page Access Tokens should be long-lived; rotate via the secret store. Every page must list the company UUIDs allowed to use it under 'Allowed companies' — empty list = unusable (fail-safe default deny).",
         items: {
           type: "object",
-          required: ["key", "name", "pageId", "accessToken", "allowedCompanies"],
+          required: ["key", "pageId", "accessToken", "allowedCompanies"],
           properties: {
             name: {
               type: "string",
@@ -84,7 +84,7 @@ const manifest: PaperclipPluginManifestV1 = {
           "Each Instagram Business account the plugin can post to. Requires a connected Facebook Page; the access token is the linked Page's token. Every account must list the company UUIDs allowed to use it.",
         items: {
           type: "object",
-          required: ["key", "name", "igUserId", "accessToken", "allowedCompanies"],
+          required: ["key", "igUserId", "accessToken", "allowedCompanies"],
           properties: {
             name: {
               type: "string",
@@ -134,7 +134,7 @@ const manifest: PaperclipPluginManifestV1 = {
           "Each X account the plugin can post to. Posting via X API v2 requires OAuth 1.0a User Context (all four credentials). Every account must list the company UUIDs allowed to use it.",
         items: {
           type: "object",
-          required: ["key", "name", "apiKey", "apiSecret", "accessToken", "accessTokenSecret", "allowedCompanies"],
+          required: ["key", "apiKey", "apiSecret", "accessToken", "accessTokenSecret", "allowedCompanies"],
           properties: {
             name: {
               type: "string",
