@@ -3,6 +3,18 @@
 Exposes `email_send` as an agent tool. Multi-mailbox SMTP via nodemailer
 with smart provider defaults (Gmail, Office365, Rackspace, Fastmail, etc.).
 
+## What's new in v0.3.0
+
+- **Per-mailbox company isolation.** Every mailbox now carries an
+  `allowedCompanies` list. Agents calling `email_send` from a company
+  not on the list get back `[ECOMPANY_NOT_ALLOWED]`.
+- **Display name per mailbox.** The settings form labels each row using
+  the new `name` field (e.g. "Personal Mailbox") instead of "Item 1".
+- **Env-file fallback removed.** Mailboxes can no longer be defined via
+  `%USERPROFILE%\.paperclip\instances\default\email-tools.env`. Every
+  mailbox must live in plugin config now (which is the only place that
+  can express `allowedCompanies`). See "Migrating from v0.2.0" below.
+
 ## Install
 
 ```bash
@@ -19,20 +31,15 @@ The plugin worker reloads automatically when the install finishes (and
 again whenever its instance config is saved). No manual paperclip restart
 needed.
 
-> Don't use `npx paperclipai` for any of the CLI commands — that fetches
-> the published `paperclipai` package from npm, which won't have your
-> fork's changes. Always run the CLI through pnpm from the paperclip
-> workspace.
+> Don't use `npx paperclipai` — that fetches the published package, which
+> won't have your fork's changes. Always run the CLI through pnpm from the
+> paperclip workspace.
 
-## Configure (v0.2.0+)
-
-As of v0.2.0 the canonical path is the encrypted secrets store + the
-plugin's instance config. The env file still works as a fallback for any
-mailbox you haven't migrated yet — see "Legacy env file" below.
-
-### 1. Store each mailbox password as a paperclip secret
+## Configure
 
 For each mailbox you want this plugin to send from:
+
+### 1. Store the password as a paperclip secret
 
 1. Open `<COMPANY-PREFIX>/company/settings/secrets` in the paperclip UI
    (any company is fine; secrets are looked up by UUID).
@@ -44,20 +51,24 @@ For each mailbox you want this plugin to send from:
 6. Copy the secret's UUID — visible in the secrets list, or via
    `GET /api/companies/<companyId>/secrets`.
 
-### 2. Bind mailboxes in the plugin config
+### 2. Bind the mailbox in the plugin config
 
-Open `/instance/settings/plugins/email-tools`. For each mailbox add an
-entry:
+Open `/instance/settings/plugins/email-tools`. Click **+ Add item** under
+Mailboxes. Fill in:
 
-| Field | Value |
-|---|---|
-| `key` | Identifier agents use (e.g. `personal`, `work`) |
-| `imapHost` | e.g. `imap.gmail.com` (SMTP host auto-derives unless overridden) |
-| `user` | The full email address |
-| `pass` | Paste the secret UUID from step 1 |
-| `smtpHost` / `smtpPort` / `smtpSecure` / `smtpUser` / `smtpFrom` | Only set if the provider deviates from defaults |
+| Field | Example | Notes |
+|---|---|---|
+| `Display name` | `Personal Mailbox` | Free-form label shown on this settings page. You can rename it later without breaking anything. |
+| `Identifier` | `personal` | Short stable ID agents pass as the `mailbox` parameter. Lowercase, no spaces. **Don't change after skills start using it.** |
+| `Allowed companies` | `["company-uuid-1"]` or `["*"]` | Which companies can use this mailbox. Empty = unusable. |
+| `IMAP host` | `imap.gmail.com` | SMTP host auto-derives unless overridden |
+| `Username (email address)` | `you@gmail.com` | The full email address |
+| `Password` | (paste secret UUID from step 1) | Stored encrypted via the secrets store |
+| `SMTP host` / `SMTP port` / `TLS on connect` / `SMTP username` / `From address` | (optional) | Only set if the provider deviates from defaults |
 
-Then flip the master switch:
+Find company UUIDs via `GET /api/companies` or the company list URL.
+
+### 3. Flip the master switch
 
 | Field | Value |
 |---|---|
@@ -66,37 +77,32 @@ Then flip the master switch:
 Save. The worker auto-restarts and the new config takes effect on the
 next `email_send` call.
 
-### Legacy env file (fallback)
+## Migrating from v0.2.0
 
-`%USERPROFILE%\.paperclip\instances\default\email-tools.env` is still
-read for any mailbox NOT present in the plugin config. Format:
+If your v0.2.0 setup used the env file (`%USERPROFILE%\.paperclip\instances\default\email-tools.env`),
+you have to migrate to plugin config:
 
-```
-IMAP_ALLOW_SEND=true
-IMAP_MAILBOXES=personal,work
+1. For each mailbox in the env file:
+   - Create a secret in the paperclip secrets UI containing the value of
+     `IMAP_<KEY>_PASS`.
+   - On `/instance/settings/plugins/email-tools`, add a Mailbox row with
+     the host/user from the env file, and the new secret UUID as the password.
+   - Set Display name, Identifier, and Allowed companies per the table above.
+2. Delete the env file (it's no longer read).
+3. Save the plugin config and confirm the worker logs
+   `email-tools: ready. Mailboxes — ...` with no orphan warning.
 
-IMAP_PERSONAL_HOST=imap.gmail.com
-IMAP_PERSONAL_PORT=993
-IMAP_PERSONAL_USER=you@gmail.com
-IMAP_PERSONAL_PASS=<gmail app password>      # plaintext — migrate to a secret-ref when you can
-
-# Optional SMTP overrides — only needed when the provider deviates from defaults
-# IMAP_WORK_SMTP_HOST=smtp.office365.com
-# IMAP_WORK_SMTP_PORT=587
-# IMAP_WORK_SMTP_SECURE=false
-```
-
-If a mailbox key appears in BOTH the plugin config AND the env file, the
-plugin config wins. After editing the env file, restart paperclip for
-changes to take effect.
+The worker logs `email-tools: N mailbox(es) have no allowedCompanies and
+will reject every call. Backfill...` at startup if any mailbox is missing
+its company list — use that as your migration TODO list.
 
 ## Tool
 
-`email_send` registered with parameters:
+`email_send`:
 
 | Param | Type | Required | Notes |
 |---|---|---|---|
-| `mailbox` | string | yes | Mailbox `key` from the plugin config (or from env `IMAP_MAILBOXES` for legacy mailboxes) |
+| `mailbox` | string | yes | The mailbox Identifier from plugin config. Calling company must be in that mailbox's Allowed companies. |
 | `to` | string \| string[] | yes | RFC 5322 names allowed |
 | `cc` | string \| string[] | no | |
 | `bcc` | string \| string[] | no | |
@@ -107,7 +113,36 @@ changes to take effect.
 | `references` | string[] | no | Older Message-IDs in the thread |
 | `reply_to` | string | no | Reply-To header override |
 
-Returns Message-ID + SMTP response on success, or `error` string on failure.
+### Example invocation
+
+```http
+POST /api/plugins/tools/execute
+{
+  "tool": "email-tools.email_send",
+  "params": {
+    "mailbox": "personal",
+    "to": "barrycarrjr@gmail.com",
+    "subject": "Hello",
+    "body": "Plain-text body."
+  },
+  "runContext": {
+    "agentId": "...",
+    "runId": "...",
+    "companyId": "<must-be-in-mailbox-allowedCompanies>",
+    "projectId": "..."
+  }
+}
+```
+
+Returns Message-ID + SMTP response on success, or `error` on failure.
+
+## Error codes
+
+| Code | When |
+|---|---|
+| `[ECOMPANY_NOT_ALLOWED]` | Calling company isn't in the mailbox's `allowedCompanies`, or the list is empty. |
+| `[<SMTP_CODE>]` | Wrapped from nodemailer / SMTP server (e.g. `[EAUTH]`, `[ETIMEDOUT]`, `[ESOCKET]`). |
+| `[SMTP_ERROR]` | Generic fallback when nodemailer didn't supply a code. |
 
 ## Authors
 

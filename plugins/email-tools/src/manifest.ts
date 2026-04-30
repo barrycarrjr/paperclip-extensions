@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.2.0";
+const PLUGIN_VERSION = "0.3.0";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -35,16 +35,29 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "array",
         title: "Mailboxes",
         description:
-          "Each mailbox the plugin can send from. The 'key' is what agents pass as the mailbox parameter.",
+          "Each mailbox the plugin can send from. The 'Display name' is what humans see in this form; the 'Identifier' is the short stable ID agents pass as the mailbox parameter. Every mailbox must list the company UUIDs allowed to use it under 'Allowed companies' — leaving it empty makes the mailbox unusable (fail-safe default deny).",
         items: {
           type: "object",
-          required: ["key", "imapHost", "user", "pass"],
+          required: ["key", "name", "imapHost", "user", "pass", "allowedCompanies"],
           properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description:
+                "Human-readable label shown in this settings form (e.g. 'Personal Mailbox', 'Sales Inbox'). Free-form; you can rename it later without breaking anything.",
+            },
             key: {
               type: "string",
-              title: "Key",
+              title: "Identifier",
               description:
-                "Lowercase identifier agents use to address this mailbox (e.g. 'personal', 'acme'). Must be unique.",
+                "Short stable ID agents pass when calling this mailbox (e.g. 'personal', 'acme'). Lowercase, no spaces. Once skills or heartbeats reference it, don't change it — that's why it's separate from Display name. Must be unique across mailboxes.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description:
+                "Companies allowed to use this mailbox. Tick 'Portfolio-wide' to allow every company; otherwise tick the specific companies. Empty = unusable (fail-safe deny — useful for staged setup).",
             },
             imapHost: {
               type: "string",
@@ -107,7 +120,7 @@ const manifest: PaperclipPluginManifestV1 = {
           mailbox: {
             type: "string",
             description:
-              "Mailbox key (e.g. 'personal'). Must be configured on the email-tools plugin settings page.",
+              "Mailbox identifier (e.g. 'personal'). Must be configured on the email-tools plugin settings page.",
           },
           to: {
             description:

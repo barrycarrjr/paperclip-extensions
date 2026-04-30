@@ -3,30 +3,38 @@ import {
   runWorker,
   type PluginContext,
   type ToolResult,
+  type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
 import { createHmac, randomBytes } from "node:crypto";
+import { assertCompanyAccess } from "./companyAccess.js";
 
 interface FacebookPage {
+  name?: string;
   key?: string;
   pageId?: string;
   accessToken?: string;
   brandVariant?: "standard" | "kids";
+  allowedCompanies?: string[];
 }
 
 interface InstagramAccount {
+  name?: string;
   key?: string;
   igUserId?: string;
   accessToken?: string;
   brandVariant?: "standard" | "kids";
+  allowedCompanies?: string[];
 }
 
 interface XAccount {
+  name?: string;
   key?: string;
   apiKey?: string;
   apiSecret?: string;
   accessToken?: string;
   accessTokenSecret?: string;
   brandVariant?: "standard" | "kids";
+  allowedCompanies?: string[];
 }
 
 interface InstanceConfig {
@@ -59,6 +67,7 @@ function violatesKidsGuardrail(text: string): string | null {
 async function postFacebook(
   ctx: PluginContext,
   config: InstanceConfig,
+  runCtx: ToolRunContext,
   params: {
     page?: string;
     message?: string;
@@ -76,6 +85,19 @@ async function postFacebook(
       error: `Facebook page "${params.page}" not configured. Add it on the social-poster plugin settings page.`,
     };
   }
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "post_to_facebook",
+      resourceLabel: `social-poster Facebook page "${params.page}"`,
+      resourceKey: params.page,
+      allowedCompanies: cfg.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
   if (!cfg.pageId || !cfg.accessToken) {
     return { error: `Facebook page "${params.page}": pageId and accessToken are required.` };
   }
@@ -119,10 +141,14 @@ async function postFacebook(
       json && typeof json.error === "object"
         ? JSON.stringify(json.error)
         : `HTTP ${res.status}`;
-    return { error: `Facebook publish failed: ${errMsg}` };
+    return { error: `[EFACEBOOK_PUBLISH] ${errMsg}` };
   }
 
   const postId = (json.id as string | undefined) ?? "";
+  await ctx.telemetry.track("social-poster.post_to_facebook", {
+    page: cfg.pageId,
+    companyId: runCtx.companyId,
+  });
   return {
     content: `Posted to Facebook ${cfg.pageId}. Post ID ${postId}.`,
     data: {
@@ -138,6 +164,7 @@ async function postFacebook(
 async function postInstagram(
   ctx: PluginContext,
   config: InstanceConfig,
+  runCtx: ToolRunContext,
   params: { account?: string; image_url?: string; caption?: string },
 ): Promise<ToolResult> {
   if (!params.account) return { error: "account is required" };
@@ -146,10 +173,21 @@ async function postInstagram(
 
   const cfg = findByKey(config.instagramAccounts, params.account);
   if (!cfg) {
-    return {
-      error: `Instagram account "${params.account}" not configured.`,
-    };
+    return { error: `Instagram account "${params.account}" not configured.` };
   }
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "post_to_instagram",
+      resourceLabel: `social-poster Instagram account "${params.account}"`,
+      resourceKey: params.account,
+      allowedCompanies: cfg.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
   if (!cfg.igUserId || !cfg.accessToken) {
     return { error: `Instagram "${params.account}": igUserId and accessToken are required.` };
   }
@@ -160,7 +198,6 @@ async function postInstagram(
 
   const token = await ctx.secrets.resolve(cfg.accessToken);
 
-  // Step 1: create the media container
   const containerForm = new URLSearchParams();
   containerForm.set("image_url", params.image_url);
   containerForm.set("caption", params.caption);
@@ -176,7 +213,7 @@ async function postInstagram(
     | null;
   if (!containerRes.ok || !containerJson?.id) {
     return {
-      error: `Instagram media-container failed: ${
+      error: `[EINSTAGRAM_CONTAINER] ${
         containerJson && typeof containerJson.error === "object"
           ? JSON.stringify(containerJson.error)
           : `HTTP ${containerRes.status}`
@@ -185,7 +222,6 @@ async function postInstagram(
   }
   const containerId = String(containerJson.id);
 
-  // Step 2: publish the container
   const publishForm = new URLSearchParams();
   publishForm.set("creation_id", containerId);
   publishForm.set("access_token", token);
@@ -200,7 +236,7 @@ async function postInstagram(
     | null;
   if (!publishRes.ok || !publishJson?.id) {
     return {
-      error: `Instagram publish failed: ${
+      error: `[EINSTAGRAM_PUBLISH] ${
         publishJson && typeof publishJson.error === "object"
           ? JSON.stringify(publishJson.error)
           : `HTTP ${publishRes.status}`
@@ -209,13 +245,15 @@ async function postInstagram(
   }
   const mediaId = String(publishJson.id);
 
+  await ctx.telemetry.track("social-poster.post_to_instagram", {
+    account: cfg.igUserId,
+    companyId: runCtx.companyId,
+  });
   return {
     content: `Posted to Instagram ${cfg.igUserId}. Media ID ${mediaId}.`,
     data: { ok: true, platform: "instagram", account: cfg.igUserId, media_id: mediaId },
   };
 }
-
-// --- OAuth 1.0a signing for X --------------------------------------------
 
 function rfc3986(s: string): string {
   return encodeURIComponent(s)
@@ -282,6 +320,7 @@ function buildOAuth1AuthHeader(opts: {
 async function postX(
   ctx: PluginContext,
   config: InstanceConfig,
+  runCtx: ToolRunContext,
   params: { account?: string; text?: string; in_reply_to_tweet_id?: string },
 ): Promise<ToolResult> {
   if (!params.account) return { error: "account is required" };
@@ -294,6 +333,19 @@ async function postX(
   if (!cfg) {
     return { error: `X account "${params.account}" not configured.` };
   }
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "post_to_x",
+      resourceLabel: `social-poster X account "${params.account}"`,
+      resourceKey: params.account,
+      allowedCompanies: cfg.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
   if (!cfg.apiKey || !cfg.apiSecret || !cfg.accessToken || !cfg.accessTokenSecret) {
     return {
       error: `X account "${params.account}": all four credentials (apiKey, apiSecret, accessToken, accessTokenSecret) are required.`,
@@ -317,9 +369,6 @@ async function postX(
     jsonBody.reply = { in_reply_to_tweet_id: params.in_reply_to_tweet_id };
   }
 
-  // X v2 with JSON body: OAuth 1.0a base string excludes the JSON body
-  // (only oauth_* params + query string go into the signature). This matches
-  // X's documented behaviour for application/json POSTs.
   const authHeader = buildOAuth1AuthHeader({
     method: "POST",
     url,
@@ -341,16 +390,18 @@ async function postX(
 
   if (!res.ok || !json) {
     return {
-      error: `X publish failed: ${
-        json ? JSON.stringify(json) : `HTTP ${res.status}`
-      }`,
+      error: `[EX_PUBLISH] ${json ? JSON.stringify(json) : `HTTP ${res.status}`}`,
     };
   }
   const data = json.data as { id?: string; text?: string } | undefined;
   if (!data?.id) {
-    return { error: `X publish: unexpected response shape: ${JSON.stringify(json)}` };
+    return { error: `[EX_PUBLISH] unexpected response shape: ${JSON.stringify(json)}` };
   }
 
+  await ctx.telemetry.track("social-poster.post_to_x", {
+    account: cfg.key ?? "",
+    companyId: runCtx.companyId,
+  });
   return {
     content: `Posted to X. Tweet ID ${data.id}.`,
     data: {
@@ -381,6 +432,23 @@ const plugin = definePlugin({
       `social-poster: ready. Configured — Facebook: ${fbCount}, Instagram: ${igCount}, X: ${xCount}.`,
     );
 
+    const allResources = [
+      ...(config.facebookPages ?? []).map((r) => ({ kind: "facebook", r })),
+      ...(config.instagramAccounts ?? []).map((r) => ({ kind: "instagram", r })),
+      ...(config.xAccounts ?? []).map((r) => ({ kind: "x", r })),
+    ];
+    const orphans = allResources.filter(
+      ({ r }) => !r.allowedCompanies || r.allowedCompanies.length === 0,
+    );
+    if (orphans.length > 0) {
+      ctx.logger.warn(
+        `social-poster: ${orphans.length} resource(s) have no allowedCompanies and will reject every call. ` +
+          `Backfill on the plugin settings page: ${orphans
+            .map(({ kind, r }) => `${kind}:${r.key ?? "(no-key)"}`)
+            .join(", ")}`,
+      );
+    }
+
     function gateAllowPublish(action: string): ToolResult | null {
       if (config.allowPublish) return null;
       return {
@@ -406,11 +474,11 @@ const plugin = definePlugin({
           required: ["page", "message"],
         },
       },
-      async (params): Promise<ToolResult> => {
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
         const blocked = !fresh.allowPublish ? gateAllowPublish("post_to_facebook") : null;
         if (blocked) return blocked;
-        return postFacebook(ctx, fresh, params as Parameters<typeof postFacebook>[2]);
+        return postFacebook(ctx, fresh, runCtx, params as Parameters<typeof postFacebook>[3]);
       },
     );
 
@@ -430,11 +498,11 @@ const plugin = definePlugin({
           required: ["account", "image_url", "caption"],
         },
       },
-      async (params): Promise<ToolResult> => {
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
         const blocked = !fresh.allowPublish ? gateAllowPublish("post_to_instagram") : null;
         if (blocked) return blocked;
-        return postInstagram(ctx, fresh, params as Parameters<typeof postInstagram>[2]);
+        return postInstagram(ctx, fresh, runCtx, params as Parameters<typeof postInstagram>[3]);
       },
     );
 
@@ -454,11 +522,11 @@ const plugin = definePlugin({
           required: ["account", "text"],
         },
       },
-      async (params): Promise<ToolResult> => {
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
         const blocked = !fresh.allowPublish ? gateAllowPublish("post_to_x") : null;
         if (blocked) return blocked;
-        return postX(ctx, fresh, params as Parameters<typeof postX>[2]);
+        return postX(ctx, fresh, runCtx, params as Parameters<typeof postX>[3]);
       },
     );
   },

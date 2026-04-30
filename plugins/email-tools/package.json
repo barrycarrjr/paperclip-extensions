@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-email-tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Paperclip plugin that exposes email_send as an agent tool. Multi-mailbox SMTP via nodemailer; smart provider defaults (Gmail, O365, Rackspace).",
   "type": "module",
   "private": true,

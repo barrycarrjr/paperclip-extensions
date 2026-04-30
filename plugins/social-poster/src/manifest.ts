@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "social-poster";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -29,16 +29,29 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "array",
         title: "Facebook Pages",
         description:
-          "Each Facebook Page the plugin can post to. Page Access Tokens should be long-lived; rotate via the secret store.",
+          "Each Facebook Page the plugin can post to. Page Access Tokens should be long-lived; rotate via the secret store. Every page must list the company UUIDs allowed to use it under 'Allowed companies' — empty list = unusable (fail-safe default deny).",
         items: {
           type: "object",
-          required: ["key", "pageId", "accessToken"],
+          required: ["key", "name", "pageId", "accessToken", "allowedCompanies"],
           properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description:
+                "Human-readable label shown in this settings form (e.g. 'Brand A FB', 'Brand B FB'). Free-form; only affects the UI.",
+            },
             key: {
               type: "string",
-              title: "Key",
+              title: "Identifier",
               description:
-                "Identifier agents reference (e.g. 'main', 'kids'). Must be unique across Facebook entries.",
+                "Short stable ID agents pass when posting to this page (e.g. 'main', 'kids'). Lowercase, no spaces. Once skills reference it, don't change it. Must be unique across Facebook entries.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description:
+                "Companies allowed to post to this page. Tick 'Portfolio-wide' or specific companies. Empty = unusable.",
             },
             pageId: {
               type: "string",
@@ -68,15 +81,29 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "array",
         title: "Instagram Business accounts",
         description:
-          "Each Instagram Business account the plugin can post to. Requires a connected Facebook Page; the access token is the linked Page's token.",
+          "Each Instagram Business account the plugin can post to. Requires a connected Facebook Page; the access token is the linked Page's token. Every account must list the company UUIDs allowed to use it.",
         items: {
           type: "object",
-          required: ["key", "igUserId", "accessToken"],
+          required: ["key", "name", "igUserId", "accessToken", "allowedCompanies"],
           properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description:
+                "Human-readable label shown in this settings form (e.g. 'Brand A IG'). Free-form.",
+            },
             key: {
               type: "string",
-              title: "Key",
-              description: "Identifier agents reference (e.g. 'main_ig').",
+              title: "Identifier",
+              description:
+                "Short stable ID agents pass when posting to this account (e.g. 'main_ig'). Lowercase, no spaces. Once skills reference it, don't change it.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description:
+                "Companies allowed to post to this IG account. Tick 'Portfolio-wide' or specific companies. Empty = unusable.",
             },
             igUserId: {
               type: "string",
@@ -104,15 +131,29 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "array",
         title: "X (Twitter) accounts",
         description:
-          "Each X account the plugin can post to. Posting via X API v2 requires OAuth 1.0a User Context (all four credentials).",
+          "Each X account the plugin can post to. Posting via X API v2 requires OAuth 1.0a User Context (all four credentials). Every account must list the company UUIDs allowed to use it.",
         items: {
           type: "object",
-          required: ["key", "apiKey", "apiSecret", "accessToken", "accessTokenSecret"],
+          required: ["key", "name", "apiKey", "apiSecret", "accessToken", "accessTokenSecret", "allowedCompanies"],
           properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description:
+                "Human-readable label shown in this settings form (e.g. 'Brand A X'). Free-form.",
+            },
             key: {
               type: "string",
-              title: "Key",
-              description: "Identifier agents reference (e.g. 'main_x').",
+              title: "Identifier",
+              description:
+                "Short stable ID agents pass when posting from this account (e.g. 'main_x'). Lowercase, no spaces. Once skills reference it, don't change it.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description:
+                "Companies allowed to post from this X account. Tick 'Portfolio-wide' or specific companies. Empty = unusable.",
             },
             apiKey: {
               type: "string",
@@ -166,7 +207,7 @@ const manifest: PaperclipPluginManifestV1 = {
         properties: {
           page: {
             type: "string",
-            description: "Page key as configured on the plugin settings page.",
+            description: "Page identifier as configured on the plugin settings page.",
           },
           message: {
             type: "string",
@@ -202,7 +243,7 @@ const manifest: PaperclipPluginManifestV1 = {
         properties: {
           account: {
             type: "string",
-            description: "IG account key as configured.",
+            description: "IG account identifier as configured.",
           },
           image_url: {
             type: "string",
@@ -226,7 +267,7 @@ const manifest: PaperclipPluginManifestV1 = {
         properties: {
           account: {
             type: "string",
-            description: "X account key as configured.",
+            description: "X account identifier as configured.",
           },
           text: {
             type: "string",

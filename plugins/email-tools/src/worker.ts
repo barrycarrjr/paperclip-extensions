@@ -3,11 +3,10 @@ import {
   runWorker,
   type PluginContext,
   type ToolResult,
+  type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import nodemailer from "nodemailer";
+import { assertCompanyAccess } from "./companyAccess.js";
 
 interface MailboxRuntime {
   key: string;
@@ -20,6 +19,7 @@ interface MailboxRuntime {
 }
 
 interface ConfigMailbox {
+  name?: string;
   key?: string;
   imapHost?: string;
   user?: string;
@@ -29,31 +29,12 @@ interface ConfigMailbox {
   smtpSecure?: boolean;
   smtpUser?: string;
   smtpFrom?: string;
+  allowedCompanies?: string[];
 }
 
 interface InstanceConfig {
   allowSend?: boolean;
   mailboxes?: ConfigMailbox[];
-}
-
-const ENV_FILE_PATH = join(homedir(), ".paperclip", "instances", "default", "email-tools.env");
-
-function loadEnvFile(): Record<string, string> {
-  if (!existsSync(ENV_FILE_PATH)) return {};
-  const text = readFileSync(ENV_FILE_PATH, "utf-8");
-  const out: Record<string, string> = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#") || !line.includes("=")) continue;
-    const idx = line.indexOf("=");
-    const k = line.slice(0, idx).trim();
-    let v = line.slice(idx + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    out[k] = v;
-  }
-  return out;
 }
 
 function findConfigMailbox(config: InstanceConfig, key: string): ConfigMailbox | undefined {
@@ -65,99 +46,36 @@ function deriveSmtpHost(imapHost: string): string {
   return imapHost.startsWith("imap.") ? "smtp." + imapHost.slice(5) : imapHost;
 }
 
-function isAllowSend(config: InstanceConfig, env: Record<string, string>): boolean {
-  if (typeof config.allowSend === "boolean") return config.allowSend;
-  return (env["IMAP_ALLOW_SEND"] ?? "").toLowerCase() === "true";
-}
-
-function listConfiguredKeys(config: InstanceConfig, env: Record<string, string>): string[] {
-  const fromConfig = (config.mailboxes ?? [])
-    .map((m) => (m.key ?? "").trim().toLowerCase())
-    .filter(Boolean);
-  const fromEnv = (env["IMAP_MAILBOXES"] ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return Array.from(new Set([...fromConfig, ...fromEnv]));
-}
-
 async function buildMailboxRuntime(
   ctx: PluginContext,
-  config: InstanceConfig,
-  env: Record<string, string>,
+  cfg: ConfigMailbox,
   key: string,
 ): Promise<MailboxRuntime> {
-  const cfg = findConfigMailbox(config, key);
-
-  // Prefer plugin config (with secret-ref pass). Fall back to env file for
-  // mailboxes that haven't been migrated yet.
-  if (cfg) {
-    if (!cfg.imapHost) {
-      throw new Error(`Mailbox "${key}": imapHost is required in plugin config.`);
-    }
-    if (!cfg.user) {
-      throw new Error(`Mailbox "${key}": user is required in plugin config.`);
-    }
-    if (!cfg.pass) {
-      throw new Error(
-        `Mailbox "${key}": pass (secret reference) is required in plugin config.`,
-      );
-    }
-
-    const smtpPass = await ctx.secrets.resolve(cfg.pass);
-    const smtpPort = typeof cfg.smtpPort === "number" ? cfg.smtpPort : 465;
-    if (!Number.isFinite(smtpPort) || smtpPort <= 0 || smtpPort > 65535) {
-      throw new Error(`Mailbox "${key}": invalid smtpPort ${smtpPort}.`);
-    }
-    const smtpSecure = typeof cfg.smtpSecure === "boolean" ? cfg.smtpSecure : smtpPort === 465;
-
-    return {
-      key,
-      smtpHost: cfg.smtpHost ?? deriveSmtpHost(cfg.imapHost),
-      smtpPort,
-      smtpSecure,
-      smtpUser: cfg.smtpUser ?? cfg.user,
-      smtpPass,
-      smtpFrom: cfg.smtpFrom ?? cfg.user,
-    };
+  if (!cfg.imapHost) {
+    throw new Error(`Mailbox "${key}": imapHost is required.`);
+  }
+  if (!cfg.user) {
+    throw new Error(`Mailbox "${key}": user is required.`);
+  }
+  if (!cfg.pass) {
+    throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
   }
 
-  const upper = key.toUpperCase().replace(/-/g, "_");
-  const get = (suffix: string): string | undefined =>
-    env[`IMAP_${upper}_${suffix}`]?.trim() || undefined;
-
-  const imapHost = get("HOST");
-  if (!imapHost) {
-    throw new Error(
-      `Mailbox "${key}" not configured: add it on the email-tools plugin settings page (with a secret-ref pass), ` +
-        `or set IMAP_${upper}_HOST in ${ENV_FILE_PATH}.`,
-    );
-  }
-  const user = get("USER");
-  if (!user) {
-    throw new Error(`Mailbox "${key}": missing IMAP_${upper}_USER`);
-  }
-  const passPlain = get("PASS");
-  if (!passPlain) {
-    throw new Error(`Mailbox "${key}": missing IMAP_${upper}_PASS`);
-  }
-
-  const portRaw = get("SMTP_PORT");
-  const smtpPort = portRaw ? Number.parseInt(portRaw, 10) : 465;
+  const smtpPass = await ctx.secrets.resolve(cfg.pass);
+  const smtpPort = typeof cfg.smtpPort === "number" ? cfg.smtpPort : 465;
   if (!Number.isFinite(smtpPort) || smtpPort <= 0 || smtpPort > 65535) {
-    throw new Error(`Mailbox "${key}": invalid SMTP_PORT "${portRaw}"`);
+    throw new Error(`Mailbox "${key}": invalid smtpPort ${smtpPort}.`);
   }
-  const secureRaw = get("SMTP_SECURE")?.toLowerCase();
-  const smtpSecure = secureRaw ? secureRaw === "true" : smtpPort === 465;
+  const smtpSecure = typeof cfg.smtpSecure === "boolean" ? cfg.smtpSecure : smtpPort === 465;
 
   return {
     key,
-    smtpHost: get("SMTP_HOST") ?? deriveSmtpHost(imapHost),
+    smtpHost: cfg.smtpHost ?? deriveSmtpHost(cfg.imapHost),
     smtpPort,
     smtpSecure,
-    smtpUser: get("SMTP_USER") ?? user,
-    smtpPass: get("SMTP_PASS") ?? passPlain,
-    smtpFrom: get("SMTP_FROM") ?? user,
+    smtpUser: cfg.smtpUser ?? cfg.user,
+    smtpPass,
+    smtpFrom: cfg.smtpFrom ?? cfg.user,
   };
 }
 
@@ -172,31 +90,45 @@ const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     ctx.logger.info("email-tools plugin setup");
 
-    const env = loadEnvFile();
     const rawConfig = (await ctx.config.get()) as InstanceConfig;
-    const allowSend = isAllowSend(rawConfig, env);
-    const keys = listConfiguredKeys(rawConfig, env);
+    const allowSend = !!rawConfig.allowSend;
+    const mailboxes = rawConfig.mailboxes ?? [];
 
     if (!allowSend) {
       ctx.logger.warn(
-        "email-tools: sending is disabled. Set 'allowSend' true on the plugin settings page or IMAP_ALLOW_SEND=true in the env file.",
+        "email-tools: sending is disabled. Set 'allowSend' true on the plugin settings page.",
       );
-    } else if (keys.length === 0) {
+    } else if (mailboxes.length === 0) {
       ctx.logger.warn(
-        "email-tools: no mailboxes configured. Add them on the plugin settings page or via the env file.",
+        "email-tools: no mailboxes configured. Add them on the plugin settings page.",
       );
     } else {
-      const sources: string[] = [];
-      const fromConfig = (rawConfig.mailboxes ?? [])
-        .map((m) => (m.key ?? "").trim().toLowerCase())
-        .filter(Boolean);
-      const fromEnv = (env["IMAP_MAILBOXES"] ?? "")
-        .split(",")
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-      if (fromConfig.length > 0) sources.push(`config: ${fromConfig.join(", ")}`);
-      if (fromEnv.length > 0) sources.push(`env: ${fromEnv.join(", ")}`);
-      ctx.logger.info(`email-tools: ready. Mailboxes — ${sources.join("; ") || "(none)"}`);
+      const summary = mailboxes
+        .map((m) => {
+          const k = m.key ?? "(no-key)";
+          const allowed = m.allowedCompanies;
+          const access =
+            !allowed || allowed.length === 0
+              ? "no companies — UNUSABLE"
+              : allowed.includes("*")
+                ? "portfolio-wide"
+                : `${allowed.length} company(s)`;
+          return `${k} [${access}]`;
+        })
+        .join(", ");
+      ctx.logger.info(`email-tools: ready. Mailboxes — ${summary}`);
+
+      const orphans = mailboxes.filter(
+        (m) => !m.allowedCompanies || m.allowedCompanies.length === 0,
+      );
+      if (orphans.length > 0) {
+        ctx.logger.warn(
+          `email-tools: ${orphans.length} mailbox(es) have no allowedCompanies and will reject every call. ` +
+            `Backfill on the plugin settings page: ${orphans
+              .map((m) => m.key ?? "(no-key)")
+              .join(", ")}`,
+        );
+      }
     }
 
     ctx.tools.register(
@@ -211,7 +143,7 @@ const plugin = definePlugin({
             mailbox: {
               type: "string",
               description:
-                "Mailbox key (e.g. 'personal'). Must be configured on the email-tools plugin settings page.",
+                "Mailbox identifier (e.g. 'personal'). Must be configured on the email-tools plugin settings page AND list the calling company under allowedCompanies.",
             },
             to: {
               description:
@@ -246,16 +178,13 @@ const plugin = definePlugin({
           required: ["mailbox", "to", "subject", "body"],
         },
       },
-      async (params, _runCtx): Promise<ToolResult> => {
-        const env = loadEnvFile();
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const config = (await ctx.config.get()) as InstanceConfig;
 
-        if (!isAllowSend(config, env)) {
+        if (!config.allowSend) {
           return {
             error:
-              "Sending is disabled. Set 'allowSend' true on the email-tools plugin settings page (or IMAP_ALLOW_SEND=true in " +
-              ENV_FILE_PATH +
-              ") and restart the paperclip server.",
+              "Sending is disabled. Set 'allowSend' true on the email-tools plugin settings page and save.",
           };
         }
 
@@ -277,9 +206,28 @@ const plugin = definePlugin({
         if (!p.subject) return { error: "subject is required" };
         if (p.body === undefined) return { error: "body is required" };
 
+        const cfg = findConfigMailbox(config, p.mailbox);
+        if (!cfg) {
+          return {
+            error: `Mailbox "${p.mailbox}" not configured. Add it on the email-tools plugin settings page.`,
+          };
+        }
+
+        try {
+          assertCompanyAccess(ctx, {
+            tool: "email_send",
+            resourceLabel: `email-tools mailbox "${p.mailbox}"`,
+            resourceKey: p.mailbox,
+            allowedCompanies: cfg.allowedCompanies,
+            companyId: runCtx.companyId,
+          });
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+
         let mb: MailboxRuntime;
         try {
-          mb = await buildMailboxRuntime(ctx, config, env, p.mailbox);
+          mb = await buildMailboxRuntime(ctx, cfg, p.mailbox);
         } catch (err) {
           return { error: (err as Error).message };
         }
@@ -312,6 +260,11 @@ const plugin = definePlugin({
             references: refsHeader,
           });
 
+          await ctx.telemetry.track("email-tools.email_send", {
+            mailbox: mb.key,
+            companyId: runCtx.companyId,
+          });
+
           return {
             content: `Sent. Message-ID ${info.messageId ?? "?"}`,
             data: {
@@ -334,20 +287,11 @@ const plugin = definePlugin({
         }
       },
     );
+
   },
 
   async onHealth() {
-    const env = loadEnvFile();
-    const envReady =
-      existsSync(ENV_FILE_PATH) &&
-      (env["IMAP_ALLOW_SEND"] ?? "").toLowerCase() === "true" &&
-      (env["IMAP_MAILBOXES"] ?? "").trim().length > 0;
-    return {
-      status: envReady ? "ok" : "degraded",
-      message: envReady
-        ? "email-tools env-side ready"
-        : `env file not configured (${ENV_FILE_PATH}); plugin config may still provide mailboxes`,
-    };
+    return { status: "ok", message: "email-tools ready" };
   },
 });
 

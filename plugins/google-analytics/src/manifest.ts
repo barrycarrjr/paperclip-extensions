@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "google-analytics";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -29,16 +29,29 @@ const manifest: PaperclipPluginManifestV1 = {
         type: "array",
         title: "Sites",
         description:
-          "Each site exposes a GA4 property and/or a Search Console property. The serviceAccountJson secret can be reused across sites that share a service account.",
+          "Each site exposes a GA4 property and/or a Search Console property. The serviceAccountJson secret can be reused across sites that share a service account. Every site must list the company UUIDs allowed to read it under 'Allowed companies' — empty list = unusable (fail-safe default deny).",
         items: {
           type: "object",
-          required: ["key", "serviceAccountJson"],
+          required: ["key", "name", "serviceAccountJson", "allowedCompanies"],
           properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description:
+                "Human-readable label shown in this settings form (e.g. 'Acme Corp site', 'Brand B site'). Free-form.",
+            },
             key: {
               type: "string",
-              title: "Key",
+              title: "Identifier",
               description:
-                "Lowercase identifier agents reference (e.g. 'acme', 'kids-brand').",
+                "Short stable ID agents pass when querying this site (e.g. 'acme', 'kids-brand'). Lowercase, no spaces. Once skills reference it, don't change it — that's why it's separate from Display name. Must be unique.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description:
+                "Companies allowed to read this site's GA/GSC data. Tick 'Portfolio-wide' or specific companies. Empty = unusable.",
             },
             description: {
               type: "string",
@@ -88,7 +101,7 @@ const manifest: PaperclipPluginManifestV1 = {
       parametersSchema: {
         type: "object",
         properties: {
-          siteKey: { type: "string", description: "Site key from list_sites." },
+          siteKey: { type: "string", description: "Site identifier from list_sites." },
           startDate: { type: "string" },
           endDate: { type: "string" },
           metrics: {

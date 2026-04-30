@@ -3,16 +3,20 @@ import {
   runWorker,
   type PluginContext,
   type ToolResult,
+  type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
 import { GoogleAuth, type AuthClient } from "google-auth-library";
 import { google } from "googleapis";
+import { assertCompanyAccess, isCompanyAllowed } from "./companyAccess.js";
 
 interface SiteConfig {
+  name?: string;
   key?: string;
   description?: string;
   ga4PropertyId?: string;
   gscSiteUrl?: string;
   serviceAccountJson?: string;
+  allowedCompanies?: string[];
 }
 
 interface InstanceConfig {
@@ -29,14 +33,21 @@ function isValidDate(s: string): boolean {
   return DATE_RE.test(s) || s === "today" || s === "yesterday" || /^\d+daysAgo$/.test(s);
 }
 
-interface AuthClientCache {
-  secretRef: string;
+interface AuthCacheEntry {
   client: AuthClient;
 }
-const authCache = new Map<string, AuthClientCache>();
+// Cache key includes companyId so two companies that share a service-account
+// secret each get their own auth client. Never share an authed client across
+// company boundaries (per the company-isolation contract in the README).
+const authCache = new Map<string, AuthCacheEntry>();
 
-async function getAuthClient(ctx: PluginContext, secretRef: string): Promise<AuthClient> {
-  const cached = authCache.get(secretRef);
+async function getAuthClient(
+  ctx: PluginContext,
+  secretRef: string,
+  companyId: string,
+): Promise<AuthClient> {
+  const cacheKey = `${companyId}:${secretRef}`;
+  const cached = authCache.get(cacheKey);
   if (cached) return cached.client;
 
   const json = await ctx.secrets.resolve(secretRef);
@@ -54,7 +65,7 @@ async function getAuthClient(ctx: PluginContext, secretRef: string): Promise<Aut
     scopes: SCOPES,
   });
   const client = await auth.getClient();
-  authCache.set(secretRef, { secretRef, client });
+  authCache.set(cacheKey, { client });
   return client;
 }
 
@@ -63,15 +74,21 @@ function findSite(config: InstanceConfig, key: string): SiteConfig | undefined {
   return (config.sites ?? []).find((s) => (s.key ?? "").toLowerCase() === lower);
 }
 
-function listSites(config: InstanceConfig): ToolResult {
-  const sites = (config.sites ?? []).map((s) => ({
+function listSitesForCompany(config: InstanceConfig, companyId: string): ToolResult {
+  const visible = (config.sites ?? []).filter((s) =>
+    isCompanyAllowed(s.allowedCompanies, companyId),
+  );
+  const sites = visible.map((s) => ({
     key: s.key,
+    name: s.name ?? null,
     description: s.description ?? null,
     ga4Wired: !!s.ga4PropertyId,
     gscWired: !!s.gscSiteUrl,
   }));
   return {
-    content: `Configured sites: ${sites.map((s) => s.key).join(", ") || "(none)"}.`,
+    content: `${sites.length} site(s) available to this company: ${
+      sites.map((s) => s.key).join(", ") || "(none)"
+    }.`,
     data: { sites },
   };
 }
@@ -79,6 +96,7 @@ function listSites(config: InstanceConfig): ToolResult {
 async function gaRunReport(
   ctx: PluginContext,
   config: InstanceConfig,
+  runCtx: ToolRunContext,
   params: {
     siteKey?: string;
     startDate?: string;
@@ -102,6 +120,19 @@ async function gaRunReport(
 
   const site = findSite(config, params.siteKey);
   if (!site) return { error: `Site "${params.siteKey}" not configured.` };
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "ga_run_report",
+      resourceLabel: `google-analytics site "${params.siteKey}"`,
+      resourceKey: params.siteKey,
+      allowedCompanies: site.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
   if (!site.ga4PropertyId) {
     return { error: `Site "${site.key}" has no ga4PropertyId.` };
   }
@@ -109,7 +140,7 @@ async function gaRunReport(
     return { error: `Site "${site.key}" has no serviceAccountJson secret.` };
   }
 
-  const authClient = await getAuthClient(ctx, site.serviceAccountJson);
+  const authClient = await getAuthClient(ctx, site.serviceAccountJson, runCtx.companyId);
   const client = google.analyticsdata({
     version: "v1beta",
     auth: authClient as unknown as Parameters<typeof google.analyticsdata>[0]["auth"],
@@ -144,6 +175,10 @@ async function gaRunReport(
       });
       return out;
     });
+    await ctx.telemetry.track("google-analytics.ga_run_report", {
+      site: site.key ?? "",
+      companyId: runCtx.companyId,
+    });
     return {
       content: `GA4 ${site.key}: ${rows.length} rows.`,
       data: {
@@ -156,18 +191,32 @@ async function gaRunReport(
       },
     };
   } catch (err) {
-    return { error: `GA4 runReport failed: ${(err as Error).message}` };
+    return { error: `[EGA_RUN_REPORT] ${(err as Error).message}` };
   }
 }
 
 async function gaRealtime(
   ctx: PluginContext,
   config: InstanceConfig,
+  runCtx: ToolRunContext,
   params: { siteKey?: string; dimension?: string },
 ): Promise<ToolResult> {
   if (!params.siteKey) return { error: "siteKey is required" };
   const site = findSite(config, params.siteKey);
   if (!site) return { error: `Site "${params.siteKey}" not configured.` };
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "ga_realtime",
+      resourceLabel: `google-analytics site "${params.siteKey}"`,
+      resourceKey: params.siteKey,
+      allowedCompanies: site.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
   if (!site.ga4PropertyId) {
     return { error: `Site "${site.key}" has no ga4PropertyId.` };
   }
@@ -176,7 +225,7 @@ async function gaRealtime(
   }
   const dimension = params.dimension ?? "country";
 
-  const authClient = await getAuthClient(ctx, site.serviceAccountJson);
+  const authClient = await getAuthClient(ctx, site.serviceAccountJson, runCtx.companyId);
   const client = google.analyticsdata({
     version: "v1beta",
     auth: authClient as unknown as Parameters<typeof google.analyticsdata>[0]["auth"],
@@ -195,6 +244,10 @@ async function gaRealtime(
       activeUsers: r.metricValues?.[0]?.value ?? "0",
     }));
     const total = rows.reduce((acc, r) => acc + Number(r.activeUsers || 0), 0);
+    await ctx.telemetry.track("google-analytics.ga_realtime", {
+      site: site.key ?? "",
+      companyId: runCtx.companyId,
+    });
     return {
       content: `GA4 realtime ${site.key}: ${total} active users.`,
       data: {
@@ -205,13 +258,14 @@ async function gaRealtime(
       },
     };
   } catch (err) {
-    return { error: `GA4 runRealtimeReport failed: ${(err as Error).message}` };
+    return { error: `[EGA_REALTIME] ${(err as Error).message}` };
   }
 }
 
 async function gscSearchAnalytics(
   ctx: PluginContext,
   config: InstanceConfig,
+  runCtx: ToolRunContext,
   params: {
     siteKey?: string;
     startDate?: string;
@@ -230,6 +284,19 @@ async function gscSearchAnalytics(
 
   const site = findSite(config, params.siteKey);
   if (!site) return { error: `Site "${params.siteKey}" not configured.` };
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "gsc_search_analytics",
+      resourceLabel: `google-analytics site "${params.siteKey}"`,
+      resourceKey: params.siteKey,
+      allowedCompanies: site.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
   if (!site.gscSiteUrl) {
     return { error: `Site "${site.key}" has no gscSiteUrl.` };
   }
@@ -237,7 +304,7 @@ async function gscSearchAnalytics(
     return { error: `Site "${site.key}" has no serviceAccountJson secret.` };
   }
 
-  const authClient = await getAuthClient(ctx, site.serviceAccountJson);
+  const authClient = await getAuthClient(ctx, site.serviceAccountJson, runCtx.companyId);
   const client = google.searchconsole({
     version: "v1",
     auth: authClient as unknown as Parameters<typeof google.searchconsole>[0]["auth"],
@@ -254,6 +321,10 @@ async function gscSearchAnalytics(
       },
     });
     const rows = res.data.rows ?? [];
+    await ctx.telemetry.track("google-analytics.gsc_search_analytics", {
+      site: site.key ?? "",
+      companyId: runCtx.companyId,
+    });
     return {
       content: `GSC ${site.key}: ${rows.length} rows.`,
       data: {
@@ -264,7 +335,7 @@ async function gscSearchAnalytics(
       },
     };
   } catch (err) {
-    return { error: `GSC searchanalytics.query failed: ${(err as Error).message}` };
+    return { error: `[EGSC_QUERY] ${(err as Error).message}` };
   }
 }
 
@@ -272,20 +343,31 @@ const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     ctx.logger.info("google-analytics plugin setup");
     const config = (await ctx.config.get()) as InstanceConfig;
-    const siteCount = (config.sites ?? []).length;
-    ctx.logger.info(`google-analytics: ready. ${siteCount} site(s) configured.`);
+    const sites = config.sites ?? [];
+    const orphans = sites.filter(
+      (s) => !s.allowedCompanies || s.allowedCompanies.length === 0,
+    );
+    ctx.logger.info(`google-analytics: ready. ${sites.length} site(s) configured.`);
+    if (orphans.length > 0) {
+      ctx.logger.warn(
+        `google-analytics: ${orphans.length} site(s) have no allowedCompanies and will reject every call. ` +
+          `Backfill on the plugin settings page: ${orphans
+            .map((s) => s.key ?? "(no-key)")
+            .join(", ")}`,
+      );
+    }
 
     ctx.tools.register(
       "list_sites",
       {
         displayName: "List configured sites",
         description:
-          "Return the list of GA/GSC sites configured for this plugin. No secret material is returned.",
+          "Return the GA/GSC sites the calling company is allowed to use. Sites scoped to other companies are filtered out (resource discovery is scoped to prevent leaking the existence of resources the agent cannot use). No secret material is returned.",
         parametersSchema: { type: "object", properties: {} },
       },
-      async (): Promise<ToolResult> => {
+      async (_params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
-        return listSites(fresh);
+        return listSitesForCompany(fresh, runCtx.companyId);
       },
     );
 
@@ -309,9 +391,9 @@ const plugin = definePlugin({
           required: ["siteKey", "startDate", "endDate", "metrics"],
         },
       },
-      async (params): Promise<ToolResult> => {
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
-        return gaRunReport(ctx, fresh, params as Parameters<typeof gaRunReport>[2]);
+        return gaRunReport(ctx, fresh, runCtx, params as Parameters<typeof gaRunReport>[3]);
       },
     );
 
@@ -329,9 +411,9 @@ const plugin = definePlugin({
           required: ["siteKey"],
         },
       },
-      async (params): Promise<ToolResult> => {
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
-        return gaRealtime(ctx, fresh, params as Parameters<typeof gaRealtime>[2]);
+        return gaRealtime(ctx, fresh, runCtx, params as Parameters<typeof gaRealtime>[3]);
       },
     );
 
@@ -353,12 +435,13 @@ const plugin = definePlugin({
           required: ["siteKey", "startDate", "endDate"],
         },
       },
-      async (params): Promise<ToolResult> => {
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
         const fresh = (await ctx.config.get()) as InstanceConfig;
         return gscSearchAnalytics(
           ctx,
           fresh,
-          params as Parameters<typeof gscSearchAnalytics>[2],
+          runCtx,
+          params as Parameters<typeof gscSearchAnalytics>[3],
         );
       },
     );
