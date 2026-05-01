@@ -9,6 +9,7 @@ import { registerCalendarTools } from "./tools/calendar.js";
 import { registerTasksTools } from "./tools/tasks.js";
 import { registerSheetsTools } from "./tools/sheets.js";
 import { registerDriveTools } from "./tools/drive.js";
+import { registerOAuthFlow } from "./oauthFlow.js";
 
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
@@ -58,6 +59,7 @@ const plugin = definePlugin({
     registerTasksTools(ctx);
     registerSheetsTools(ctx);
     registerDriveTools(ctx);
+    registerOAuthFlow(ctx);
   },
 
   async onHealth() {

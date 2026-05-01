@@ -32,4 +32,21 @@ await Promise.all([
     bundle: true,
     external: ["@paperclipai/plugin-sdk"],
   }),
+  // UI bundle for the in-Paperclip setup wizard. React and the SDK ui module
+  // are externalized — Paperclip provides them at runtime.
+  esbuild.build({
+    entryPoints: ["src/ui/index.tsx"],
+    outfile: "dist/ui/index.js",
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: ["es2022"],
+    sourcemap: true,
+    external: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "@paperclipai/plugin-sdk/ui",
+    ],
+  }),
 ]);

@@ -1,7 +1,7 @@
 {
   "name": "paperclip-plugin-google-workspace",
-  "version": "0.1.0",
-  "description": "Paperclip plugin exposing Google Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account, multi-account, per-company isolation.",
+  "version": "0.2.0",
+  "description": "Paperclip plugin exposing Google Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account, multi-account, per-company isolation. Includes an in-Paperclip setup wizard so accounts can be added end-to-end without the CLI.",
   "type": "module",
   "private": true,
   "exports": {
@@ -9,7 +9,8 @@
   },
   "paperclipPlugin": {
     "manifest": "./dist/manifest.js",
-    "worker": "./dist/worker.js"
+    "worker": "./dist/worker.js",
+    "ui": "./dist/ui/"
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
@@ -30,10 +31,17 @@
   "devDependencies": {
     "@types/mime-types": "^2.1.4",
     "@types/node": "^24.6.0",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
     "esbuild": "^0.27.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
+  },
+  "peerDependencies": {
+    "react": ">=18"
   },
   "license": "MIT",
   "author": "Barry Carr",

@@ -36,59 +36,60 @@ Mutation tools require the **"Allow create/update/delete tools"** master switch 
 
 ## Setup
 
+### Recommended: use the in-Paperclip setup wizard
+
+The plugin ships a UI-driven setup wizard at:
+
+```
+/<company>/plugins/google-workspace/setup-account
+```
+
+(Any company in the URL works — the wizard is for adding instance-level accounts; pick whichever company URL you happen to be on.)
+
+The wizard handles steps 2–4 below for you: it runs Google's OAuth device flow, creates the 3 secrets in the company you pick, and registers the account on the plugin. You only need to do **step 1** (creating the OAuth client in Google Cloud) yourself, because that's on Google's side, not Paperclip's.
+
 ### 1. Create a Google Cloud OAuth client
 
-You only need to do this **once per Google account family** (e.g. once for your personal Workspace, once for an LLC's Workspace). All accounts under the same OAuth client can share its client ID/secret.
+Once per Google account family (your personal, an LLC's, etc.). One OAuth client can grant any number of accounts under it.
 
 1. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials).
 2. Pick (or create) a project. The project doesn't have to match your Workspace org — it just owns the OAuth client.
-3. **Enable APIs** (APIs & Services → Library): Calendar API, Tasks API, Sheets API, Drive API. The Google People API is *not* required (we use `oauth2.userinfo.get` for `google_test_auth`, which is part of the OAuth2 v2 API and is enabled by default).
+3. **Enable APIs** (APIs & Services → Library): Calendar API, Tasks API, Sheets API, Drive API.
 4. **Configure OAuth consent screen** — pick "External" (unless you're using a Google Workspace and want "Internal"). Add your email under "Test users" while the app is in test mode. The plugin doesn't need verification because each operator only authorizes their own accounts.
 5. **Create OAuth 2.0 Client ID**:
-   - Application type: **Desktop app** (loopback redirect — the simplest path; `http://localhost:54321/oauth/callback` works without any allowlist).
-   - Or: **Web application** with `http://localhost:54321/oauth/callback` as an authorized redirect URI. Either works — Desktop is simpler.
-6. Note the resulting **Client ID** and **Client Secret**.
+   - Application type: **TVs and Limited Input devices** if you'll use the in-Paperclip wizard (recommended). This is required for the device flow that the wizard runs.
+   - **Desktop app** if you'll use the CLI helper as a fallback (loopback redirect, redirect URI doesn't need to be allowlisted).
+6. Note the resulting **Client ID** and **Client Secret**. These are the only things you'll paste — the wizard takes care of everything else.
 
-### 2. Obtain a refresh token
+### 2. Run the wizard
 
-Run the helper script per Google account you want the plugin to act as:
+Open `/<company>/plugins/google-workspace/setup-account` in Paperclip. Steps:
+
+1. Pick an **account identifier** (e.g. `barry-personal`, `m3-printing`) — this is the short ID agents pass as the `account` param.
+2. Paste the **Client ID** and **Client Secret** from step 1.
+3. Pick the **owner company** — where the 3 secrets get stored.
+4. Tick the **allowed companies** — which companies' agents may use this account.
+5. Click **"Connect Google account"**. The wizard:
+   - Calls Google's device-flow endpoint, displays a short user code and a verification URL.
+   - You open the URL on any device (this browser tab, your phone, doesn't matter), enter the code, and grant access as the Google account you want this account to act as.
+   - The wizard polls Google until you grant, then exchanges the code for a refresh token.
+   - Creates the 3 secrets in the owner company (named `google-<key>-client-id`, `google-<key>-client-secret`, `google-<key>-refresh-token`).
+   - Adds the account entry on the plugin's instance config with the secret UUIDs filled in.
+
+After the wizard finishes, the read-only tools (`gcal_list_events`, `gtasks_list_lists`, etc.) work immediately. Flip **"Allow create/update/delete tools"** on at the top of `/instance/settings/plugins/google-workspace` when you want mutation tools active.
+
+### Fallback: CLI helper
+
+If the device flow doesn't fit (e.g. headless setup, scripting), the original CLI helper still works for OAuth Desktop clients:
 
 ```bash
 cd /path/to/paperclip-extensions/plugins/google-workspace
 GOOGLE_CLIENT_ID="…" GOOGLE_CLIENT_SECRET="…" pnpm grant <account-key>
 ```
 
-Where `<account-key>` is the short identifier you'll later use in plugin config (e.g. `barry-personal`, `m3-printing`).
+It opens a localhost listener, runs the OAuth consent in your browser, and prints the refresh token with copy-paste instructions for creating the 3 secrets manually on the Secrets page and pasting the UUIDs into the plugin settings page.
 
-The script:
-
-1. Spins up a localhost listener on port 54321.
-2. Opens the Google OAuth consent screen in your browser.
-3. After consent, catches the redirect, exchanges the code for a refresh token.
-4. Prints the refresh token to your terminal with copy-paste instructions.
-
-If port 54321 is in use, free it before running. (The redirect URI is hardcoded; no override flag yet.)
-
-### 3. Wire secrets and plugin config in Paperclip
-
-Once you have a `refresh_token`:
-
-1. **Pick the company that should own this Google account** (e.g. the Personal company for a personal Google account; M3 Media for the M3 Printing shared inbox). The plugin enforces that only allowed companies can use each account.
-2. **Open the company's Secrets page** (`/instance/settings/companies/<company>/secrets`) and create three secrets:
-   - `google-<account-key>-client-id` → the OAuth Client ID
-   - `google-<account-key>-client-secret` → the OAuth Client Secret
-   - `google-<account-key>-refresh-token` → the refresh token printed by the script
-3. **Open the plugin settings page** (`/instance/settings/plugins/google-workspace`) and add an account entry:
-   - Identifier: the same `<account-key>` you used above
-   - Email: the Google email this account authenticates as (informational)
-   - Allowed companies: tick the company UUID(s) that should be able to use this account. Use "Portfolio-wide" only if every company should share the account (rare).
-   - clientIdRef / clientSecretRef / refreshTokenRef: paste the secret UUIDs from step 2 (the page shows a picker; pick by name).
-4. Optionally set **defaultAccount** to one of the configured `<account-key>` values so agents can omit the `account` parameter.
-5. **Allow mutations** (the master switch at the top of the settings page) only after you've smoke-tested with read-only tools and you trust the agent's calls. Default is off.
-
-The configured account is now usable from any agent run inside an allowed company.
-
-### 4. (Optional) Tighten scopes
+### (Optional) Tighten scopes
 
 The plugin defaults to:
 

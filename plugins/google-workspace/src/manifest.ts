@@ -2,7 +2,8 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS } from "./schemas.js";
 
 const PLUGIN_ID = "google-workspace";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
+const SETUP_ROUTE = "setup-account";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: PLUGIN_ID,
@@ -10,7 +11,7 @@ const manifest: PaperclipPluginManifestV1 = {
   version: PLUGIN_VERSION,
   displayName: "Google Workspace",
   description:
-    "Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies.",
+    "Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies. Setup wizard at /<company>/plugins/google-workspace/setup-account walks you through adding an account end-to-end (creates secrets, runs the OAuth device flow, registers the account) — no terminal required.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
@@ -19,9 +20,11 @@ const manifest: PaperclipPluginManifestV1 = {
     "secrets.read-ref",
     "http.outbound",
     "telemetry.track",
+    "ui.page.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
+    ui: "./dist/ui",
   },
   instanceConfigSchema: {
     type: "object",
@@ -114,6 +117,17 @@ const manifest: PaperclipPluginManifestV1 = {
     required: ["accounts"],
   },
   tools: ALL_TOOLS,
+  ui: {
+    slots: [
+      {
+        type: "page",
+        id: "setup-account",
+        displayName: "Connect a Google account",
+        exportName: "SetupAccountPage",
+        routePath: SETUP_ROUTE,
+      },
+    ],
+  },
 };
 
 export default manifest;
