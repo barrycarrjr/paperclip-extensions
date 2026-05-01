@@ -22,17 +22,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "pnpm"
 
       - name: Install root deps (jszip for the pack script)
@@ -45,7 +45,7 @@ jobs:
         run: pnpm run pack:all
 
       - name: Upload .pcplugin + index.json to the GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist-pcplugins/*.pcplugin
