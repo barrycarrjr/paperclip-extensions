@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   if (!accountKey || rest.length > 0) {
     fail(
       "Usage: pnpm --filter paperclip-plugin-google-workspace grant <account-key>\n" +
-        "Pass the account key (e.g. 'barry-personal') as the only positional arg.\n" +
+        "Pass the account key (e.g. 'personal') as the only positional arg.\n" +
         "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars before running.",
     );
   }
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
   console.log("\n------------------------------------------------------------------------");
   console.log("Next steps inside Paperclip:");
   console.log(
-    `  1. Pick the company that should own this account (e.g. Personal, M3 Printing).`,
+    `  1. Pick the company that should own this account (e.g. Personal, Operations).`,
   );
   console.log(`  2. Open /instance/settings/companies/<company>/secrets and create a Secret.`);
   console.log(`     Name suggestion: "google-${accountKey}-refresh-token"`);

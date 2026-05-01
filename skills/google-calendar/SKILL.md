@@ -12,7 +12,7 @@ documents how heartbeats invoke the tools.
 ## When to invoke
 
 - A heartbeat needs today's or this week's events ("brief me on what's on
-  Barry's calendar today" → `gcal_list_events`).
+  the operator's calendar today" → `gcal_list_events`).
 - A task says "schedule a 30-min sync with X" → `gcal_freebusy` to find a
   slot, then `gcal_create_event` to book it.
 - A confirmation requests an event move/cancel → `gcal_update_event` or
@@ -47,7 +47,7 @@ curl -s -X POST \
   -d "$(jq -n --arg agent "$PAPERCLIP_AGENT_ID" --arg run "$PAPERCLIP_RUN_ID" --arg company "$PAPERCLIP_COMPANY_ID" '{
     tool: "google-workspace:gcal_list_events",
     parameters: {
-      account: "barry-personal",
+      account: "personal",
       timeMin: "2026-04-30T00:00:00-05:00",
       timeMax: "2026-05-01T00:00:00-05:00"
     },
@@ -86,7 +86,7 @@ configured. To discover valid account keys, read the plugin config
 {
   "tool": "google-workspace:gcal_list_events",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "timeMin": "2026-04-30T00:00:00-05:00",
     "timeMax": "2026-05-01T00:00:00-05:00"
   }
@@ -101,7 +101,7 @@ Returns `{ events: [...], nextPageToken }`. Each event has `summary`, `start`, `
 {
   "tool": "google-workspace:gcal_freebusy",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "timeMin": "2026-05-01T13:00:00-05:00",
     "timeMax": "2026-05-01T18:00:00-05:00",
     "calendarIds": ["primary"]
@@ -115,7 +115,7 @@ Then, after picking a window:
 {
   "tool": "google-workspace:gcal_create_event",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "summary": "Sync with Tony",
     "start": { "dateTime": "2026-05-01T14:00:00-05:00" },
     "end":   { "dateTime": "2026-05-01T14:30:00-05:00" },
@@ -134,7 +134,7 @@ add. Use `"all"` for external attendees.
 {
   "tool": "google-workspace:gcal_update_event",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "eventId": "...",
     "patch": { "location": "Cafe Y" }
   }
@@ -144,7 +144,7 @@ add. Use `"all"` for external attendees.
 ```json
 {
   "tool": "google-workspace:gcal_delete_event",
-  "parameters": { "account": "barry-personal", "eventId": "...", "sendUpdates": "all" }
+  "parameters": { "account": "personal", "eventId": "...", "sendUpdates": "all" }
 }
 ```
 

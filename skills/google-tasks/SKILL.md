@@ -40,7 +40,7 @@ curl -s -X POST \
   -d "$(jq -n --arg agent "$PAPERCLIP_AGENT_ID" --arg run "$PAPERCLIP_RUN_ID" --arg company "$PAPERCLIP_COMPANY_ID" '{
     tool: "google-workspace:gtasks_create_task",
     parameters: {
-      account: "barry-personal",
+      account: "personal",
       listId: "MTAyMzQ1Njc4OQ",
       title: "Review Acme Q2 invoice",
       due: "2026-05-08T00:00:00Z"
@@ -73,7 +73,7 @@ Tool names use `<pluginId>:<toolName>` — `google-workspace:gtasks_create_task`
 ```json
 {
   "tool": "google-workspace:gtasks_list_lists",
-  "parameters": { "account": "barry-personal" }
+  "parameters": { "account": "personal" }
 }
 ```
 
@@ -86,7 +86,7 @@ your skill's working notes — Tasks list IDs are stable.
 {
   "tool": "google-workspace:gtasks_list_tasks",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "listId": "MTAyMzQ1Njc4OQ",
     "showCompleted": false,
     "dueMax": "2026-05-01T00:00:00Z"
@@ -100,7 +100,7 @@ your skill's working notes — Tasks list IDs are stable.
 {
   "tool": "google-workspace:gtasks_create_task",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "listId": "MTAyMzQ1Njc4OQ",
     "title": "Pay invoice 1234",
     "notes": "Acme Corp · due 2026-05-08",
@@ -115,7 +115,7 @@ your skill's working notes — Tasks list IDs are stable.
 {
   "tool": "google-workspace:gtasks_complete_task",
   "parameters": {
-    "account": "barry-personal",
+    "account": "personal",
     "listId": "MTAyMzQ1Njc4OQ",
     "taskId": "..."
   }

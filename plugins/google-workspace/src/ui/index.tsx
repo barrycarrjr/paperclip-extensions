@@ -570,12 +570,12 @@ function FormStep(p: FormStepProps) {
       </p>
 
       <div style={{ ...stack, marginTop: 14 }}>
-        <FormRow label="Account identifier (lowercase, hyphens — e.g. barry-personal)">
+        <FormRow label="Account identifier (lowercase, hyphens — e.g. personal, acme-print)">
           <input
             style={input}
             value={p.accountKey}
             onChange={(e) => p.onAccountKey(e.target.value)}
-            placeholder="barry-personal"
+            placeholder="personal"
           />
         </FormRow>
         <FormRow label="Display name (optional, free-form)">
@@ -583,7 +583,7 @@ function FormStep(p: FormStepProps) {
             style={input}
             value={p.displayName}
             onChange={(e) => p.onDisplayName(e.target.value)}
-            placeholder="Barry — personal Google"
+            placeholder="Personal Google"
           />
         </FormRow>
         <FormRow label="Client ID (from Google Cloud Console)">
@@ -635,7 +635,7 @@ function FormStep(p: FormStepProps) {
             ))}
             <div style={{ ...subtle, marginTop: 4 }}>
               Tip: a personal Google account is usually allowed for one company only (e.g. just
-              Personal). A shared M3 Printing inbox should be restricted to M3 Media.
+              Personal). A shared business inbox should be restricted to that LLC's company.
               {companiesById.size > 0 && p.allowedCompanyIds.size === 0 && " — pick at least one."}
             </div>
           </div>

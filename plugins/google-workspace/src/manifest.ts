@@ -61,26 +61,26 @@ const manifest: PaperclipPluginManifestV1 = {
               type: "string",
               title: "Display name",
               description:
-                "Human-readable label shown in this settings form (e.g. 'Barry personal', 'M3 Printing shared inbox'). Free-form, you can rename without breaking anything.",
+                "Human-readable label shown in this settings form (e.g. 'Personal account', 'Acme Print shared inbox'). Free-form, you can rename without breaking anything.",
             },
             key: {
               type: "string",
               title: "Identifier",
               description:
-                "Short stable ID agents pass as the `account` parameter (e.g. 'barry-personal', 'm3-printing'). Lowercase, no spaces. Once skills reference it, don't change it. Must be unique across accounts.",
+                "Short stable ID agents pass as the `account` parameter (e.g. 'personal', 'acme-print'). Lowercase, no spaces. Once skills reference it, don't change it. Must be unique across accounts.",
             },
             userEmail: {
               type: "string",
               title: "Email this account authenticates as",
               description:
-                "Informational — the Google email this account belongs to (e.g. 'barry@example.com'). Helps you keep track of which OAuth grant is which.",
+                "Informational — the Google email this account belongs to (e.g. 'you@example.com'). Helps you keep track of which OAuth grant is which.",
             },
             allowedCompanies: {
               type: "array",
               items: { type: "string", format: "company-id" },
               title: "Allowed companies",
               description:
-                "Companies allowed to use this Google account. Tick 'Portfolio-wide' to allow every company; otherwise tick the specific companies. Empty = unusable (fail-safe deny). Critical: a personal Google account should typically only be allowed for the Personal company; a shared M3 Printing inbox should be restricted to that LLC.",
+                "Companies allowed to use this Google account. Tick 'Portfolio-wide' to allow every company; otherwise tick the specific companies. Empty = unusable (fail-safe deny). Critical: a personal Google account should typically only be allowed for the Personal company; a shared business inbox should be restricted to that LLC.",
             },
             clientIdRef: {
               type: "string",

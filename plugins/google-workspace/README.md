@@ -65,7 +65,7 @@ Once per Google account family (your personal, an LLC's, etc.). One OAuth client
 
 Open `/<company>/plugins/google-workspace/setup-account` in Paperclip. Steps:
 
-1. Pick an **account identifier** (e.g. `barry-personal`, `m3-printing`) — this is the short ID agents pass as the `account` param.
+1. Pick an **account identifier** (e.g. `personal`, `acme-print`) — this is the short ID agents pass as the `account` param.
 2. Paste the **Client ID** and **Client Secret** from step 1.
 3. Pick the **owner company** — where the 3 secrets get stored.
 4. Tick the **allowed companies** — which companies' agents may use this account.
@@ -103,7 +103,7 @@ If you don't need Drive, set `scopes` on the account to a narrower list and re-r
 
 ## Sample tool calls
 
-All examples assume `account: "barry-personal"` is configured.
+All examples assume `account: "personal"` is configured.
 
 ### Calendar — list events for the next 24 hours
 
@@ -111,7 +111,7 @@ All examples assume `account: "barry-personal"` is configured.
 {
   "tool": "gcal_list_events",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "timeMin": "2026-04-30T00:00:00Z",
     "timeMax": "2026-05-01T00:00:00Z"
   }
@@ -124,7 +124,7 @@ All examples assume `account: "barry-personal"` is configured.
 {
   "tool": "gcal_create_event",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "summary": "Lunch with Tony",
     "start": { "dateTime": "2026-05-02T12:00:00-05:00" },
     "end":   { "dateTime": "2026-05-02T13:00:00-05:00" },
@@ -142,7 +142,7 @@ Requires `allowMutations: true`.
 {
   "tool": "gtasks_list_tasks",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "listId": "MTAyMz...",
     "showCompleted": false
   }
@@ -157,7 +157,7 @@ Requires `allowMutations: true`.
 {
   "tool": "gtasks_create_task",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "listId": "MTAyMz...",
     "title": "Pay invoice 1234",
     "due": "2026-05-08T00:00:00Z"
@@ -171,7 +171,7 @@ Requires `allowMutations: true`.
 {
   "tool": "gsheet_read",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "spreadsheetId": "1abc...",
     "range": "Sheet1!A1:D100"
   }
@@ -184,7 +184,7 @@ Requires `allowMutations: true`.
 {
   "tool": "gsheet_append",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "spreadsheetId": "1abc...",
     "range": "Sheet1!A:D",
     "values": [["2026-04-30", "Acme Corp", "lead", "warm"]]
@@ -198,7 +198,7 @@ Requires `allowMutations: true`.
 {
   "tool": "gdrive_search",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "query": "name contains 'invoice' and mimeType = 'application/pdf'"
   }
 }
@@ -210,7 +210,7 @@ Requires `allowMutations: true`.
 {
   "tool": "gdrive_upload_file",
   "params": {
-    "account": "barry-personal",
+    "account": "personal",
     "name": "report.pdf",
     "localPath": "/tmp/report.pdf",
     "parentFolderId": "0ABC..."

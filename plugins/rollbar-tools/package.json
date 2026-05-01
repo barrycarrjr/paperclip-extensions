@@ -1,0 +1,30 @@
+{
+  "name": "paperclip-plugin-rollbar-tools",
+  "version": "0.1.0",
+  "description": "Paperclip plugin that exposes Rollbar error monitoring as agent tools — items, occurrences, top items, resolve/mute, metrics snapshot. Multi-project, per-project allowedCompanies, mutations gated.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "esbuild": "^0.27.3",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr & Tony Allard"
+}
