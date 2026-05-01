@@ -1,0 +1,43 @@
+{
+  "name": "paperclip-plugin-google-workspace",
+  "version": "0.1.0",
+  "description": "Paperclip plugin exposing Google Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account, multi-account, per-company isolation.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit",
+    "grant": "tsx scripts/grant-google-access.ts"
+  },
+  "dependencies": {
+    "@googleapis/calendar": "^14.2.0",
+    "@googleapis/drive": "^20.1.0",
+    "@googleapis/oauth2": "^5.0.1",
+    "@googleapis/sheets": "^13.0.1",
+    "@googleapis/tasks": "^12.0.0",
+    "@paperclipai/plugin-sdk": "^2026.427.0",
+    "google-auth-library": "^10.6.2",
+    "mime-types": "^2.1.35"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^24.6.0",
+    "esbuild": "^0.27.3",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr",
+  "contributors": [
+    "Tony Allard"
+  ]
+}
