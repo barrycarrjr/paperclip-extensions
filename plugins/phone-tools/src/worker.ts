@@ -214,6 +214,84 @@ async function persistCallSummary(
   }
 }
 
+/**
+ * Record a call's terminal state — persist its summary AND emit cost
+ * telemetry — exactly once. Idempotent: subsequent calls with the same
+ * callId become no-ops because they detect the existing state record.
+ *
+ * Both code paths that observe a terminal state (polling via
+ * phone_call_status when no webhook is wired, OR the inbound webhook
+ * handler when one is) call this helper. First-to-arrive wins; the
+ * other becomes a no-op. This is what makes cost telemetry work for
+ * outbound-only setups where the operator hasn't configured webhooks.
+ */
+async function recordTerminalCallIfNew(
+  ctx: PluginContext,
+  args: {
+    callId: string;
+    accountKey: string;
+    engineKind: string;
+    companyIds: string[];
+    status: NormalizedCallStatus["status"];
+    direction: CallDirection | null;
+    from: string | null;
+    to: string | null;
+    startedAt: string | null;
+    endedAt: string | null;
+    durationSec: number | null;
+    costUsd: number | null;
+    endReason: string | null;
+    runCtxForTelemetry: ToolRunContext | null;
+  },
+): Promise<{ recorded: boolean }> {
+  const stateKey = { scopeKind: "instance" as const, stateKey: `call:${args.callId}` };
+
+  // Read first — if there's already a summary persisted, this terminal
+  // state has been recorded. Skip both the persist and the telemetry.
+  try {
+    const existing = await ctx.state.get(stateKey);
+    if (existing) return { recorded: false };
+  } catch {
+    // If state.get throws, fall through and try to record anyway —
+    // worst case we double-emit once. Better than missing the cost.
+  }
+
+  await persistCallSummary(ctx, {
+    callId: args.callId,
+    accountKey: args.accountKey,
+    companyIds: args.companyIds,
+    status: args.status,
+    direction: args.direction,
+    from: args.from,
+    to: args.to,
+    startedAt: args.startedAt,
+    endedAt: args.endedAt,
+    durationSec: args.durationSec,
+    costUsd: args.costUsd,
+    endReason: args.endReason,
+  });
+
+  // Cost telemetry — one shot per call. Emitted once per company
+  // attached to the call (single company in the polling case;
+  // potentially many in the webhook fan-out case).
+  for (const companyId of args.companyIds) {
+    await track(
+      ctx,
+      args.runCtxForTelemetry ?? ({ companyId, runId: "auto" } as ToolRunContext),
+      `call.${args.engineKind}`,
+      args.accountKey,
+      {
+        callId: args.callId,
+        durationSec: args.durationSec ?? 0,
+        costUsd: args.costUsd ?? 0,
+        endReason: args.endReason ?? "unknown",
+      },
+    );
+  }
+
+  return { recorded: true };
+}
+
 // ─── Idempotency for outbound calls ────────────────────────────────────
 
 async function findIdempotentCall(
@@ -339,6 +417,28 @@ const plugin = definePlugin({
             status.status === "canceled"
           ) {
             untrackOutbound(p.callId);
+            // Persist the call summary + emit cost telemetry — once per
+            // call. Idempotent across both polling and webhook paths.
+            const allowed = (r.resolved.account.allowedCompanies ?? []).filter(
+              (c) => c && c !== "*",
+            );
+            const companyIds = allowed.length > 0 ? allowed : [runCtx.companyId];
+            await recordTerminalCallIfNew(ctx, {
+              callId: p.callId,
+              accountKey: r.resolved.accountKey,
+              engineKind: r.resolved.engine.engineKind,
+              companyIds,
+              status: status.status,
+              direction: status.direction,
+              from: status.from,
+              to: status.to,
+              startedAt: status.startedAt,
+              endedAt: status.endedAt,
+              durationSec: status.durationSec,
+              costUsd: status.costUsd,
+              endReason: status.endReason,
+              runCtxForTelemetry: runCtx,
+            });
           }
           await track(ctx, runCtx, "phone_call_status", r.resolved.accountKey, {
             callId: p.callId,
@@ -1067,9 +1167,13 @@ const plugin = definePlugin({
     // Side effects on call lifecycle events
     if (event.kind === "call.ended") {
       untrackOutbound(event.callId);
-      await persistCallSummary(webhookCtx, {
+      // Persist + emit cost telemetry through the shared helper so we
+      // dedup against any polling-based observation that may have
+      // already recorded this call. First-to-arrive wins.
+      await recordTerminalCallIfNew(webhookCtx, {
         callId: event.callId,
         accountKey: claimed.accountKey,
+        engineKind: claimed.engine.engineKind,
         companyIds: companyTargets,
         status: "ended",
         direction: null,
@@ -1080,22 +1184,8 @@ const plugin = definePlugin({
         durationSec: event.durationSec,
         costUsd: event.costUsd ?? null,
         endReason: event.endReason,
+        runCtxForTelemetry: null,
       });
-      // Cost telemetry — one shot per call.
-      for (const companyId of companyTargets) {
-        await track(
-          webhookCtx,
-          { companyId, runId: "webhook" } as ToolRunContext,
-          `call.${claimed.engine.engineKind}`,
-          claimed.accountKey,
-          {
-            callId: event.callId,
-            durationSec: event.durationSec ?? 0,
-            costUsd: event.costUsd ?? 0,
-            endReason: event.endReason,
-          },
-        );
-      }
     }
   },
 

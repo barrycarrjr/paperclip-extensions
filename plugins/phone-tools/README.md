@@ -16,6 +16,7 @@ Paperclip plugin that lets agents place AI-driven phone calls. **v0.1.0 ships ou
 | Account / allowedCompanies / engineConfig edits hot-reload (no worker restart) | ✅ shipped (`onConfigChanged` clears engine cache) |
 | Per-account concurrency cap (`maxConcurrentCalls`) | ✅ shipped |
 | Safety preamble (identity-claim resistance, PII refusal, anti-injection, AI-honesty) auto-prepended to every assistant prompt | ✅ shipped |
+| Cost telemetry on call termination (works for outbound-only setups via polling + dedup-protected from inbound webhook fan-out) | ✅ shipped |
 | First consuming skill: `phone-appointment-booker` | ✅ shipped (markdown procedure in `extensions/skills/`) |
 
 ## Preview in v0.1.0 (code shipped, not yet smoke-tested — first-class in v0.2.0)
@@ -27,8 +28,7 @@ The code paths exist in the worker — they're just not exercised by v0.1.0's sm
 | Inbound calls (webhook → `plugin.phone-tools.call.received` event) | Needs `webhookSecretRef` populated, Vapi Server URL set, and a real DID routed to Vapi |
 | `phone_call_end` (force-hangup) | Untested live |
 | `phone_call_recording_url` | Needs `recordingEnabled` per account + a completed call with a recording |
-| Cost telemetry on `call.ended` | Fires from inbound webhook handler; requires inbound to be wired |
-| 3CX SIP-trunk routing (calls leave through your own DID) | Requires Vapi-side BYO SIP config; v0.1.0 uses Vapi's provisioned number |
+| 3CX SIP-trunk routing (calls leave through your own DID — also fixes "Spam Likely" caller-ID labels) | Requires Vapi-side BYO SIP config; v0.1.0 uses Vapi's provisioned number which carries fresh-VoIP / pooled-number reputation |
 
 ## Future versions (planned)
 
