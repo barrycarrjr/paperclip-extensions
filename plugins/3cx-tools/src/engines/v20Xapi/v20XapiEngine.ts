@@ -47,21 +47,36 @@ import { XapiClient } from "./xapiClient.js";
 import { openXapiWebSocket } from "./websocket.js";
 
 // ─── Endpoint constants ──────────────────────────────────────────────
+//
+// Two API families on 3CX v20:
+// 1. Configuration API (XAPI) at /xapi/v1/* — read-mostly, OData-shaped.
+//    Authenticated by the OAuth client + the "Enable Configuration API"
+//    checkbox on the Service Principal.
+// 2. Call Control API at /callcontrol/* — REST-shaped, gated by the
+//    separate "Enable Call Control API" checkbox AND requires per-extension
+//    selection in the Service Principal config.
+//
+// Reads use XAPI exclusively. Mutations split: DropCall (hangup) is a
+// Pbx.* function on XAPI, but MakeCall / Park / Transfer / Pickup are
+// only on the Call Control API path family.
 const EP = {
+  // XAPI reads
   queues: "/xapi/v1/Queues",
   queue: (id: string) => `/xapi/v1/Queues(${encodeURIComponent(id)})`,
   activeCalls: "/xapi/v1/ActiveCalls",
-  parkedCalls: "/xapi/v1/ParkedCalls",
   users: "/xapi/v1/Users",
   trunks: "/xapi/v1/Trunks",
   callHistory: "/xapi/v1/CallHistoryView",
-  // POST function endpoints
-  makeCall: "/xapi/v1/Pbx.MakeCall",
-  hangupCall: "/xapi/v1/Pbx.HangupCall",
-  transferCall: "/xapi/v1/Pbx.TransferCall",
-  parkCall: "/xapi/v1/Pbx.ParkCall",
-  pickupPark: "/xapi/v1/Pbx.PickupPark",
-  // Reports
+  // XAPI mutation function endpoint (the only one in XAPI)
+  dropCall: (callId: string) =>
+    `/xapi/v1/ActiveCalls(${encodeURIComponent(callId)})/Pbx.DropCall`,
+  // Call Control API (require separate enable on the Service Principal)
+  ccMakeCall: (ext: string, deviceId: string) =>
+    `/callcontrol/${encodeURIComponent(ext)}/devices/${encodeURIComponent(deviceId)}/makecall`,
+  ccDevices: (ext: string) => `/callcontrol/${encodeURIComponent(ext)}/devices`,
+  ccActiveCalls: (ext: string) =>
+    `/callcontrol/${encodeURIComponent(ext)}/participants`,
+  // Reports — endpoint name varies; we fall back to deriving from history.
   reportToday: "/xapi/v1/ReportCallSummaryByDayData",
 };
 
@@ -118,10 +133,14 @@ export class V20XapiEngine implements ThreeCxEngine {
     };
   }
 
-  async listParkedCalls(filter: ScopeFilter): Promise<NormalizedParkedCall[]> {
-    const data = await this.client.getCached<ODataList<RawParkedCall>>(EP.parkedCalls);
-    const normalized = (data.value ?? []).map(toParkedCall);
-    return filterParkedCalls(filter, normalized);
+  async listParkedCalls(_filter: ScopeFilter): Promise<NormalizedParkedCall[]> {
+    // Parked calls are NOT exposed via XAPI on 3CX v20 — the OData metadata
+    // only has CallParkingSettings (config), not a runtime parked-calls
+    // collection. Live parked-call enumeration requires the Call Control
+    // API, which the v0.1.0 engine doesn't yet integrate. Returning an
+    // empty list (rather than throwing) keeps this tool usable as a
+    // signal-of-absence; v0.2 will add Call Control API support.
+    return [];
   }
 
   async listActiveCalls(filter: ScopeFilter): Promise<NormalizedActiveCall[]> {
@@ -182,51 +201,66 @@ export class V20XapiEngine implements ThreeCxEngine {
     opts: HistoryOpts,
     exposeRecordings: boolean,
   ): Promise<{ calls: NormalizedCallRecord[]; nextCursor?: string }> {
+    // Field names confirmed against 3CX v20 swagger + forum examples: the
+    // CallHistoryView entity uses SegmentStartTime / SegmentEndTime, with
+    // OData v4 date() filter syntax (`date(SegmentStartTime) ge 2026-05-03`).
+    // Source/destination DNs are SrcDn / DstDn, NOT CallerNumber/CalleeNumber.
     const params = new URLSearchParams();
     const filters: string[] = [];
-    filters.push(`StartTime ge ${opts.since}`);
-    if (opts.until) filters.push(`StartTime le ${opts.until}`);
-    if (opts.direction) {
-      const dir =
-        opts.direction === "inbound"
-          ? "Inbound"
-          : opts.direction === "outbound"
-            ? "Outbound"
-            : "Internal";
-      filters.push(`Direction eq '${dir}'`);
+    const sinceDate = opts.since.length >= 10 ? opts.since.slice(0, 10) : opts.since;
+    filters.push(`date(SegmentStartTime) ge ${sinceDate}`);
+    if (opts.until) {
+      const untilDate = opts.until.slice(0, 10);
+      filters.push(`date(SegmentStartTime) le ${untilDate}`);
     }
-    if (opts.extension) filters.push(`Extension eq '${opts.extension}'`);
-    if (opts.queue) filters.push(`Queue eq '${opts.queue}'`);
+    if (opts.extension) {
+      filters.push(`(SrcDn eq '${opts.extension}' or DstDn eq '${opts.extension}')`);
+    }
     if (filters.length) params.set("$filter", filters.join(" and "));
     const top = Math.min(500, Math.max(1, opts.limit ?? 100));
     params.set("$top", String(top));
     const skip = opts.cursor ? Number(opts.cursor) : 0;
     if (skip > 0) params.set("$skip", String(skip));
-    params.set("$orderby", "StartTime desc");
+    params.set("$orderby", "SegmentStartTime desc");
 
     const data = await this.client.get<ODataList<RawCallRecord>>(
       `${EP.callHistory}?${params.toString()}`,
     );
     const calls = (data.value ?? []).map((r) => toCallRecord(r, exposeRecordings));
-    const filtered = filterCallHistory(filter, calls);
+    // Direction filter applied client-side because OData filtering on Direction
+    // requires knowing 3CX's exact enum casing on this install.
+    const directionFiltered = opts.direction
+      ? calls.filter((c) => c.direction === opts.direction)
+      : calls;
+    const queueFiltered = opts.queue
+      ? directionFiltered.filter((c) => c.queue === opts.queue)
+      : directionFiltered;
+    const scopeFiltered = filterCallHistory(filter, queueFiltered);
     const next =
-      data["@odata.nextLink"] || filtered.length === top
+      data["@odata.nextLink"] || scopeFiltered.length === top
         ? String(skip + top)
         : undefined;
-    return { calls: filtered, nextCursor: next };
+    return { calls: scopeFiltered, nextCursor: next };
   }
 
   async listDids(filter: ScopeFilter): Promise<NormalizedDid[]> {
-    const data = await this.client.getCached<ODataList<RawTrunk>>(
-      `${EP.trunks}?$expand=DidNumbers`,
-    );
+    // 3CX v20 returns DidNumbers inline as a primitive string[] on the
+    // bare /Trunks response. `$expand=DidNumbers` is rejected with 400
+    // because DidNumbers is a primitive collection, not a navigation
+    // property — OData $expand is only valid for nav properties.
+    const data = await this.client.getCached<ODataList<RawTrunk>>(EP.trunks);
     const normalized: NormalizedDid[] = [];
     for (const trunk of data.value ?? []) {
-      for (const did of trunk.DidNumbers ?? []) {
+      const trunkLabel = trunk.Gateway?.Name ?? trunk.Number;
+      // 3CX v20: DidNumbers is a string[] of bare/E.164 numbers, not an
+      // array of objects. Confirmed against a live 3CX v20 install 2026-05-03.
+      for (const raw of trunk.DidNumbers ?? []) {
+        const did = typeof raw === "string" ? raw : ((raw as RawDid).Number ?? "");
+        if (!did) continue;
         normalized.push({
-          e164: did.Number ?? "",
-          label: did.Description,
-          routedTo: did.DestinationNumber,
+          e164: normalizeE164(did),
+          label: trunkLabel,
+          routedTo: undefined,
         });
       }
     }
@@ -247,12 +281,6 @@ export class V20XapiEngine implements ThreeCxEngine {
   // ─── Mutations ───────────────────────────────────────────────────
 
   async clickToCall(filter: ScopeFilter, input: ClickToCallInput): Promise<ClickToCallResult> {
-    // When extensionRanges is left empty (shared-extensions setup — one
-    // physical extension serves multiple LLCs and the outbound trunk is
-    // selected via dial prefix at runtime), we cannot validate
-    // fromExtension against a per-company list. Fall back to the daily
-    // click-to-call cap + allowMutations as the gates. When the operator
-    // DOES populate extensionRanges, enforce strictly.
     if (
       filter.mode === "manual" &&
       filter.extensions.length > 0 &&
@@ -262,60 +290,118 @@ export class V20XapiEngine implements ThreeCxEngine {
         `[ESCOPE_VIOLATION] fromExtension "${input.fromExtension}" is not in the company's extension scope.`,
       );
     }
+    // Pick a device for the originating extension. The first registered
+    // hard-phone wins (soft-clients are deprioritised in resolveDeviceId).
+    const deviceId = await this.resolveDeviceId(input.fromExtension);
+    // Normalize first ("717.577.1023" → "+17175771023"), then apply the
+    // company's outbound prefix. The prefix step strips the leading "+"
+    // so the final dial string matches 3CX's outbound-rule expectations.
+    const normalized = normalizeUSDestination(input.toNumber);
+    const destination = applyOutboundPrefix(normalized, filter);
     const body = {
-      source: input.fromExtension,
-      destination: input.toNumber,
+      destination,
       idempotencyKey: input.idempotencyKey,
     };
-    const res = await this.client.post<{ callId?: string; status?: string }>(
-      EP.makeCall,
-      body,
-    );
-    const callId = res.callId ?? `unknown-${Date.now()}`;
-    return { callId, status: res.status ?? "initiated" };
-  }
-
-  async parkCall(filter: ScopeFilter, callId: string, slot?: string): Promise<{ slot: string }> {
-    const body: { callId: string; slot?: string } = { callId };
-    if (slot !== undefined) body.slot = slot;
-    const res = await this.client.post<{ slot?: string }>(EP.parkCall, body);
-    if (!res.slot) throw new Error(`[E3CX_UPSTREAM] Pbx.ParkCall returned no slot.`);
-    return { slot: res.slot };
-  }
-
-  async pickupPark(filter: ScopeFilter, slot: string, atExtension: string): Promise<void> {
-    if (
-      filter.mode === "manual" &&
-      filter.extensions.length > 0 &&
-      !filter.extensions.includes(atExtension)
-    ) {
-      throw new Error(
-        `[ESCOPE_VIOLATION] atExtension "${atExtension}" is not in the company's extension scope.`,
+    try {
+      const res = await this.client.post<{ result?: { callid?: string; callId?: string }; callid?: string; callId?: string; status?: string }>(
+        EP.ccMakeCall(input.fromExtension, deviceId),
+        body,
       );
+      const callId = res.result?.callid ?? res.result?.callId ?? res.callid ?? res.callId ?? `pending-${Date.now()}`;
+      return { callId, status: res.status ?? "initiated" };
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("[E3CX_AUTH]") || msg.includes("[E3CX_HTTP_403]")) {
+        throw new Error(
+          `[E3CX_CC_NOT_ENABLED] MakeCall via Call Control API failed (${msg}). ` +
+            `Verify "Enable access to the 3CX Call Control API" is checked on the Service Principal in 3CX admin, ` +
+            `and that the Extension(s) selector includes ${input.fromExtension}.`,
+        );
+      }
+      throw err;
     }
-    await this.client.post(EP.pickupPark, { slot, atExtension });
+  }
+
+  async parkCall(_filter: ScopeFilter, _callId: string, _slot?: string): Promise<{ slot: string }> {
+    throw new Error(
+      `[E3CX_CC_NOT_IMPLEMENTED] pbx_park_call requires Call Control API integration; v0.1.0 ships only DropCall via XAPI. v0.2 adds park/pickup/transfer via the /callcontrol/* path family.`,
+    );
+  }
+
+  async pickupPark(_filter: ScopeFilter, _slot: string, _atExtension: string): Promise<void> {
+    throw new Error(
+      `[E3CX_CC_NOT_IMPLEMENTED] pbx_pickup_park requires Call Control API integration; ships in v0.2.`,
+    );
   }
 
   async transferCall(
-    filter: ScopeFilter,
-    callId: string,
-    toExtension: string,
-    mode: "blind" | "attended",
+    _filter: ScopeFilter,
+    _callId: string,
+    _toExtension: string,
+    _mode: "blind" | "attended",
   ): Promise<void> {
-    if (
-      filter.mode === "manual" &&
-      filter.extensions.length > 0 &&
-      !filter.extensions.includes(toExtension)
-    ) {
-      throw new Error(
-        `[ESCOPE_VIOLATION] transfer target "${toExtension}" is not in the company's extension scope.`,
-      );
-    }
-    await this.client.post(EP.transferCall, { callId, toExtension, mode });
+    throw new Error(
+      `[E3CX_CC_NOT_IMPLEMENTED] pbx_transfer_call requires Call Control API integration; ships in v0.2.`,
+    );
   }
 
   async hangupCall(_filter: ScopeFilter, callId: string): Promise<void> {
-    await this.client.post(EP.hangupCall, { callId });
+    // DropCall IS in XAPI as an OData function on the ActiveCall entity:
+    //   POST /xapi/v1/ActiveCalls({id})/Pbx.DropCall
+    // (Confirmed via the published 3CX v20 swagger.)
+    await this.client.post(EP.dropCall(callId), {});
+  }
+
+  /**
+   * Look up a device on an extension to use as the originating endpoint
+   * for MakeCall. 3CX's Call Control API returns a top-level array of
+   * device records with these fields (confirmed against a live v20
+   * install 2026-05-03):
+   *
+   *     { dn: "200", device_id: "sip:200@192.168.27.40:5065", user_agent: "Yealink SIP-T48U ..." }
+   *
+   * `device_id` is a full SIP URI, not a plain UUID — must be
+   * URL-encoded when slotted into the makecall path.
+   *
+   * Selection heuristic: prefer a registered hard-phone over a
+   * soft-client. We rank by:
+   *   1. Skip mobile-client / web-client (loopback IP, "Mobile Client",
+   *      "WebClient" user-agent strings).
+   *   2. Pick the first remaining device.
+   *   3. If everything was filtered, fall back to the first raw device.
+   *
+   * This matches the operator intuition that "click-to-call from ext
+   * 200" means "ring the deskphone, then dial out" — not "open the 3CX
+   * mobile app on the phone in my pocket."
+   */
+  private async resolveDeviceId(extension: string): Promise<string> {
+    try {
+      const devices = await this.client.get<RawCcDevice[]>(EP.ccDevices(extension));
+      if (!devices || devices.length === 0) {
+        throw new Error(
+          `[E3CX_NO_DEVICE] Extension "${extension}" has no registered devices listed.`,
+        );
+      }
+      const preferred = devices.filter((d) => !isSoftClient(d)) ?? devices;
+      const chosen = (preferred.length > 0 ? preferred : devices)[0];
+      const id = chosen?.device_id;
+      if (!id) {
+        throw new Error(
+          `[E3CX_NO_DEVICE] Extension "${extension}" has devices but no device_id field. ` +
+            `Raw shape: ${JSON.stringify(chosen).slice(0, 200)}`,
+        );
+      }
+      return id;
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("[E3CX_HTTP_403]") || msg.includes("[E3CX_AUTH]")) {
+        throw new Error(
+          `[E3CX_CC_NOT_ENABLED] /callcontrol device listing returned ${msg}. ` +
+            `The Service Principal needs Call Control API access enabled AND Extension "${extension}" added to its Extension(s) selector.`,
+        );
+      }
+      throw err;
+    }
   }
 
   // ─── Realtime (Phase 3) ──────────────────────────────────────────
@@ -460,6 +546,18 @@ interface RawUser {
 }
 
 interface RawCallRecord {
+  /** Per the 3CX v20 swagger/forum examples, the canonical fields are these.
+   *  Older docs / swagger excerpts still reference CallId, etc. — accept both. */
+  SegmentId?: string;
+  SegmentStartTime?: string;
+  SegmentEndTime?: string;
+  SrcDn?: string;
+  DstDn?: string;
+  SrcExtendedDisplayName?: string;
+  DstExtendedDisplayName?: string;
+  CallTime?: number;
+  CallAnswered?: boolean;
+  // Legacy / alternate field names (swagger ambiguity):
   CallId?: string;
   CallerNumber?: string;
   CalleeNumber?: string;
@@ -487,8 +585,107 @@ interface RawDayStats {
 
 interface RawTrunk {
   Number?: string;
+  /** Top-level `Name` may be absent on v20 trunks; the human-friendly
+   *  display name lives at `Gateway.Name`. We accept both for resilience. */
   Name?: string;
-  DidNumbers?: { Number?: string; Description?: string; DestinationNumber?: string }[];
+  Gateway?: { Name?: string; Type?: string };
+  /** v20 returns a plain `string[]` of E.164 (or bare) DIDs. Older
+   *  swaggers reference an object array; we accept both for robustness. */
+  DidNumbers?: Array<string | RawDid>;
+}
+
+interface RawDid {
+  Number?: string;
+  Description?: string;
+  DestinationNumber?: string;
+}
+
+/** Normalize a DID to E.164 with `+` prefix. `15555550100` → `+15555550100`. */
+function normalizeE164(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("+")) return trimmed;
+  if (/^\d{10,15}$/.test(trimmed)) return `+${trimmed}`;
+  return trimmed;
+}
+
+interface RawCcDevice {
+  dn?: string;
+  device_id?: string;
+  user_agent?: string;
+}
+
+/**
+ * Apply a per-company outbound dial prefix to the destination, stripping
+ * any leading "+" so the result matches what 3CX's outbound rules expect
+ * (a digit prefix followed by a full number). E.g. prefix "9" with
+ * toNumber "+18005551212" → "918005551212".
+ *
+ * No-op when filter is not manual mode or has no prefix configured.
+ */
+export function applyOutboundPrefix(toNumber: string, filter: ScopeFilter): string {
+  if (filter.mode !== "manual") return toNumber;
+  const prefix = filter.outboundDialPrefix;
+  if (!prefix) return toNumber;
+  const stripped = toNumber.startsWith("+") ? toNumber.slice(1) : toNumber;
+  return `${prefix}${stripped}`;
+}
+
+/**
+ * Normalize a North-American phone number written in any common format
+ * to E.164 (`+1XXXXXXXXXX`). Accepts:
+ *   "717.577.1023"  → "+17175771023"
+ *   "717-577-1023"  → "+17175771023"
+ *   "(717) 577-1023" → "+17175771023"
+ *   "7175771023"    → "+17175771023"   (10 digits → assume US/Canada)
+ *   "17175771023"   → "+17175771023"   (11 digits leading 1)
+ *   "+17175771023"  → "+17175771023"   (already E.164, passthrough)
+ *   "+44 20 7946 0958" → "+442079460958" (international, kept as-is)
+ *
+ * Anything that doesn't fit one of these shapes is returned unchanged so
+ * an operator can pass exotic dial strings (PIN-prefixed, internal
+ * extension dialing, etc.) without the plugin second-guessing them.
+ *
+ * The output of this function is the input to `applyOutboundPrefix` —
+ * always run normalization first so a user typing "717.577.1023" with
+ * a company prefix "9" ends up dialing "917175771023".
+ */
+export function normalizeUSDestination(raw: string): string {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return trimmed;
+
+  // International (already-prefixed-with-+) — strip whitespace/dashes,
+  // keep the leading + and digits.
+  if (trimmed.startsWith("+")) {
+    const compact = "+" + trimmed.slice(1).replace(/[^\d]/g, "");
+    return compact.length > 1 ? compact : trimmed;
+  }
+
+  // Internal extension (3-5 digits) — pass through unchanged so click-to-call
+  // can dial extension-to-extension within the PBX without normalization.
+  if (/^\d{3,5}$/.test(trimmed)) return trimmed;
+
+  // Strip non-digits and decide based on length.
+  const digits = trimmed.replace(/[^\d]/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+
+  // Doesn't match a recognized US/CA shape; leave untouched.
+  return trimmed;
+}
+
+/** Soft-clients (mobile / web) ring inside an app, not on a desk phone.
+ *  We prefer skipping them when picking a "ring from this extension"
+ *  device for click-to-call. Heuristic on user_agent + device_id host. */
+function isSoftClient(d: RawCcDevice): boolean {
+  const ua = (d.user_agent ?? "").toLowerCase();
+  const id = (d.device_id ?? "").toLowerCase();
+  if (ua.includes("mobile client")) return true;
+  if (ua.includes("webclient")) return true;
+  if (ua.includes("web client")) return true;
+  if (ua.includes("3cx softphone")) return true;
+  // SIP URI on loopback usually = soft-client running on the PBX itself
+  if (id.includes("@127.0.0.1")) return true;
+  return false;
 }
 
 // ─── Mappers (raw → normalized) ───────────────────────────────────────
@@ -548,21 +745,67 @@ function toAgent(r: RawUser): NormalizedAgent {
 }
 
 function toCallRecord(r: RawCallRecord, exposeRecordings: boolean): NormalizedCallRecord {
-  const startedAt = r.StartTime ?? new Date().toISOString();
-  const endedAt = r.EndTime ?? startedAt;
+  const startedAt = r.SegmentStartTime ?? r.StartTime ?? new Date().toISOString();
+  const endedAt = r.SegmentEndTime ?? r.EndTime ?? startedAt;
+  // CallTime is seconds in v20; DurationSec is the legacy field name.
+  const durationSec =
+    typeof r.CallTime === "number"
+      ? r.CallTime
+      : (r.DurationSec ?? 0);
+  // SrcDn / DstDn are the canonical source/destination DNs in v20. Numbers
+  // come back as either bare digits or E.164; the active-calls / history
+  // tools surface them as-is (operator can normalize on their side).
+  const fromNumber = r.SrcDn ?? r.CallerNumber ?? "";
+  const toNumber = r.DstDn ?? r.CalleeNumber ?? "";
+  // Direction inferred from the DN pattern when v20 doesn't expose Direction
+  // as a discrete column. External-looking → outbound/inbound; both internal → internal.
+  const inferredDirection = inferDirection(fromNumber, toNumber, r.Direction);
+  // Disposition: v20 uses CallAnswered (bool); older swagger uses Status string.
+  let disposition = mapStatus(r.Status);
+  if (r.CallAnswered === true) disposition = "answered";
+  if (r.CallAnswered === false && !r.Status) disposition = "missed";
   return {
-    callId: String(r.CallId ?? ""),
-    fromNumber: r.CallerNumber ?? "",
-    toNumber: r.CalleeNumber ?? "",
-    extension: r.Extension,
+    callId: String(r.SegmentId ?? r.CallId ?? ""),
+    fromNumber,
+    toNumber,
+    extension: r.Extension ?? extensionFromDn(fromNumber, toNumber),
     queue: r.Queue,
     startedAt,
     endedAt,
-    durationSec: r.DurationSec ?? 0,
-    direction: mapDirection(r.Direction),
-    disposition: mapStatus(r.Status),
+    durationSec,
+    direction: inferredDirection,
+    disposition,
     recordingUrl: exposeRecordings && r.RecordingUrl ? r.RecordingUrl : undefined,
   };
+}
+
+function inferDirection(
+  src: string,
+  dst: string,
+  declared: string | undefined,
+): "inbound" | "outbound" | "internal" {
+  if (declared) return mapDirection(declared);
+  const srcInternal = isInternalDn(src);
+  const dstInternal = isInternalDn(dst);
+  if (srcInternal && dstInternal) return "internal";
+  if (srcInternal && !dstInternal) return "outbound";
+  if (!srcInternal && dstInternal) return "inbound";
+  return "internal"; // unknown — default
+}
+
+function isInternalDn(dn: string): boolean {
+  // 3CX internal DNs are typically 3-4 digit extension numbers; external are
+  // 10+ digits or contain '+'. This heuristic is good enough for direction
+  // inference; explicit Direction field always wins when present.
+  if (!dn) return false;
+  if (dn.startsWith("+")) return false;
+  return /^\d{2,5}$/.test(dn);
+}
+
+function extensionFromDn(src: string, dst: string): string | undefined {
+  if (isInternalDn(src)) return src;
+  if (isInternalDn(dst)) return dst;
+  return undefined;
 }
 
 function mapDirection(d?: string): "inbound" | "outbound" | "internal" {

@@ -597,25 +597,59 @@ const plugin = definePlugin({
       "pbx_click_to_call",
       {
         displayName: "Originate a call (click-to-call)",
-        description: "Origin from a human extension to a destination.",
+        description:
+          "Originate a call. Pass fromExtension OR fromUserId/fromUserEmail; toNumber accepts any common format.",
         parametersSchema: {
           type: "object",
           properties: {
             account: { type: "string" },
             fromExtension: { type: "string" },
+            fromUserId: { type: "string" },
+            fromUserEmail: { type: "string" },
             toNumber: { type: "string" },
             idempotencyKey: { type: "string" },
           },
-          required: ["fromExtension", "toNumber"],
+          required: ["toNumber"],
         },
       },
       async (params, runCtx) => {
         const p = params as Record<string, unknown>;
-        const fromExtension = asString(p.fromExtension);
         const toNumber = asString(p.toNumber);
-        if (!fromExtension || !toNumber) {
-          return errorResult("[EVALIDATION] fromExtension and toNumber are required.");
+        if (!toNumber) {
+          return errorResult("[EVALIDATION] toNumber is required.");
         }
+
+        // Resolve fromExtension. Priority: explicit > userId > userEmail.
+        let fromExtension = asString(p.fromExtension);
+        const fromUserId = asString(p.fromUserId);
+        const fromUserEmail = asString(p.fromUserEmail);
+
+        if (!fromExtension && (fromUserId || fromUserEmail)) {
+          const config = (await ctx.config.get()) as InstanceConfig;
+          const map = config.userExtensionMap ?? [];
+          const emailLower = fromUserEmail?.toLowerCase();
+          const match = map.find(
+            (m) =>
+              (fromUserId && m.userId === fromUserId) ||
+              (emailLower &&
+                m.userEmail &&
+                m.userEmail.toLowerCase() === emailLower),
+          );
+          if (!match) {
+            return errorResult(
+              `[EUSER_NOT_MAPPED] No userExtensionMap entry for ${fromUserId ?? fromUserEmail}. ` +
+                `Add the user to the plugin's "User → extension map" on the settings page.`,
+            );
+          }
+          fromExtension = match.extension;
+        }
+
+        if (!fromExtension) {
+          return errorResult(
+            "[EVALIDATION] One of fromExtension, fromUserId, or fromUserEmail is required.",
+          );
+        }
+
         try {
           await assertMutationsEnabled(ctx, "pbx_click_to_call");
         } catch (err) {
@@ -638,6 +672,7 @@ const plugin = definePlugin({
           });
           await track(ctx, runCtx, "pbx_click_to_call", r.resolved.accountKey, {
             fromExtension,
+            resolvedVia: fromUserId ? "userId" : fromUserEmail ? "userEmail" : "explicit",
           });
           return { data: result };
         } catch (err) {

@@ -4,6 +4,23 @@ Direct 3CX PBX integration for **operational visibility** (queue depth, parked c
 
 This is the operations / observability surface for the PBX itself, scoped per Paperclip company.
 
+## Two-API split — important to understand before configuring
+
+3CX v20 splits its programmable surface into two independent API families,
+each with its own enable-checkbox on the Service Principal:
+
+| API family | Path prefix | What it covers | Enable in 3CX admin |
+|---|---|---|---|
+| Configuration API (XAPI) | `/xapi/v1/*` | Read system state, queues, users, trunks, active calls, call history, plus a few function-style mutations like `Pbx.DropCall` | "Enable access to the 3CX Configuration API (XAPI)" — the **first** checkbox |
+| Call Control API | `/callcontrol/*` | Originate calls, park, pickup, transfer, per-device control, realtime call participants | "Enable access to the 3CX Call Control API" — the **second** checkbox |
+
+This plugin's read tools and `pbx_hangup_call` work via XAPI; the other
+mutation tools (`pbx_click_to_call`, `pbx_park_call`, `pbx_pickup_park`,
+`pbx_transfer_call`) require the Call Control API to be enabled AND the
+relevant extensions selected on the Service Principal. If you're starting
+read-only, just enable the XAPI checkbox; come back and enable Call
+Control later when you're ready to flip `allowMutations` on.
+
 ## What this plugin is, and what it is NOT
 
 There are two phone-related plugins in this codebase. They cover different surfaces and don't overlap.
@@ -34,15 +51,43 @@ If you want an AI to talk to someone, use `phone-tools`. If you want to query or
 | `pbx_did_list` | DIDs (E.164) routed to the company |
 | `pbx_extension_list` | Extensions visible to the company: number, displayName, type, email |
 
-### Mutations (Phase 2, v0.2.0 — gated behind `allowMutations`)
+### User-aware click-to-call
 
-| Tool | Effect |
+`pbx_click_to_call` accepts three forms of "who originates the call":
+
+- **`fromExtension`** — explicit extension number (e.g. `"200"`). Always works.
+- **`fromUserId`** — Paperclip user UUID. Resolved to an extension via the plugin's **User → Extension map**.
+- **`fromUserEmail`** — case-insensitive email match against the same map.
+
+The map lives in instance settings (`/instance/settings/plugins/3cx-tools` → "User → extension map") with one row per user: `userId` and/or `userEmail` plus their `extension`. This lets a user say "call X from my extension" via Clippy or an agent chat without typing the extension number — see the [`pbx-call-from-my-extension`](../../skills/pbx-call-from-my-extension/SKILL.md) skill for the canonical agent-side flow.
+
+`toNumber` accepts any common phone format. The plugin normalizes:
+
+| Input | Becomes |
 |---|---|
-| `pbx_click_to_call` | Originate a call: 3CX rings `fromExtension` first, then dials `toNumber` once the human picks up |
-| `pbx_park_call` | Park an active call into a slot (auto-assigned if `slot` omitted) |
-| `pbx_pickup_park` | Pick up a parked call to a specific extension |
-| `pbx_transfer_call` | Transfer an active call (blind or attended) |
-| `pbx_hangup_call` | Force-end an active call |
+| `717.577.1023` | `+17175771023` |
+| `(717) 577-1023` | `+17175771023` |
+| `7175771023` | `+17175771023` |
+| `17175771023` | `+17175771023` |
+| `+17175771023` | `+17175771023` (passthrough) |
+| `+44 20 7946 0958` | `+442079460958` |
+| `200` (3-5 digits) | `200` (passthrough — internal extension) |
+
+The normalized number then has the company's `outboundDialPrefix` applied (with the leading `+` stripped) so the final dial string matches what 3CX's outbound rules expect.
+
+### Mutations (Phase 2 — gated behind `allowMutations`)
+
+| Tool | Effect | Status in v0.1.0 |
+|---|---|---|
+| `pbx_hangup_call` | Force-end an active call via XAPI `Pbx.DropCall` | Available — XAPI only |
+| `pbx_click_to_call` | Originate from an extension via Call Control API | Available — needs Call Control API enabled on Service Principal |
+| `pbx_park_call` | Park an active call | **Returns `[E3CX_CC_NOT_IMPLEMENTED]`** — full Call Control API integration ships in v0.2 |
+| `pbx_pickup_park` | Pick up a parked call | **Returns `[E3CX_CC_NOT_IMPLEMENTED]`** — v0.2 |
+| `pbx_transfer_call` | Transfer an active call | **Returns `[E3CX_CC_NOT_IMPLEMENTED]`** — v0.2 |
+
+`pbx_parked_calls` (read-side park-slot enumeration) is also blocked on
+the same Call Control API gap and currently returns an empty list rather
+than throwing — useful as "no parked calls right now" but not authoritative.
 
 ### Realtime events (Phase 3, v0.3.0)
 
@@ -57,16 +102,17 @@ The WebSocket reconnects with exponential backoff on disconnect and refreshes th
 
 ## Setup walkthrough
 
-### 1. Create the XAPI client in 3CX admin
+### 1. Create the Service Principal in 3CX admin
 
 1. Log in to 3CX admin (Management Console).
 2. Go to **Integrations → API**.
-3. Click **Add** to create a new client.
-4. Give it a name (e.g. "Paperclip 3cx-tools").
-5. Permissions:
-   - **Read** — required for every tool.
-   - **Call Control** — required for `pbx_click_to_call`, `pbx_park_call`, `pbx_pickup_park`, `pbx_transfer_call`, `pbx_hangup_call`. If you only want read-only, leave Call Control off.
-6. Save. 3CX shows the **Client ID** and **Client Secret** once — copy them now.
+3. Click **Add** to create a new Service Principal.
+4. Set the **Client ID** field to a memorable name (e.g. `paperclip-3cx`). This becomes the OAuth `client_id` literal — the plugin uses it as-is.
+5. **Tick "Enable access to the 3CX Configuration API (XAPI)"** — required for every read tool and for `pbx_hangup_call`.
+6. **Department**: must be a real department (not "System Wide", which auto-locks Role to User). Pick any (e.g. your parent entity), then set **Role** to `System Owner`. "System Wide + User" returns 403 on collection reads.
+7. **Tick "Enable access to the 3CX Call Control API"** ONLY if you intend to use `pbx_click_to_call` or future v0.2 park/transfer mutations. If you do, also click **Select Extensions** and add every extension that should be allowed to originate calls.
+8. Click **Generate API Key** — 3CX displays the secret once. Copy it immediately. This is the OAuth `client_secret` for the `/connect/token` flow. (Re-generating later rotates the secret and immediately invalidates the previous one — update the Paperclip secret + your local PowerShell `$ClientSecret` together.)
+9. **Save** at the top of the form to commit. Without Save the client is not active.
 
 ### 2. Store the credentials as Paperclip secrets
 
@@ -92,7 +138,7 @@ Open `/instance/settings/plugins/3cx-tools` and fill in the settings form.
 
 - **Identifier** — short stable ID agents pass to tools (e.g. `main`).
 - **Display name** — free-form label for this settings page.
-- **PBX base URL** — fully qualified, scheme included (e.g. `https://voice.pa.3cx.us`). No trailing path.
+- **PBX base URL** — fully qualified, scheme included (e.g. `https://pbx.example.com`). No trailing path.
 - **3CX version** — `20` (current). `18` is on the roadmap; selecting it returns `[EENGINE_NOT_AVAILABLE]`.
 - **XAPI client_id** — paste the Paperclip secret UUID, NOT the raw client_id.
 - **XAPI client_secret** — paste the Paperclip secret UUID, NOT the raw secret.
@@ -110,19 +156,23 @@ Open `/instance/settings/plugins/3cx-tools` and fill in the settings form.
 | `manual` | One PBX shared across multiple Paperclip companies (no 3CX multi-company license). | You declare `extensionRanges` / `queueIds` / `dids` per company in the routing table. Plugin filters every result client-side. |
 | `native` | One PBX with 3CX's Multi-Company license enabled. | You map each Paperclip company to a 3CX `tenantId`. The plugin sends `X-3CX-Tenant: <tenantId>` and 3CX scopes server-side. |
 
-#### Manual-mode routing — Carr Rock worked example
+#### Manual-mode routing — worked example
 
-Carr Rock runs one shared PBX (single license) split by-convention. The routing table on the account looks like:
+A single shared PBX (single license) split by-convention across multiple Paperclip companies. The routing table on the account looks like:
 
 ```
 Per-company routing:
-  • C3 Media        ext: 100-119          queues: 800       dids: +1XXXXXXXXXX
-  • Real Estate LLC ext: 200-219          queues: 810       dids: +1YYYYYYYYYY
-  • Printing LLC    ext: 300-319, 401     queues: 820       dids: +1ZZZZZZZZZZ
+  • Company A   ext: 100-119          queues: 800       dids: +1XXXXXXXXXX
+  • Company B   ext: 200-219          queues: 810       dids: +1YYYYYYYYYY
+  • Company C   ext: 300-319, 401     queues: 820       dids: +1ZZZZZZZZZZ
   ...
 ```
 
-When an agent in C3 Media calls `pbx_active_calls`, the plugin filters to extensions 100–119 / queue 800 / DID +1XXXXXXXXXX. An agent in Real Estate doesn't see C3 Media's calls — even though they share a PBX.
+When an agent in Company A calls `pbx_active_calls`, the plugin filters to extensions 100–119 / queue 800 / DID +1XXXXXXXXXX. An agent in Company B doesn't see Company A's calls — even though they share a PBX.
+
+For shared-extension setups (one physical extension serves multiple companies; the LLC for an outbound call is selected via 3CX's outbound-prefix-to-trunk mapping), leave `Extension ranges` empty. Inbound attribution still works via DIDs and queues.
+
+For outbound attribution, set the per-company **`Outbound dial prefix`** field to the digit a human at this company would press before dialing externally (e.g. `9` for one LLC, `8` for another). When `pbx_click_to_call` originates from an agent in this company, the plugin prepends the prefix to the destination so 3CX's outbound rules pick the right trunk — same effect as a human pressing the digit at the desk phone. The plugin strips any leading `+` from the destination before prepending, so `+18005551212` with prefix `9` sends `918005551212` to 3CX. Leave blank if 3CX's default outbound rule for the originating extension is already correct (typical for single-LLC PBXes).
 
 Click-to-call is doubly checked: `fromExtension` must be in the calling company's `extensionRanges` or the call returns `[ESCOPE_VIOLATION]` before any 3CX API call.
 
@@ -196,6 +246,10 @@ Every error follows `[ECODE_<...>] human message` so skills can pattern-match.
 | `E3CX_NETWORK` | TCP/DNS failure reaching the PBX. |
 | `E3CX_HTTP_<status>` | Generic HTTP error not covered above. |
 | `E3CX_CONFIG` | Misconfigured account (e.g. unknown mode). |
+| `E3CX_CC_NOT_ENABLED` | The Call Control API checkbox isn't enabled on the Service Principal, or the originating extension isn't in the Service Principal's "Extension(s)" selector. Affects `pbx_click_to_call` only. |
+| `E3CX_CC_NOT_IMPLEMENTED` | Tool requires the Call Control API engine which v0.1.0 only stubs. Ships in v0.2.0. Affects `pbx_park_call`, `pbx_pickup_park`, `pbx_transfer_call`. |
+| `E3CX_NO_DEVICE` | The originating extension has no registered devices listed via `/callcontrol/{ext}/devices`. The agent must have at least one phone (deskphone, app, soft-client) registered. |
+| `EUSER_NOT_MAPPED` | `pbx_click_to_call` was invoked with `fromUserId` / `fromUserEmail` but no matching entry exists in the User → Extension map. Add the user on the plugin settings page. |
 
 ## allowedCompanies — non-negotiable
 
@@ -219,6 +273,24 @@ The plugin writes to `instance`-scoped state with these keys:
 
 (The OAuth token cache is held in process memory only — never persisted.)
 
+## Validation against a real PBX
+
+A standalone PowerShell suite lives at `scripts/live-test.ps1`. It mirrors
+what each plugin tool does internally and probes your 3CX install
+directly — no Paperclip server required. Run it after any change to your
+Service Principal config or after upgrading 3CX:
+
+```powershell
+$env:XAPI_3CX_CLIENT_SECRET = '<the-rotated-secret>'
+powershell -ExecutionPolicy Bypass -File scripts/live-test.ps1
+```
+
+It runs 11 numbered probes (OAuth → Defs → Queues → Users → Trunks →
+ActiveCalls → CallHistoryView → ParkedCalls → today-stats → Call
+Control devices → DropCall path) and prints PASS / FAIL / SKIP per probe.
+Probe #11 is a guarded real outbound test (commented out) that you can
+flip on to dial your mobile from a chosen extension.
+
 ## Local development loop
 
 ```bash
@@ -226,11 +298,10 @@ The plugin writes to `instance`-scoped state with these keys:
 pnpm install
 pnpm typecheck
 pnpm build
-pnpm smoke      # runs the rejection-path + happy-path smoke suite
+pnpm smoke      # runs the in-memory rejection + shape suite (12 cases)
 
-# from the paperclip checkout:
-cd C:/Users/barry/paperclip
-pnpm --filter paperclipai exec tsx cli/src/index.ts plugin install --local C:/Users/barry/paperclip-extensions/plugins/3cx-tools
+# from your paperclip checkout:
+pnpm --filter paperclipai exec tsx cli/src/index.ts plugin install --local <path-to>/paperclip-extensions/plugins/3cx-tools
 # then after edits + pnpm build:
 pnpm --filter paperclipai exec tsx cli/src/index.ts plugin reinstall 3cx-tools
 ```

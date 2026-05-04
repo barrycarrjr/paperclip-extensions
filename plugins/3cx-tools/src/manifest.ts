@@ -6,7 +6,14 @@ const PLUGIN_VERSION = "0.1.0";
 const companyRoutingItemSchema = {
   type: "object",
   required: ["companyId"],
-  propertyOrder: ["companyId", "extensionRanges", "queueIds", "dids", "queueThresholds"],
+  propertyOrder: [
+    "companyId",
+    "extensionRanges",
+    "queueIds",
+    "dids",
+    "outboundDialPrefix",
+    "queueThresholds",
+  ],
   properties: {
     companyId: {
       type: "string",
@@ -35,6 +42,12 @@ const companyRoutingItemSchema = {
       title: "DIDs (E.164)",
       description:
         "External phone numbers (DIDs) routed to this company, in E.164 format (e.g. \"+18005551212\"). Used to attribute inbound calls when filtering active calls and call history.",
+    },
+    outboundDialPrefix: {
+      type: "string",
+      title: "Outbound dial prefix",
+      description:
+        "Optional. Single digit (or short string) that 3CX's outbound rules use to route this company's outbound calls through the right trunk — the same prefix a human at this company's extension would press before dialing (e.g. \"9\" for one LLC, \"8\" for another). When set, pbx_click_to_call from an agent in this company prepends the prefix to the destination so 3CX picks the correct outbound trunk. The plugin strips any leading \"+\" from the destination before prepending, so toNumber=\"+18005551212\" with prefix=\"9\" sends \"918005551212\" to 3CX. Leave blank if you don't want prefix-based trunk selection (3CX's default outbound rule applies).",
     },
     queueThresholds: {
       type: "array",
@@ -122,13 +135,13 @@ const accountItemSchema = {
       type: "string",
       title: "Display name",
       description:
-        "Human-readable label shown on this settings page only (e.g. \"Carr Rock PBX\"). Free-form.",
+        "Human-readable label shown on this settings page only (e.g. \"Primary PBX\"). Free-form.",
     },
     pbxBaseUrl: {
       type: "string",
       title: "PBX base URL",
       description:
-        "Fully-qualified URL for the PBX, scheme included. Example: https://voice.pa.3cx.us. Don't include a path. The plugin appends /xapi/v1/... and /connect/token automatically. The PBX must be reachable from this Paperclip instance — open the network path before clicking Save.",
+        "Fully-qualified URL for the PBX, scheme included. Example: https://pbx.example.com. Don't include a path. The plugin appends /xapi/v1/... and /connect/token automatically. The PBX must be reachable from this Paperclip instance — open the network path before clicking Save.",
     },
     pbxVersion: {
       type: "string",
@@ -225,7 +238,7 @@ const manifest: PaperclipPluginManifestV1 = {
   },
   instanceConfigSchema: {
     type: "object",
-    propertyOrder: ["allowMutations", "defaultAccount", "accounts"],
+    propertyOrder: ["allowMutations", "defaultAccount", "accounts", "userExtensionMap"],
     properties: {
       allowMutations: {
         type: "boolean",
@@ -246,6 +259,43 @@ const manifest: PaperclipPluginManifestV1 = {
         description:
           "One entry per 3CX PBX you want Paperclip to talk to. Most operators have one. Every account must list 'Allowed companies' — empty list = unusable.",
         items: accountItemSchema,
+      },
+      userExtensionMap: {
+        type: "array",
+        title: "User → extension map",
+        description:
+          "Optional. Maps Paperclip users to their 3CX extension so an agent (e.g. Clippy) can invoke pbx_click_to_call as 'call X from my extension' without the user typing their extension number every time. Each entry needs the extension and at least one identifier (Paperclip user UUID, email, or both). Resolution is case-insensitive on email. Empty list = the caller must always pass `fromExtension` explicitly.",
+        items: {
+          type: "object",
+          required: ["extension"],
+          propertyOrder: ["userId", "userEmail", "extension", "label"],
+          properties: {
+            userId: {
+              type: "string",
+              format: "user-id",
+              title: "Paperclip user",
+              description:
+                "Optional. UUID of a Paperclip board user. Preferred when stable. If both userId and userEmail are set, either match wins.",
+            },
+            userEmail: {
+              type: "string",
+              title: "Email (case-insensitive)",
+              description:
+                "Optional. Email address — useful when the agent only knows who's calling from a chat actor's email. Lowercased on both sides before comparison.",
+            },
+            extension: {
+              type: "string",
+              title: "3CX extension",
+              description:
+                "Internal extension number to ring first when this user originates a click-to-call (e.g. \"200\").",
+            },
+            label: {
+              type: "string",
+              title: "Display label",
+              description: "Free-form note shown only in this settings page.",
+            },
+          },
+        },
       },
     },
     required: ["accounts"],
@@ -421,7 +471,7 @@ const manifest: PaperclipPluginManifestV1 = {
       name: "pbx_click_to_call",
       displayName: "Originate a call (click-to-call)",
       description:
-        "Originate a call from a human extension to a destination. 3CX rings fromExtension first; once the human picks up, 3CX dials toNumber. Mutation, gated by allowMutations and the per-day cap on the account.",
+        "Originate a call from a human extension to a destination. 3CX rings fromExtension first; once the human picks up, 3CX dials toNumber. Either pass `fromExtension` directly OR pass `fromUserId` / `fromUserEmail` and the plugin resolves the extension from the configured user→extension map. The destination accepts any common phone format ('717.577.1023', '+17175771023', '(717) 577-1023', '17175771023') — the plugin normalizes to E.164 before applying any per-company outbound dial prefix. Mutation, gated by allowMutations and the per-day cap.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -429,12 +479,22 @@ const manifest: PaperclipPluginManifestV1 = {
           fromExtension: {
             type: "string",
             description:
-              "Internal extension to ring first. Must be in the company's extension scope when mode = manual; otherwise [ESCOPE_VIOLATION].",
+              "Internal extension to ring first. Must be in the company's extension scope when mode = manual; otherwise [ESCOPE_VIOLATION]. Optional if fromUserId or fromUserEmail is provided and the userExtensionMap has a matching entry.",
+          },
+          fromUserId: {
+            type: "string",
+            description:
+              "Optional. Paperclip user UUID — the plugin looks up the user's extension from `userExtensionMap` in instance config. Use this when the agent knows who's asking ('call from my extension') without knowing the extension number.",
+          },
+          fromUserEmail: {
+            type: "string",
+            description:
+              "Optional. Email of the calling user (case-insensitive). Falls back to lookup via `userExtensionMap` when fromExtension and fromUserId are both absent.",
           },
           toNumber: {
             type: "string",
             description:
-              "Destination — E.164 external number (e.g. '+18005551212') or another internal extension.",
+              "Destination — any common format. The plugin normalizes 10/11-digit US/CA numbers to E.164, accepts '+' international forms, and passes internal 3-5 digit extensions through unchanged.",
           },
           idempotencyKey: {
             type: "string",
@@ -442,7 +502,7 @@ const manifest: PaperclipPluginManifestV1 = {
               "Optional. Repeat invocations with the same key within 24h return the existing callId rather than originating a duplicate call.",
           },
         },
-        required: ["fromExtension", "toNumber"],
+        required: ["toNumber"],
       },
     },
     {

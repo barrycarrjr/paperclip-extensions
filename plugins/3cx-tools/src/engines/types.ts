@@ -21,6 +21,10 @@ export interface CompanyRoutingEntry {
   extensionRanges?: string[];
   queueIds?: string[];
   dids?: string[];
+  /** Optional outbound dial prefix (e.g. "9"). When set, the
+   *  plugin prepends it to the destination on pbx_click_to_call so
+   *  3CX's outbound rules pick the right trunk for this company. */
+  outboundDialPrefix?: string;
   /** v0.3 only — synthetic queue.threshold per queue. */
   queueThresholds?: { queueId: string; depth: number; longestWaitSec?: number }[];
 }
@@ -45,10 +49,29 @@ export interface ConfigAccount {
   maxClickToCallPerDay?: number;
 }
 
+export interface UserExtensionMapping {
+  /** Paperclip user UUID. Either this or `userEmail` (or both) must be set. */
+  userId?: string;
+  /** Email used as a fallback identifier (case-insensitive match). */
+  userEmail?: string;
+  /** 3CX extension number to ring as the originating endpoint. */
+  extension: string;
+  /** Free-form display label, e.g. "Barry — desk + mobile client". */
+  label?: string;
+}
+
 export interface InstanceConfig {
   allowMutations?: boolean;
   defaultAccount?: string;
   accounts?: ConfigAccount[];
+  /**
+   * Per-instance map of Paperclip users to their 3CX extension. Lets
+   * an agent invoke pbx_click_to_call with `fromUserId` or
+   * `fromUserEmail` instead of an explicit `fromExtension`. Resolved
+   * once per call; if no entry matches, the tool falls back to whatever
+   * `fromExtension` was passed (or errors if none).
+   */
+  userExtensionMap?: UserExtensionMapping[];
 }
 
 // ─── Scope filter (constructed by the worker per company per mode) ────
@@ -61,6 +84,8 @@ export type ScopeFilter =
       extensionRanges: string[];
       queueIds: string[];
       dids: string[];
+      /** Optional outbound dial prefix carried into MakeCall. */
+      outboundDialPrefix?: string;
     }
   | { mode: "native"; tenantId: string };
 

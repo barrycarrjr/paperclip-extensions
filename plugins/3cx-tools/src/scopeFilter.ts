@@ -33,6 +33,7 @@ export function buildScopeFilter(
       extensionRanges: entry.extensionRanges ?? [],
       queueIds: entry.queueIds ?? [],
       dids: entry.dids ?? [],
+      outboundDialPrefix: entry.outboundDialPrefix?.trim() || undefined,
     };
   }
   if (mode === "native") {
