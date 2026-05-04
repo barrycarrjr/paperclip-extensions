@@ -112,11 +112,213 @@ const accountItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — outbound calls via Vapi
+
+Get the plugin placing outbound AI-driven phone calls. v0.1.0 ships outbound only; inbound and the DIY (self-hosted) engine come in subsequent versions. Reckon on **about 15–20 minutes** for first-time setup.
+
+There are two ways to run outbound:
+
+1. **Quickstart (5 minutes)** — uses Vapi's provisioned number. Calls work immediately, but recipients see a "Spam Likely" / "Unknown" caller-ID label because the originating number is fresh and pooled across Vapi customers. Fine for smoke testing and internal demos. **Not** appropriate for production calls to real customers.
+2. **Production via 3CX SIP trunk (additional ~10 minutes + 3CX admin access)** — outbound calls leave through one of your own DIDs. Recipients see your branded caller-ID, no spam tag. Required for any real customer-facing use.
+
+Do **Quickstart** first to verify the loop works end-to-end, then layer on the 3CX trunk before going live.
+
+---
+
+## Quickstart — outbound via Vapi's provisioned number
+
+### 1. Vapi account
+
+Sign up at [https://dashboard.vapi.ai](https://dashboard.vapi.ai) if you don't already have an account.
+
+### 2. Create a Vapi Private API Key
+
+In the Vapi dashboard:
+
+- Go to **Org → API Keys**
+- Click **Create new key**
+- Choose **Private API Key** (NOT the public/web key — those can't initiate calls)
+- Copy the key
+
+### 3. Provision a Vapi phone number (Quickstart only)
+
+Still in Vapi dashboard:
+
+- Go to **Phone Numbers → Add Phone Number**
+- Choose **Vapi Phone Number** (the free one Vapi provides). Skip "BYO SIP Trunk" for now — that's the production path covered below.
+- After it's created, **copy the phone-number's ID** (a UUID, NOT the E.164 number itself). You'll need it as \`defaultNumberId\` on the plugin settings page.
+
+### 4. Create a Paperclip secret holding the Vapi API key
+
+In Paperclip, switch to the company that should own this phone account (typically the LLC the calls are made on behalf of). Then:
+
+- Go to **Secrets → Add**
+- Name it something like \`vapi-api-key\`
+- Paste the Vapi Private API Key from step 2 as the value
+- Save, then **copy the secret's UUID** — you'll paste it into the plugin settings next
+
+### 5. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. You'll see an empty **Phone accounts** list. Click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`main\` |
+| **Display name** | (whatever you want, e.g. "M3 Media — main") |
+| **Engine** | \`vapi\` |
+| **Engine API key** | paste the secret UUID from step 4 |
+| **Webhook signing secret** | leave blank for outbound-only Quickstart |
+| **Default phone-number ID** | the UUID from step 3 |
+| **Default assistant ID** | leave blank (agents pass inline assistant configs to \`phone_call_make\`) |
+| **Enable call recording** | leave off |
+| **Max concurrent outbound calls** | \`3\` (default) |
+| **Allowed companies** | tick the company you want to use this account |
+
+Then at the top:
+
+- **Default account key:** \`main\`
+- **Allow place-call / hangup / assistant mutations:** **enable** when you're ready to actually place calls
+
+Save.
+
+### 6. Smoke-test
+
+From a logged-in shell session, run:
+
+\`\`\`bash
+cd <paperclip-extensions>/plugins/phone-tools
+PAPERCLIP_COOKIE='<your-session-cookie>' \\
+COMPANY_ID='<the-company-uuid-you-allow-listed>' \\
+AGENT_ID='<an-agent-uuid-in-that-company>' \\
+RUN_ID='<any-recent-heartbeat-run-uuid>' \\
+TO='+1XXXXXXXXXX' \\
+./scripts/smoke-outbound.sh
+\`\`\`
+
+The script does a 30-second test call with a built-in demo assistant, polls until the call ends, and prints the transcript. Costs about ¥0.10 (~$0.07) per call.
+
+If the call rings out and the AI speaks its first line — the loop is working.
+
+---
+
+## Production — outbound via 3CX SIP trunk (BYO carrier)
+
+This is what makes calls show your **branded caller-ID** instead of "Spam Likely". Do this before placing calls to real customers. There are four steps: create a SIP trunk credential in Vapi, attach a DID to it, create the matching trunk in 3CX, and add an outbound rule. All four are required — missing step 10 is the most common reason calls fail silently.
+
+### 7. Create a SIP trunk credential in Vapi
+
+In the Vapi dashboard:
+
+- Go to **Settings → Integrations**
+- Scroll down to the **Phone Number Providers** section and click **SIP Trunk**
+- Click **Add New SIP Trunk**
+- Fill in:
+  - **Name**: anything recognizable, e.g. \`3CX (main)\`
+  - **Gateway #1 → IP Address / Domain**: your 3CX server's public FQDN or IP, e.g. \`pbx.example.com\`
+  - **Port**: \`5060\` (leave default unless your 3CX is configured for TLS on 5061)
+  - **Netmask**: \`32\`
+  - **Outbound Protocol**: \`UDP\`
+  - ☑ **Allow inbound calls**, ☑ **Allow outbound calls**
+  - Leave **Authentication** (Username / Password) blank — use IP-based auth (see note)
+  - Leave **Use SIP Registration** unchecked (see note)
+- Click **Save SIP Trunk**
+
+> **IP-based vs. registration auth**: For the recommended IP-based path, leave credentials blank and unchecked. Vapi sends SIP traffic to 3CX by source IP and 3CX accepts it based on the IP you whitelist in step 9. If you prefer Vapi to register like a softphone, check **Use SIP Registration** and enter the SIP username/password of the 3CX extension you create for Vapi — but then step 9 is different (create an extension, not a trunk).
+
+### 8. Attach your DID to the SIP trunk credential
+
+Still in the Vapi dashboard:
+
+- Go to **Phone Numbers → Create Phone Number**
+- Choose **BYO SIP Trunk Number**
+- Fill in:
+  - **Phone Number**: the E.164 DID you want as caller-ID, e.g. \`+15551234567\`
+  - **SIP Trunk Credential**: pick the trunk you saved in step 7 from the dropdown
+  - **Label**: optional human-readable name
+- Click **Import SIP Phone Number**
+
+> If the **SIP Trunk Credential** dropdown shows "No SIP trunks available", the trunk from step 7 wasn't saved yet — go back and save it first.
+
+**Copy the phone-number UUID** from the resulting entry (shown in the URL when you click into it). You'll paste it as \`defaultNumberId\` in step 11.
+
+### 9. Create the Vapi SIP trunk in 3CX
+
+(Requires 3CX **Pro** or **Enterprise** — Standard/Free doesn't support custom SIP trunks.)
+
+In the 3CX Admin Console:
+
+- Go to **Voice & Chat** in the left nav
+- Click **+ Add Trunk** at the top of the page — NOT **+ Add Gateway** (different thing, right next to it)
+- Choose **Generic SIP Trunk**
+- Fill in:
+  - **Trunk Name**: \`Vapi\`
+  - **Registrar/Server/Gateway hostname or IP**: leave blank for IP-based auth, or \`sip.vapi.ai\` if using SIP registration
+  - **Authentication**: for IP-based auth, add Vapi's SIP origination IP ranges to the allowed IPs list (check [Vapi's current IP list](https://docs.vapi.ai/sip) — they change); for registration-based, enter the username/password
+  - Codec: **G.711 µ-law (PCMU)** as primary
+- Save
+
+> If 3CX is behind NAT, enable **STUN** in the trunk's advanced settings.
+
+### 10. Add an outbound rule in 3CX
+
+**This step is required.** Without it, calls from Vapi hit 3CX but immediately fail — 3CX logs "no outbound rule found for the number" and drops the call.
+
+In the 3CX Admin Console:
+
+- Go to **Outbound Rules** in the left nav
+- Click **+ Add**
+- Fill in:
+  - **Rule Name**: \`Vapi outbound\`
+  - **Calls from**: select the Vapi trunk you created in step 9
+  - **Route 1**: your Flowroute (or other PSTN) trunk that owns the DID you want as caller-ID
+  - **Caller ID**: set to the E.164 DID from step 8, e.g. \`+15551234567\`
+- Save
+
+Outbound calls from Vapi now route through your PSTN trunk and arrive at the recipient with your branded caller-ID.
+
+### 11. Update \`defaultNumberId\` and re-smoke
+
+Back on this plugin's **Configuration** tab:
+
+- Edit the \`main\` account
+- Change **Default phone-number ID** to the UUID from step 8 (the BYO-SIP number)
+- Save
+
+Run the smoke script again. Calls now leave through your 3CX trunk and arrive at the recipient with your branded caller-ID.
+
+---
+
+## Troubleshooting
+
+- **\`[EVAPI_AUTH]\` errors** — the API key in the secret is wrong, or the secret-ref UUID is wrong, or the secret was rotated and the plugin is caching an old value. Toggle **Allow mutations** off then on to force a fresh secret read.
+- **\`[ECOMPANY_NOT_ALLOWED]\`** — the calling company isn't ticked in the account's **Allowed companies** list. Configuration tab → edit account → fix.
+- **\`[ECONCURRENCY_LIMIT]\`** — you've hit \`maxConcurrentCalls\`. Either bump the cap or wait for in-flight calls to finish.
+- **Call rings but AI doesn't speak** — check the Vapi dashboard's Calls panel for the specific call. Common cause: a voice provider error (e.g. "voice not found"). Drop \`voice\` from the assistant config so Vapi uses its defaults.
+- **Recipients still see "Spam Likely" after step 11** — fresh BYO trunk numbers also start with no reputation. The label clears with use over a few days/weeks. To skip the wait, register the number with a branded-caller-ID service like First Orion, Numeracle, or Hiya Connect (~$10–50/month per number).
+
+## What's not in v0.1.0
+
+| Capability | Status |
+|---|---|
+| Inbound calls (someone calls *you*, AI answers) | Code shipped, not yet smoke-tested. First-class in **v0.2.0**. Requires \`webhookSecretRef\` and a 3CX inbound rule routing a DID to the Vapi trunk. |
+| Force-hangup / recording-URL retrieval | Code shipped, not yet smoke-tested. **v0.2.0**. |
+| DIY engine (Jambonz + ElevenLabs primary + local Qwen TTS fallback) — fully self-hosted | Placeholder in v0.1.0. **v0.3.0**. |
+| DTMF mid-call, warm transfer, voicemail-drop, multi-party | Future versions. |
+
+If you need any of those today, check the [plugin folder README](README.md) for the broader feature roadmap.
+`;
+
+// `setupInstructions` is recognised by the host's manifest validator
+// (paperclip core packages/shared) but the field is not yet in the
+// npm-published @paperclipai/plugin-sdk type. Widening the manifest type
+// so this plugin can populate the field today; remove the intersection
+// once the SDK ships the type.
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Phone (AI calls via 3CX + Vapi/DIY)",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX. v0.1.0 backs onto Vapi.ai; v0.2.0 will add a self-hosted DIY engine (jambonz + OpenAI Realtime) selectable from the same engine dropdown. Multi-account, per-account allowedCompanies, mutations gated, optional call recording per account.",
   author: "Barry Carr & Tony Allard",
