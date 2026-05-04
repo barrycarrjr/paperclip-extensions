@@ -192,6 +192,19 @@ const plugin = definePlugin({
         };
       },
     );
+    ctx.actions.register("list_printers_options", async () => {
+      const raw = await runPowerShell(
+        "@(Get-Printer | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress",
+      );
+      let names: string[] = [];
+      try {
+        const parsed = JSON.parse(raw);
+        names = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        names = [];
+      }
+      return { options: names };
+    });
   },
 });
 

@@ -27,6 +27,7 @@ const manifest: PaperclipPluginManifestV1 = {
       defaultPrinter: {
         type: "string",
         title: "Default printer name",
+        "x-paperclip-optionsFrom": { actionKey: "list_printers_options" },
         description:
           "Exact Windows printer name used when an agent calls print_text without specifying a printer. Leave blank to use the Windows system default. To find the name, call list_printers or run Get-Printer in PowerShell — the Name column is what goes here. Example: 'Brother HL-L2350DW series'.",
       },
