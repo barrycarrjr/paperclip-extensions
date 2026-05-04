@@ -335,27 +335,59 @@ async function testHangupUsesXapiPbxDropCall() {
   }
 }
 
-async function testParkReturnsCcNotImplemented() {
+async function testParkRoutesToParkSlot() {
+  // v0.2: pbx_park_call routes the active call to a park-slot extension
+  // via Call Control API's `routeto` action. We stub:
+  //   - /connect/token: OAuth
+  //   - GET /xapi/v1/ActiveCalls: returns one call owned by ext "200"
+  //     so the engine's owner-lookup resolves
+  //   - POST /callcontrol/200/participants/abc-123/routeto: park
+  //     succeeds; we capture the body to verify destination=8000
   const harness = await makeHarness({
     allowMutations: true,
     defaultAccount: ACCOUNT_KEY,
     accounts: [baseAccount],
   });
-  const stub = stubFetch(async (url) => {
+  // Owner extension "100" is inside COMPANY_A's manual-mode scope per
+  // `baseAccount`. If we used "200" the scope check would correctly reject.
+  let routeBody: Record<string, unknown> | null = null;
+  const stub = stubFetch(async (url, init) => {
     if (url.endsWith("/connect/token"))
       return jsonResponse({ access_token: "tok", expires_in: 3600 });
+    if (url.includes("/xapi/v1/ActiveCalls")) {
+      return jsonResponse({
+        value: [{ CallId: "abc-123", Extension: "100", Caller: "test", Callee: "100" }],
+      });
+    }
+    if (url.includes("/callcontrol/100/participants/abc-123/routeto")) {
+      routeBody = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      return jsonResponse({ ok: true });
+    }
     return new Response("not stubbed", { status: 404 });
   });
   try {
     const result = await harness.executeTool(
       "pbx_park_call",
-      { callId: "abc-123" },
+      { callId: "abc-123", account: ACCOUNT_KEY },
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     );
-    expectError(
-      "pbx_park_call → E3CX_CC_NOT_IMPLEMENTED in v0.1.0",
-      result,
-      "E3CX_CC_NOT_IMPLEMENTED",
+    if (result.error) {
+      console.error(`  FAIL  pbx_park_call routes to slot via Call Control API: ${result.error}`);
+      failures += 1;
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const captured = routeBody as any;
+    const dest = captured && typeof captured.destination === "string" ? (captured.destination as string) : null;
+    if (dest !== "8000") {
+      console.error(
+        `  FAIL  pbx_park_call routes to slot via Call Control API: expected destination "8000", got "${dest ?? "<none>"}"`,
+      );
+      failures += 1;
+      return;
+    }
+    console.log(
+      `  PASS  pbx_park_call routes to default slot 8000 via /callcontrol/<ext>/participants/<callId>/routeto`,
     );
   } finally {
     stub.restore();
@@ -365,7 +397,7 @@ async function testParkReturnsCcNotImplemented() {
 async function testOutboundPrefixApplied() {
   // Calling company has a routing entry with outboundDialPrefix="9".
   // pbx_click_to_call from this company should result in 3CX MakeCall
-  // being invoked with destination='917175771023' (prefix "9" + the
+  // being invoked with destination='915551234567' (prefix "9" + the
   // toNumber with the leading "+" stripped), not the raw E.164.
   const harness = await makeHarness({
     allowMutations: true,
@@ -405,17 +437,17 @@ async function testOutboundPrefixApplied() {
   try {
     const result = (await harness.executeTool(
       "pbx_click_to_call",
-      { fromExtension: "100", toNumber: "+17175551234" },
+      { fromExtension: "100", toNumber: "+12125550199" },
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     )) as { error?: string; data?: { callId: string } };
     if (result.error) {
       fail("pbx_click_to_call with prefix", result.error);
-    } else if (observedDestination === "917175551234") {
-      ok("pbx_click_to_call applies outboundDialPrefix '9' (stripped '+', got '917175551234')");
+    } else if (observedDestination === "912125550199") {
+      ok("pbx_click_to_call applies outboundDialPrefix '9' (stripped '+', got '912125550199')");
     } else {
       fail(
         "pbx_click_to_call prefix application",
-        `expected destination='917175551234'; observed='${observedDestination}'`,
+        `expected destination='912125550199'; observed='${observedDestination}'`,
       );
     }
   } finally {
@@ -424,9 +456,9 @@ async function testOutboundPrefixApplied() {
 }
 
 async function testNumberNormalization() {
-  // toNumber arrives in dot-separated format ("717.577.1023"). Engine
-  // should normalize to E.164 ("+17175771023"), then strip "+" and apply
-  // the company's outbound prefix "9" → "917175771023".
+  // toNumber arrives in dot-separated format ("555.123.4567"). Engine
+  // should normalize to E.164 ("+15551234567"), then strip "+" and apply
+  // the company's outbound prefix "9" → "915551234567".
   const harness = await makeHarness({
     allowMutations: true,
     defaultAccount: ACCOUNT_KEY,
@@ -465,15 +497,15 @@ async function testNumberNormalization() {
   try {
     await harness.executeTool(
       "pbx_click_to_call",
-      { fromExtension: "100", toNumber: "717.577.1023" },
+      { fromExtension: "100", toNumber: "555.123.4567" },
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     );
-    if (observedDestination === "917175771023") {
-      ok("pbx_click_to_call normalizes '717.577.1023' → E.164 → applies prefix '9' → '917175771023'");
+    if (observedDestination === "915551234567") {
+      ok("pbx_click_to_call normalizes '555.123.4567' → E.164 → applies prefix '9' → '915551234567'");
     } else {
       fail(
         "pbx_click_to_call number normalization",
-        `expected destination='917175771023'; observed='${observedDestination}'`,
+        `expected destination='915551234567'; observed='${observedDestination}'`,
       );
     }
   } finally {
@@ -511,7 +543,7 @@ async function testUserEmailResolvesToExtension() {
   try {
     const result = (await harness.executeTool(
       "pbx_click_to_call",
-      { fromUserEmail: "USER-A@example.com", toNumber: "717.577.1023" }, // mixed-case email
+      { fromUserEmail: "USER-A@example.com", toNumber: "555.123.4567" }, // mixed-case email
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     )) as { error?: string };
     if (result.error) {
@@ -539,7 +571,7 @@ async function testUserNotMapped() {
   });
   const result = await harness.executeTool(
     "pbx_click_to_call",
-    { fromUserEmail: "stranger@example.com", toNumber: "+17175771023" },
+    { fromUserEmail: "stranger@example.com", toNumber: "+15551234567" },
     { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
   );
   expectError("EUSER_NOT_MAPPED when email isn't in the map", result, "EUSER_NOT_MAPPED");
@@ -585,15 +617,15 @@ async function testNoPrefixWhenAbsent() {
   try {
     await harness.executeTool(
       "pbx_click_to_call",
-      { fromExtension: "100", toNumber: "+17175551234" },
+      { fromExtension: "100", toNumber: "+12125550199" },
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     );
-    if (observedDestination === "+17175551234") {
+    if (observedDestination === "+12125550199") {
       ok("pbx_click_to_call passes destination through unchanged when no prefix configured");
     } else {
       fail(
         "pbx_click_to_call passthrough",
-        `expected destination='+17175551234'; observed='${observedDestination}'`,
+        `expected destination='+12125550199'; observed='${observedDestination}'`,
       );
     }
   } finally {
@@ -675,7 +707,7 @@ async function main() {
   await testHappyReadPath();
   await testParkedCallsAlwaysEmpty();
   await testHangupUsesXapiPbxDropCall();
-  await testParkReturnsCcNotImplemented();
+  await testParkRoutesToParkSlot();
   await testDidsNormalizedToE164();
   await testOutboundPrefixApplied();
   await testNoPrefixWhenAbsent();

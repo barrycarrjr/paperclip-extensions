@@ -3,6 +3,10 @@
 .env.local
 .env.*
 *.local
+# Local-only scripts / configs (e.g. add-user-mapping.local.ts) — by
+# convention any path with a `.local.` infix is operator-specific and
+# must not be committed.
+*.local.*
 
 # Credential / key material — should never be tracked
 *.pem

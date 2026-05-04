@@ -74,8 +74,10 @@ const EP = {
   ccMakeCall: (ext: string, deviceId: string) =>
     `/callcontrol/${encodeURIComponent(ext)}/devices/${encodeURIComponent(deviceId)}/makecall`,
   ccDevices: (ext: string) => `/callcontrol/${encodeURIComponent(ext)}/devices`,
-  ccActiveCalls: (ext: string) =>
+  ccParticipants: (ext: string) =>
     `/callcontrol/${encodeURIComponent(ext)}/participants`,
+  ccParticipantAction: (ext: string, participantId: string, action: string) =>
+    `/callcontrol/${encodeURIComponent(ext)}/participants/${encodeURIComponent(participantId)}/${encodeURIComponent(action)}`,
   // Reports — endpoint name varies; we fall back to deriving from history.
   reportToday: "/xapi/v1/ReportCallSummaryByDayData",
 };
@@ -293,7 +295,7 @@ export class V20XapiEngine implements ThreeCxEngine {
     // Pick a device for the originating extension. The first registered
     // hard-phone wins (soft-clients are deprioritised in resolveDeviceId).
     const deviceId = await this.resolveDeviceId(input.fromExtension);
-    // Normalize first ("717.577.1023" → "+17175771023"), then apply the
+    // Normalize first ("555.123.4567" → "+15551234567"), then apply the
     // company's outbound prefix. The prefix step strips the leading "+"
     // so the final dial string matches 3CX's outbound-rule expectations.
     const normalized = normalizeUSDestination(input.toNumber);
@@ -322,27 +324,120 @@ export class V20XapiEngine implements ThreeCxEngine {
     }
   }
 
-  async parkCall(_filter: ScopeFilter, _callId: string, _slot?: string): Promise<{ slot: string }> {
-    throw new Error(
-      `[E3CX_CC_NOT_IMPLEMENTED] pbx_park_call requires Call Control API integration; v0.1.0 ships only DropCall via XAPI. v0.2 adds park/pickup/transfer via the /callcontrol/* path family.`,
-    );
+  /**
+   * Park an active call. 3CX v20 Call Control API doesn't expose a
+   * dedicated `park` action; the conventional implementation is to
+   * `routeto` the call to a park-slot extension (typically 8000-8009 in
+   * default 3CX configs). The slot becomes the addressable handle for
+   * picking the call back up later.
+   *
+   * Slot resolution strategy:
+   *   - If `slot` is provided, route there.
+   *   - Otherwise default to "8000" (the conventional first park slot).
+   *
+   * Operators with non-default park slot ranges should pass `slot`
+   * explicitly. The plugin doesn't probe 3CX's CallParkingSettings to
+   * discover the range — that's a v0.3 refinement.
+   */
+  async parkCall(filter: ScopeFilter, callId: string, slot?: string): Promise<{ slot: string }> {
+    const targetSlot = slot ?? "8000";
+    const ownerExt = await this.lookupCallOwner(callId);
+    if (filter.mode === "manual" && filter.extensions.length > 0 && !filter.extensions.includes(ownerExt)) {
+      throw new Error(
+        `[ESCOPE_VIOLATION] callId "${callId}" lives on extension "${ownerExt}" which is outside the company's scope.`,
+      );
+    }
+    try {
+      await this.client.post(
+        EP.ccParticipantAction(ownerExt, callId, "routeto"),
+        { destination: targetSlot },
+      );
+      return { slot: targetSlot };
+    } catch (err) {
+      throw mapCcError(err, "park", { ext: ownerExt, callId, slot: targetSlot });
+    }
   }
 
-  async pickupPark(_filter: ScopeFilter, _slot: string, _atExtension: string): Promise<void> {
-    throw new Error(
-      `[E3CX_CC_NOT_IMPLEMENTED] pbx_pickup_park requires Call Control API integration; ships in v0.2.`,
-    );
+  /**
+   * Pick up a parked call from a specific extension. Conventionally
+   * implemented as "MakeCall from atExtension to the park slot" — the
+   * PBX bridges the parked party in when atExtension goes off-hook.
+   */
+  async pickupPark(filter: ScopeFilter, slot: string, atExtension: string): Promise<void> {
+    if (
+      filter.mode === "manual" &&
+      filter.extensions.length > 0 &&
+      !filter.extensions.includes(atExtension)
+    ) {
+      throw new Error(
+        `[ESCOPE_VIOLATION] atExtension "${atExtension}" is not in the company's extension scope.`,
+      );
+    }
+    const deviceId = await this.resolveDeviceId(atExtension);
+    try {
+      await this.client.post(
+        EP.ccMakeCall(atExtension, deviceId),
+        { destination: slot },
+      );
+    } catch (err) {
+      throw mapCcError(err, "pickup_park", { atExtension, slot });
+    }
   }
 
+  /**
+   * Transfer an active call to another extension via Call Control API's
+   * `transferto` action. 3CX v20 doesn't distinguish blind vs attended
+   * at the API level — `transferto` is effectively blind (one-shot
+   * hand-off). The `mode` parameter is accepted for API stability with
+   * the engine interface but has no on-PBX effect today.
+   */
   async transferCall(
-    _filter: ScopeFilter,
-    _callId: string,
-    _toExtension: string,
+    filter: ScopeFilter,
+    callId: string,
+    toExtension: string,
     _mode: "blind" | "attended",
   ): Promise<void> {
-    throw new Error(
-      `[E3CX_CC_NOT_IMPLEMENTED] pbx_transfer_call requires Call Control API integration; ships in v0.2.`,
+    const ownerExt = await this.lookupCallOwner(callId);
+    if (filter.mode === "manual" && filter.extensions.length > 0) {
+      if (!filter.extensions.includes(ownerExt)) {
+        throw new Error(
+          `[ESCOPE_VIOLATION] callId "${callId}" lives on extension "${ownerExt}" which is outside the company's scope.`,
+        );
+      }
+      if (!filter.extensions.includes(toExtension)) {
+        throw new Error(
+          `[ESCOPE_VIOLATION] transfer target "${toExtension}" is not in the company's extension scope.`,
+        );
+      }
+    }
+    try {
+      await this.client.post(
+        EP.ccParticipantAction(ownerExt, callId, "transferto"),
+        { destination: toExtension },
+      );
+    } catch (err) {
+      throw mapCcError(err, "transfer", { ext: ownerExt, callId, toExtension });
+    }
+  }
+
+  /**
+   * Resolve which extension currently owns a participant id by scanning
+   * /xapi/v1/ActiveCalls. Required because Call Control API actions are
+   * keyed by both DN (extension) and participant id, but the plugin's
+   * tool surface only takes a callId — we look up the DN here so callers
+   * don't have to thread it through.
+   */
+  private async lookupCallOwner(callId: string): Promise<string> {
+    const data = await this.client.get<ODataList<RawActiveCall>>(EP.activeCalls);
+    const match = (data.value ?? []).find(
+      (c) => String(c.CallId ?? c.Id ?? "") === callId,
     );
+    if (!match || !match.Extension) {
+      throw new Error(
+        `[E3CX_NOT_FOUND] No active call with id "${callId}" — cannot resolve owning extension. Try pbx_active_calls to see live calls.`,
+      );
+    }
+    return match.Extension;
   }
 
   async hangupCall(_filter: ScopeFilter, callId: string): Promise<void> {
@@ -633,12 +728,12 @@ export function applyOutboundPrefix(toNumber: string, filter: ScopeFilter): stri
 /**
  * Normalize a North-American phone number written in any common format
  * to E.164 (`+1XXXXXXXXXX`). Accepts:
- *   "717.577.1023"  → "+17175771023"
- *   "717-577-1023"  → "+17175771023"
- *   "(717) 577-1023" → "+17175771023"
- *   "7175771023"    → "+17175771023"   (10 digits → assume US/Canada)
- *   "17175771023"   → "+17175771023"   (11 digits leading 1)
- *   "+17175771023"  → "+17175771023"   (already E.164, passthrough)
+ *   "555.123.4567"  → "+15551234567"
+ *   "555-123-4567"  → "+15551234567"
+ *   "(717) 577-1023" → "+15551234567"
+ *   "5551234567"    → "+15551234567"   (10 digits → assume US/Canada)
+ *   "15551234567"   → "+15551234567"   (11 digits leading 1)
+ *   "+15551234567"  → "+15551234567"   (already E.164, passthrough)
  *   "+44 20 7946 0958" → "+442079460958" (international, kept as-is)
  *
  * Anything that doesn't fit one of these shapes is returned unchanged so
@@ -646,8 +741,8 @@ export function applyOutboundPrefix(toNumber: string, filter: ScopeFilter): stri
  * extension dialing, etc.) without the plugin second-guessing them.
  *
  * The output of this function is the input to `applyOutboundPrefix` —
- * always run normalization first so a user typing "717.577.1023" with
- * a company prefix "9" ends up dialing "917175771023".
+ * always run normalization first so a user typing "555.123.4567" with
+ * a company prefix "9" ends up dialing "915551234567".
  */
 export function normalizeUSDestination(raw: string): string {
   const trimmed = (raw ?? "").trim();
@@ -671,6 +766,29 @@ export function normalizeUSDestination(raw: string): string {
 
   // Doesn't match a recognized US/CA shape; leave untouched.
   return trimmed;
+}
+
+/**
+ * Translate Call Control API errors into the plugin's `[E3CX_*]` codes.
+ * 403 typically means the Service Principal's Call Control API isn't
+ * enabled or the operating extension isn't in its Extensions selector;
+ * 404 means the participant id is unknown (call already ended); 4xx
+ * other = bad request. 5xx = upstream.
+ */
+function mapCcError(err: unknown, action: string, detail: Record<string, unknown>): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("[E3CX_AUTH]") || msg.includes("[E3CX_HTTP_403]")) {
+    return new Error(
+      `[E3CX_CC_NOT_ENABLED] /callcontrol ${action} returned 403. ` +
+        `Verify "Enable access to the 3CX Call Control API" is checked on the Service Principal AND the operating extension is added to its Extension(s) selector. detail=${JSON.stringify(detail)}`,
+    );
+  }
+  if (msg.includes("[E3CX_NOT_FOUND]")) {
+    return new Error(
+      `[E3CX_NOT_FOUND] ${action}: participant or destination not found. detail=${JSON.stringify(detail)}`,
+    );
+  }
+  return new Error(`[E3CX_CC_FAILED] ${action} via Call Control API failed: ${msg}`);
 }
 
 /** Soft-clients (mobile / web) ring inside an app, not on a desk phone.

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -471,7 +471,7 @@ const manifest: PaperclipPluginManifestV1 = {
       name: "pbx_click_to_call",
       displayName: "Originate a call (click-to-call)",
       description:
-        "Originate a call from a human extension to a destination. 3CX rings fromExtension first; once the human picks up, 3CX dials toNumber. Either pass `fromExtension` directly OR pass `fromUserId` / `fromUserEmail` and the plugin resolves the extension from the configured user→extension map. The destination accepts any common phone format ('717.577.1023', '+17175771023', '(717) 577-1023', '17175771023') — the plugin normalizes to E.164 before applying any per-company outbound dial prefix. Mutation, gated by allowMutations and the per-day cap.",
+        "Originate a call from a human extension to a destination. 3CX rings fromExtension first; once the human picks up, 3CX dials toNumber. Either pass `fromExtension` directly OR pass `fromUserId` / `fromUserEmail` and the plugin resolves the extension from the configured user→extension map. The destination accepts any common phone format ('555.123.4567', '+15551234567', '(555) 123-4567', '15551234567') — the plugin normalizes to E.164 before applying any per-company outbound dial prefix. Mutation, gated by allowMutations and the per-day cap.",
       parametersSchema: {
         type: "object",
         properties: {

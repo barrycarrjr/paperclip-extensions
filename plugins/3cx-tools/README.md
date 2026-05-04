@@ -65,11 +65,11 @@ The map lives in instance settings (`/instance/settings/plugins/3cx-tools` → "
 
 | Input | Becomes |
 |---|---|
-| `717.577.1023` | `+17175771023` |
-| `(717) 577-1023` | `+17175771023` |
-| `7175771023` | `+17175771023` |
-| `17175771023` | `+17175771023` |
-| `+17175771023` | `+17175771023` (passthrough) |
+| `555.123.4567` | `+15551234567` |
+| `(555) 123-4567` | `+15551234567` |
+| `5551234567` | `+15551234567` |
+| `15551234567` | `+15551234567` |
+| `+15551234567` | `+15551234567` (passthrough) |
 | `+44 20 7946 0958` | `+442079460958` |
 | `200` (3-5 digits) | `200` (passthrough — internal extension) |
 
@@ -77,17 +77,23 @@ The normalized number then has the company's `outboundDialPrefix` applied (with 
 
 ### Mutations (Phase 2 — gated behind `allowMutations`)
 
-| Tool | Effect | Status in v0.1.0 |
+| Tool | Effect | Underlying API |
 |---|---|---|
-| `pbx_hangup_call` | Force-end an active call via XAPI `Pbx.DropCall` | Available — XAPI only |
-| `pbx_click_to_call` | Originate from an extension via Call Control API | Available — needs Call Control API enabled on Service Principal |
-| `pbx_park_call` | Park an active call | **Returns `[E3CX_CC_NOT_IMPLEMENTED]`** — full Call Control API integration ships in v0.2 |
-| `pbx_pickup_park` | Pick up a parked call | **Returns `[E3CX_CC_NOT_IMPLEMENTED]`** — v0.2 |
-| `pbx_transfer_call` | Transfer an active call | **Returns `[E3CX_CC_NOT_IMPLEMENTED]`** — v0.2 |
+| `pbx_hangup_call` | Force-end an active call | XAPI `Pbx.DropCall` |
+| `pbx_click_to_call` | Originate from an extension | Call Control API `/callcontrol/<ext>/devices/<deviceId>/makecall` |
+| `pbx_park_call` | Park an active call into a park slot | Call Control API `/callcontrol/<ext>/participants/<callId>/routeto` (destination = slot) |
+| `pbx_pickup_park` | Pick up a parked call to an extension | Call Control API `MakeCall` from the at-extension to the park slot |
+| `pbx_transfer_call` | Transfer an active call (blind) | Call Control API `/callcontrol/<ext>/participants/<callId>/transferto` |
 
-`pbx_parked_calls` (read-side park-slot enumeration) is also blocked on
-the same Call Control API gap and currently returns an empty list rather
-than throwing — useful as "no parked calls right now" but not authoritative.
+All Call Control API mutations require the **second** checkbox on the Service Principal ("Enable access to the 3CX Call Control API") AND the operating extension(s) added to the Service Principal's Extension(s) selector.
+
+`pbx_parked_calls` (read-side park-slot enumeration) currently returns an empty list — XAPI doesn't expose live parked calls, and we haven't yet wired a Call Control API endpoint for the listing. Useful as "no parked calls right now" signal but not authoritative; track via the synthetic events emitted around `pbx_park_call` / `pbx_pickup_park` if you need authoritative state.
+
+### Notes on park / transfer behavior
+
+- **Park slot**: `pbx_park_call` defaults to slot `8000` (the conventional first 3CX park-slot extension). If your install uses a different range, pass `slot` explicitly. Future v0.3 will probe `CallParkingSettings` to auto-discover.
+- **Transfer mode**: 3CX v20 Call Control API doesn't expose attended transfer — `transferto` is effectively blind. The `mode: "attended"` parameter is accepted for forward-compat but currently has no on-PBX effect.
+- **Owner extension lookup**: park/transfer take a `callId` and resolve the owning extension server-side via `/xapi/v1/ActiveCalls`. If you already know the owner, the tool will trust the lookup and validate against company scope.
 
 ### Realtime events (Phase 3, v0.3.0)
 
