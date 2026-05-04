@@ -1,5 +1,6 @@
 import {
   definePlugin,
+  runWorker,
   type PluginContext,
   type ToolResult,
   type ToolRunContext,
@@ -304,3 +305,4 @@ function clampMax(value: number | undefined, fallback: number, hardMax: number):
 }
 
 export default plugin;
+runWorker(plugin, import.meta.url);
