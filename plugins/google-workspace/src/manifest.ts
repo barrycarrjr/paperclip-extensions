@@ -2,7 +2,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS } from "./schemas.js";
 
 const PLUGIN_ID = "google-workspace";
-const PLUGIN_VERSION = "0.2.0";
+const PLUGIN_VERSION = "0.3.0";
 const SETUP_ROUTE = "setup-account";
 
 const manifest: PaperclipPluginManifestV1 = {

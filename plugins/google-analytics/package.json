@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-google-analytics",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Paperclip plugin exposing GA4 + Google Search Console as agent tools. Service-account auth via the encrypted secrets store.",
   "type": "module",
   "private": true,

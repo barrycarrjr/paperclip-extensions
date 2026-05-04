@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-rollbar-tools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Paperclip plugin that exposes Rollbar error monitoring as agent tools — items, occurrences, top items, resolve/mute, metrics snapshot. Multi-project, per-project allowedCompanies, mutations gated.",
   "type": "module",
   "private": true,
