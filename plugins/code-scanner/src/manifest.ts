@@ -23,7 +23,7 @@ const repoItemSchema = {
       type: "string",
       title: "Absolute repo path",
       description:
-        "Absolute filesystem path to the git repo on the host. Example: 'C:\\Users\\barry\\paperclip' or '/home/barry/paperclip'. The plugin shells out from here — must point at a real, readable git working tree.",
+        "Absolute filesystem path to the git repo on the host. Example: 'C:\\path\\to\\repo' or '/path/to/repo'. The plugin shells out from here — must point at a real, readable git working tree.",
     },
     allowedCompanies: {
       type: "array",

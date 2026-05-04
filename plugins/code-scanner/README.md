@@ -44,13 +44,13 @@ Settings page: `/instance/settings/plugins/code-scanner` after install.
     {
       "key": "paperclip",
       "displayName": "Paperclip",
-      "path": "C:\\Users\\barry\\paperclip",
+      "path": "C:\\path\\to\\paperclip",
       "allowedCompanies": ["*"]
     },
     {
       "key": "paperclip-extensions",
       "displayName": "Paperclip extensions",
-      "path": "C:\\Users\\barry\\paperclip-extensions",
+      "path": "C:\\path\\to\\paperclip-extensions",
       "allowedCompanies": ["*"]
     }
   ],
