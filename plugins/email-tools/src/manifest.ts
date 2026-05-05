@@ -226,11 +226,87 @@ const mailboxItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Email Tools
+
+Connect one or more IMAP/SMTP mailboxes so agents can send, search, fetch, and reply to email. Reckon on **about 10 minutes** per mailbox.
+
+---
+
+## Gmail mailboxes (most common)
+
+Gmail requires an **App Password** — your regular account password will not work if 2-Step Verification is enabled (it should be).
+
+### 1. Enable 2-Step Verification (if not already on)
+
+In your Google Account → Security → 2-Step Verification. Required before App Passwords are available.
+
+### 2. Create a Gmail App Password
+
+- Go to [https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+- **App name**: "Paperclip"
+- Click **Create** — Google shows a 16-character password (no spaces)
+- **Copy it now** — it's shown only once
+
+### 3. Create a Paperclip secret
+
+In Paperclip, switch to the company that should own this mailbox.
+
+- Go to **Secrets → Add**
+- Name it (e.g. \`gmail-app-password\`)
+- Paste the 16-character password as the value
+- Save, then **copy the secret's UUID**
+
+### 4. Configure the mailbox (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **Mailboxes**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`personal\` (or \`sales\`, \`support\`, etc.) |
+| **Display name** | e.g. "Personal Gmail" |
+| **Username** | your full Gmail address |
+| **Password** | UUID of the secret from step 3 |
+| **IMAP host** | \`imap.gmail.com\` |
+| **Allowed companies** | tick the companies whose agents may call tools on this mailbox |
+
+Leave IMAP port (993), SMTP host (\`smtp.gmail.com\`), and SMTP port (465) at their defaults.
+
+If you want agents to **receive** new mail automatically:
+
+- Set **Enable receive** → ON
+- Set **Ingest company** → the company that should own inbound issues/events
+- Set **When new mail arrives** → \`event\` (emit event) or \`issue\` (auto-create a Paperclip issue)
+
+Enable **Allow sending** at the top of the Configuration tab when you're ready to send outbound mail.
+
+---
+
+## Other IMAP providers (Outlook, iCloud, custom)
+
+The same steps apply — create an App Password or use your regular password if the provider allows IMAP with password auth:
+
+| Provider | IMAP host | SMTP host | Notes |
+|---|---|---|---|
+| Outlook / Microsoft 365 | \`outlook.office365.com\` | \`smtp.office365.com\` | Use an app password; SMTP port 587, TLS=STARTTLS (set smtpPort=587, smtpSecure=false) |
+| iCloud | \`imap.mail.me.com\` | \`smtp.mail.me.com\` | Requires an [app-specific password](https://support.apple.com/HT204397) |
+| Custom / self-hosted | your IMAP host | your SMTP host | Standard IMAP/SMTP — fill in the advanced overrides as needed |
+
+---
+
+## Troubleshooting
+
+- **IMAP auth failure** — wrong password, or you pasted the raw password instead of the secret UUID. Use the **Test connection** button on the mailbox row to verify.
+- **Gmail "Less secure app" error** — Gmail no longer supports password auth for regular accounts. You must use an App Password (step 2 above).
+- **Sent mail appears in Sent but SMTP fails** — SMTP port/host mismatch. For Gmail: port 465 (TLS on connect). For Office 365: port 587 (STARTTLS — set smtpSecure=false).
+- **Inbound mail not ingesting** — make sure **Enable receive** is ON and **Ingest company** is set. Check the plugin worker logs (Status tab) for poll errors.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Email Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Send + receive email via SMTP/IMAP. Multi-mailbox, polling + IDLE push, per-mailbox dispatch (event / issue / on-demand), threading, bulk operations.",
   author: "Barry Carr & Tony Allard",

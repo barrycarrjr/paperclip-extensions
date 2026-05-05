@@ -3,11 +3,63 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const PLUGIN_ID = "print-tools";
 const PLUGIN_VERSION = "0.1.0";
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Print Tools
+
+Give agents the ability to print text to any Windows printer visible to the Paperclip server. No external credentials or API keys needed — just configure which printers to allow and which companies can use them. Reckon on **about 5 minutes**.
+
+---
+
+## Requirements
+
+- Paperclip server must be running on **Windows** (or a Windows-accessible print server)
+- Target printers must be installed and visible in the Windows **Printers & scanners** settings on the Paperclip host
+
+---
+
+## 1. Discover your printer name
+
+The exact Windows printer name is required. Two ways to find it:
+
+**Via PowerShell** (on the Paperclip host):
+\`\`\`powershell
+Get-Printer | Select-Object Name, DriverName, PortName
+\`\`\`
+Copy the \`Name\` column value exactly (e.g. \`Brother HL-L2350DW series\`).
+
+**Via Paperclip** (after configuring the plugin):
+Call the \`list_printers\` tool — it returns all visible printers with their exact names.
+
+---
+
+## 2. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above and fill in:
+
+| Field | Value |
+|---|---|
+| **Default printer name** | exact printer name from step 1 (or leave blank to use the Windows system default) |
+| **Allowed companies** | tick the companies whose agents may call \`list_printers\` and \`print_text\` |
+
+**Allowed companies** is required — leave it empty and no company can use the plugin (fail-safe deny).
+
+For a single-company setup, tick just that company. For portfolio-wide access (e.g. a shared office printer), tick **Portfolio-wide** (\`*\`).
+
+---
+
+## Troubleshooting
+
+- **Printer not found** — the printer name doesn't exactly match what Windows reports. Run \`Get-Printer\` or call \`list_printers\` to verify the exact string.
+- **Print job spools but nothing prints** — the printer may be offline, out of paper, or have a stuck queue. Check **Windows Settings → Printers & scanners → Open print queue**.
+- **\`[ECOMPANY_NOT_ALLOWED]\`** — the calling company isn't in Allowed companies.
+- **Network printer not visible** — the printer must be installed on the Paperclip host (appear in Windows Printers & scanners), not just accessible on the network. Install the printer driver on the host first.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Print Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Print text content to any Windows printer visible to the Paperclip server — locally attached or LAN printers.",
   author: "Barry Carr & Tony Allard",

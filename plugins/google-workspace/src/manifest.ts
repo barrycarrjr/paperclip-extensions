@@ -5,11 +5,108 @@ const PLUGIN_ID = "google-workspace";
 const PLUGIN_VERSION = "0.3.0";
 const SETUP_ROUTE = "setup-account";
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Google Workspace
+
+Connect a Google account so agents can read and write Calendar events, Tasks, Sheets, and Drive files. Each Google account goes through a one-time OAuth consent flow. Reckon on **about 20 minutes** for first-time setup (most of that is GCP).
+
+---
+
+## Quickstart — use the built-in setup wizard
+
+This plugin ships a setup wizard that walks you through the entire flow in the browser. **No terminal required.** Click the **Connect a Google account** tab at the top of this page to launch it.
+
+The wizard will guide you through:
+1. Creating a GCP project and enabling the required APIs
+2. Configuring the OAuth consent screen
+3. Creating OAuth credentials (client ID + secret)
+4. Running the device-code consent flow in your browser
+5. Storing all three secrets (client ID, client secret, refresh token) and registering the account
+
+If the wizard isn't available, follow the manual steps below.
+
+---
+
+## Manual setup
+
+### 1. Create a GCP project (skip if you have one)
+
+- Go to [https://console.cloud.google.com](https://console.cloud.google.com) → New Project
+- Name it "Paperclip" or similar
+
+### 2. Enable the required APIs
+
+In the GCP project, go to **APIs & Services → Library** and enable:
+
+| API | Required for |
+|---|---|
+| Google Calendar API | \`gcal_*\` tools |
+| Tasks API | \`gtasks_*\` tools |
+| Google Sheets API | \`gsheet_*\` tools |
+| Google Drive API | \`gdrive_*\` tools |
+| People API | \`gcontacts_*\` tools (if used) |
+
+### 3. Configure the OAuth consent screen
+
+Go to **APIs & Services → OAuth consent screen**:
+- **User type**: Internal (if using a Google Workspace org) or External
+- Fill in App name, User support email, Developer contact
+- Add scopes: Calendar, Tasks, Sheets, Drive, and userinfo.email / userinfo.profile
+- Add yourself as a test user if External
+
+### 4. Create OAuth 2.0 credentials
+
+Go to **APIs & Services → Credentials → Create Credentials → OAuth client ID**:
+- **Application type**: Desktop app
+- **Name**: "Paperclip"
+- Click **Create** → **Download JSON** (or copy the Client ID and Client Secret)
+
+### 5. Create Paperclip secrets for client ID and client secret
+
+In Paperclip, switch to the company that should own this Google account:
+- Go to **Secrets → Add** and create:
+  1. \`google-client-id\` → the OAuth client ID
+  2. \`google-client-secret\` → the OAuth client secret
+- Copy both secret UUIDs
+
+### 6. Get a refresh token
+
+From the \`paperclip-extensions\` repo:
+
+\`\`\`bash
+pnpm --filter paperclip-plugin-google-workspace grant <account-key>
+\`\`\`
+
+The script opens a browser for OAuth consent, then prints the refresh token. Create a third Paperclip secret with that token value and copy its UUID.
+
+### 7. Configure the plugin (this page, **Configuration** tab)
+
+Under **Google accounts**, click **+ Add item**:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`personal\` |
+| **Email** | the Google email you consented as |
+| **OAuth client ID** | UUID of the \`google-client-id\` secret |
+| **OAuth client secret** | UUID of the \`google-client-secret\` secret |
+| **Refresh token** | UUID of the refresh-token secret |
+| **Allowed companies** | tick the companies whose agents may use this account |
+
+---
+
+## Troubleshooting
+
+- **\`invalid_grant\`** — the refresh token expired or was revoked (Google revokes tokens for External apps after 7 days if the consent screen isn't verified). Re-run the \`grant\` script or re-run the wizard.
+- **\`access_denied\` during consent** — you're not listed as a test user on an External consent screen. Add yourself under OAuth consent screen → Test users.
+- **API not enabled error** — the specific API (e.g. Tasks API) wasn't enabled in step 2. Enable it and wait ~30 seconds.
+- **One account per Google email** — you can't have two plugin accounts for the same Google email. Create a second GCP OAuth client if you need separate client credentials per company.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Google Workspace",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies. Setup wizard at /<company>/plugins/google-workspace/setup-account walks you through adding an account end-to-end (creates secrets, runs the OAuth device flow, registers the account) — no terminal required.",
   author: "Barry Carr & Tony Allard",

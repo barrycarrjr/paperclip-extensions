@@ -67,11 +67,102 @@ const workspaceItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Slack Tools
+
+Connect one or more Slack workspaces so agents can send DMs and channel messages. Reckon on **about 10 minutes** per workspace.
+
+---
+
+## 1. Create a Slack App
+
+Go to [https://api.slack.com/apps](https://api.slack.com/apps) and click **Create New App → From scratch**.
+
+- **App Name**: anything you like (e.g. "Paperclip Bot")
+- **Workspace**: pick the Slack workspace you want to connect
+
+---
+
+## 2. Add bot token scopes
+
+In your new app, go to **OAuth & Permissions → Scopes → Bot Token Scopes** and add:
+
+| Scope | Purpose |
+|---|---|
+| \`chat:write\` | Send messages to channels the bot is in |
+| \`chat:write.public\` | Send messages to any public channel |
+| \`im:write\` | Open DM channels to send direct messages |
+| \`users:read\` | Look up users by ID |
+| \`users:read.email\` | Look up users by email (needed for \`slack_lookup_user\`) |
+| \`channels:read\` | List public channels |
+| \`groups:read\` | List private channels the bot is in |
+
+If you plan to use \`slack_update_message\` or \`slack_delete_message\`, also add \`chat:write\` (already included above — no extra scope needed for editing/deleting messages the bot posted).
+
+---
+
+## 3. Install the app to your workspace
+
+Still on the **OAuth & Permissions** page, click **Install to Workspace**. Approve the permissions.
+
+After installation, copy the **Bot User OAuth Token** (starts with \`xoxb-\`).
+
+---
+
+## 4. Create a Paperclip secret with the bot token
+
+In Paperclip, switch to the company that should own this workspace connection. Then:
+
+- Go to **Secrets → Add**
+- Name it (e.g. \`slack-bot-token\`)
+- Paste the \`xoxb-...\` token as the value
+- Save, then **copy the secret's UUID**
+
+---
+
+## 5. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **Slack workspaces**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`main\` |
+| **Display name** | (e.g. "Acme Slack") |
+| **Bot token** | paste the secret UUID from step 4 |
+| **User token** | leave blank unless you need to post as a named user |
+| **Default DM target** | your Slack user ID — see step 6 |
+| **Default channel ID** | optional; a C-prefixed channel ID for the default posting channel |
+| **Allowed companies** | tick the company that owns this workspace |
+
+At the top, set **Default workspace key** to \`main\`.
+
+---
+
+## 6. Find your Slack user ID (for Default DM target)
+
+Run \`slack_lookup_user\` with your email once after setup:
+
+\`\`\`json
+{ "email": "you@example.com" }
+\`\`\`
+
+Copy the returned \`userId\` (U-prefixed) and paste it into **Default DM target user ID** in the workspace config above. This is what skills use when they call \`slack_send_dm\` without specifying a recipient.
+
+---
+
+## Troubleshooting
+
+- **\`not_in_channel\` error** — the bot isn't a member of the channel. Either invite it with \`/invite @YourBot\` in Slack, or use \`chat:write.public\` scope and post to a public channel.
+- **\`missing_scope\` error** — a required scope wasn't added in step 2. Add it, reinstall the app, and update the secret (the token changes on reinstall).
+- **\`channel_not_found\`** — double-check you're passing a C-prefixed channel ID, not a channel name. Use \`slack_list_channels\` to find the correct ID.
+- **User token needed** — if a skill must post *as* you (your name appears, not the bot), create a separate secret with an \`xoxp-...\` user token and paste it in the **User token** field.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Slack Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Send DMs, channel messages, and Block Kit messages to Slack. Multi-workspace, per-workspace company isolation, edit/delete gated. Anchor use case: the daily CEO morning briefing arrives as a Slack DM.",
   author: "Barry Carr & Tony Allard",

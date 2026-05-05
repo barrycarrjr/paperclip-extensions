@@ -42,11 +42,70 @@ const projectItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — RevenueCat Tools
+
+Connect a RevenueCat project so agents can look up subscribers, check entitlements, and pull metrics. Reckon on **about 5 minutes** per project.
+
+---
+
+## 1. Get a RevenueCat secret API key
+
+- Log into [app.revenuecat.com](https://app.revenuecat.com)
+- Select the project for your app
+- Go to **Project Settings → API Keys → Secret API keys**
+- Click **+ New** (or use an existing secret key if you have one)
+- **Copy the key** — it starts with \`sk_...\`
+
+> Use the **secret** key (server-side), not the public SDK key (\`pk_...\`). Public keys can only be used by your app's client SDK; they can't access subscriber data server-side.
+
+---
+
+## 2. Find your RevenueCat project ID
+
+Still in **Project Settings** — the Project ID is displayed near the project name (a short UUID-like string). Copy it; you'll need it for the metrics snapshot tool.
+
+---
+
+## 3. Create a Paperclip secret
+
+In Paperclip, switch to the company that owns the app.
+
+- Go to **Secrets → Add**
+- Name it (e.g. \`revenuecat-secret-key\`)
+- Paste the \`sk_...\` key as the value
+- Save, then **copy the secret's UUID**
+
+---
+
+## 4. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **RevenueCat projects**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`demo-app\` |
+| **Display name** | e.g. "Demo iOS App" |
+| **Project secret API key** | UUID of the secret from step 3 |
+| **RevenueCat project ID** | the Project ID from step 2 |
+| **Allowed companies** | tick the company that owns this app |
+
+Set **Default project key** at the top.
+
+---
+
+## Troubleshooting
+
+- **401 Unauthorized** — you may have used the public SDK key (\`pk_...\`) instead of the secret key. Get the server-side \`sk_...\` key.
+- **Subscriber not found** — the \`appUserId\` must match exactly what your app sets via the RevenueCat SDK. It's often an opaque internal ID, not the user's email.
+- **Metrics snapshot is approximate** — \`revenuecat_get_metrics_snapshot\` derives MRR from a paginated listing of active subscriptions, not from RevenueCat's native analytics. For exact figures use the RevenueCat dashboard or BigQuery export.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "RevenueCat Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Read RevenueCat subscriber and entitlement data, set custom attributes, and pull metrics snapshots. Multi-project, per-project allowedCompanies, mutations gated.",
   author: "Barry Carr & Tony Allard",

@@ -164,7 +164,7 @@ Click the **Configuration** tab above. You'll see an empty **Phone accounts** li
 | Field | Value |
 |---|---|
 | **Identifier** | \`main\` |
-| **Display name** | (whatever you want, e.g. "M3 Media — main") |
+| **Display name** | (whatever you want, e.g. "Acme Corp — main") |
 | **Engine** | \`vapi\` |
 | **Engine API key** | paste the secret UUID from step 4 |
 | **Webhook signing secret** | leave blank for outbound-only Quickstart |

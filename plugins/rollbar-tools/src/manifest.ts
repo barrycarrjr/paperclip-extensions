@@ -57,11 +57,74 @@ const projectItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Rollbar Tools
+
+Connect a Rollbar project so agents can surface error items, occurrences, and metrics. Reckon on **about 5 minutes** per project.
+
+---
+
+## 1. Create Rollbar Project Access Tokens
+
+Each Rollbar *project* has its own set of tokens — find them at **Project Settings → Project Access Tokens** (not Account Access Tokens).
+
+You need a **read** token. If you'll let agents resolve or mute items, also create a **write** token.
+
+- In the Rollbar dashboard, go to your project
+- Go to **Settings → Project Access Tokens → Create New Access Token**
+- **Scope**: \`read\` — name it "Paperclip Read"
+- Optionally repeat with scope \`write\` — name it "Paperclip Write"
+- **Copy each token now**
+
+---
+
+## 2. Create Paperclip secrets
+
+In Paperclip, switch to the company that owns the application this Rollbar project monitors.
+
+- Go to **Secrets → Add** and create:
+  - \`rollbar-read-token\` → the read token
+  - \`rollbar-write-token\` → the write token (optional)
+- Copy both secret UUIDs
+
+---
+
+## 3. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **Rollbar projects**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`acme-print-prod\` |
+| **Display name** | e.g. "Acme Print — Production" |
+| **Read token** | UUID of the \`rollbar-read-token\` secret |
+| **Write token** | UUID of the \`rollbar-write-token\` secret (leave blank if no mutations) |
+| **Default environment** | e.g. \`production\` (optional; agents can override per call) |
+| **Allowed companies** | tick the company that owns this application |
+
+Set **Default project key** to your project's identifier at the top.
+
+---
+
+## 4. Enable mutations when ready (optional)
+
+**Allow resolve / mute** defaults to OFF. Even when ON, mutations also require a write token on the project — so leaving the write token blank physically prevents mutations even if the master switch is on.
+
+---
+
+## Troubleshooting
+
+- **401 on read** — the read token is wrong. Copy it directly from the Rollbar dashboard.
+- **403 on mutations** — the write token is missing or the master switch is OFF.
+- **Empty results from \`rollbar_list_items\`** — the default environment filter on the project might not match actual environments. Run with an explicit \`environment\` override or clear the default.
+- **Adding a second project** — each Rollbar project needs a separate entry in the Projects list, even if they're in the same Rollbar account. Tokens are project-scoped, not account-scoped.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Rollbar Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Read items, occurrences, and metrics from Rollbar, plus optional resolve/mute mutations. Multi-project, per-project allowedCompanies, separate read+write tokens.",
   author: "Barry Carr & Tony Allard",

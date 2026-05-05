@@ -64,11 +64,80 @@ const accountItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — GitHub Tools
+
+Connect a GitHub Personal Access Token so agents can read and create issues, pull requests, comments, and releases. Reckon on **about 5 minutes**.
+
+---
+
+## 1. Create a GitHub Fine-Grained PAT (recommended)
+
+Fine-grained PATs scope to specific repos and grant only the permissions the plugin needs.
+
+- Go to [https://github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta)
+- Click **Generate new token**
+- Fill in:
+  - **Token name**: "Paperclip"
+  - **Resource owner**: your personal account or the org
+  - **Repository access**: select specific repos (or All repositories for the org)
+  - **Permissions** → Repository:
+    | Permission | Level |
+    |---|---|
+    | Issues | Read and write |
+    | Pull requests | Read and write |
+    | Contents | Read-only |
+    | Metadata | Read-only (auto-selected) |
+- Click **Generate token** and **copy it now** — it's shown only once
+
+> **Classic PAT alternative**: if you prefer, create a classic PAT (github.com/settings/tokens) with the \`repo\` scope. It works but is broader than necessary.
+
+---
+
+## 2. Create a Paperclip secret
+
+In Paperclip, switch to the company that should own this GitHub connection.
+
+- Go to **Secrets → Add**
+- Name it (e.g. \`github-pat\`)
+- Paste the token as the value
+- Save, then **copy the secret's UUID**
+
+---
+
+## 3. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **GitHub accounts**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`main\` |
+| **Display name** | e.g. "Personal GitHub" |
+| **Personal Access Token** | UUID of the secret from step 2 |
+| **Default owner** | your GitHub username or org (optional — saves typing per call) |
+| **Default repo** | repo name without owner (optional — useful for single-repo setups) |
+| **Allowed repos** | \`owner/repo\` pairs to restrict access; leave empty for all repos the PAT can see |
+| **Allowed companies** | tick the companies whose agents may use this account |
+
+Set **Default account key** to \`main\` at the top.
+
+Enable **Allow create/update/close/release/PR write** when you're ready for agents to create or modify GitHub objects.
+
+---
+
+## Troubleshooting
+
+- **401 Unauthorized** — the PAT is expired or the secret UUID is wrong. Generate a new token, update the secret value, and re-save the plugin config.
+- **403 on a specific repo** — the fine-grained PAT wasn't given access to that repo. Edit the PAT and add it to the repository list.
+- **\`[EALLOWED_REPOS]\`** — the target repo isn't in the Allowed repos list. Either add it or clear the list to allow all repos the PAT can reach.
+- **Issue creation returns duplicate** — the idempotencyKey dedup label was already created from a prior run with the same key. This is expected; the existing issue ID is returned.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "GitHub Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "GitHub repository operations — issues, comments, repos, pull requests, releases, search. Multi-account, per-account allowedCompanies + allowedRepos, mutations gated.",
   author: "Barry Carr & Tony Allard",

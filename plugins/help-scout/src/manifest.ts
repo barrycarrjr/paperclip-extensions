@@ -57,11 +57,78 @@ const accountItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Help Scout
+
+Connect a Help Scout account so agents can find conversations, reply, add notes, manage customers, and pull reports. Reckon on **about 5 minutes**.
+
+---
+
+## 1. Create a Help Scout Personal Access Token
+
+- Log into Help Scout
+- Click your avatar (top right) → **Your Profile → Authentication**
+- Scroll down to **API Keys** and click **Generate an API Key**
+- Give it a name (e.g. "Paperclip") and click **Generate**
+- **Copy the token now** — it's shown only once
+
+> Personal Access Tokens have full account access. Keep them in the secret store and rotate them if an employee leaves.
+
+---
+
+## 2. Create a Paperclip secret
+
+In Paperclip, switch to the company that should own this Help Scout connection.
+
+- Go to **Secrets → Add**
+- Name it (e.g. \`helpscout-pat\`)
+- Paste the token as the value
+- Save, then **copy the secret's UUID**
+
+---
+
+## 3. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **Help Scout accounts**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`main\` |
+| **Display name** | e.g. "Customer Support" |
+| **Personal Access Token** | UUID of the secret from step 2 |
+| **Default mailbox ID** | leave blank for now — fill in after step 4 |
+| **Allowed mailbox IDs** | leave blank to allow all mailboxes; restrict later if needed |
+| **Allowed companies** | tick the companies whose agents may use this account |
+
+Set **Default account key** to \`main\` at the top.
+
+---
+
+## 4. Find your mailbox ID
+
+After saving the configuration, run \`helpscout_list_mailboxes\` (no parameters needed). It returns each mailbox's \`id\`, \`name\`, and email address. Copy the numeric ID for your primary mailbox and paste it into **Default mailbox ID** in the account config.
+
+---
+
+## 5. Enable mutations when ready
+
+**Allow create/reply/note/status/tag changes** defaults to OFF (read-only). Flip it ON once you've verified read tools work and you're ready for agents to reply or create conversations.
+
+---
+
+## Troubleshooting
+
+- **401 Unauthorized** — the PAT was copied incorrectly or has been revoked. Regenerate in Help Scout, update the Paperclip secret.
+- **\`[ECOMPANY_NOT_ALLOWED]\`** — the calling company isn't ticked in Allowed companies.
+- **Mailbox not found** — the default mailbox ID is wrong, or the mailbox is restricted by Allowed mailbox IDs. Run \`helpscout_list_mailboxes\` to verify the IDs.
+- **Duplicate conversations** — use \`idempotencyKey\` on \`helpscout_create_conversation\` to prevent double-creation if a skill retries.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Help Scout",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Customer-support operations on Help Scout — find / create / reply / note conversations, look up customers, change status, assign, tag, and pull day/week/custom reports. Multi-account, per-account allowedCompanies, mutations gated.",
   author: "Barry Carr & Tony Allard",

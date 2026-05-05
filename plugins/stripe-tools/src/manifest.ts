@@ -3,11 +3,86 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const PLUGIN_ID = "stripe-tools";
 const PLUGIN_VERSION = "0.2.0";
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Stripe Tools
+
+Connect a Stripe account so agents can look up customers, subscriptions, charges, disputes, and pull metrics. Reckon on **about 10 minutes**.
+
+---
+
+## 1. Create a Stripe Restricted API Key
+
+Use a **restricted key** — not the secret key (\`sk_live_...\`). Restricted keys limit blast radius if a key is ever compromised.
+
+- Log into the [Stripe Dashboard](https://dashboard.stripe.com)
+- Go to **Developers → API keys → Restricted keys → Create restricted key**
+- **Key name**: "Paperclip"
+- Set the following permissions:
+
+| Resource | Permission |
+|---|---|
+| Customers | Read |
+| Subscriptions | Read |
+| Charges | Read |
+| Balance | Read |
+| Disputes | Read |
+| Invoices | Read |
+| Prices | Read |
+| Coupons | Write *(only if you'll enable allowMutations)* |
+| Promotion codes | Write *(only if you'll enable allowMutations)* |
+
+- Click **Create key** and **copy it now**
+
+> The key starts with \`rk_live_...\` (production) or \`rk_test_...\` (test mode). Keep separate keys for each environment.
+
+---
+
+## 2. Create a Paperclip secret
+
+In Paperclip, switch to the company that should own this Stripe connection.
+
+- Go to **Secrets → Add**
+- Name it (e.g. \`stripe-restricted-key\` or \`stripe-test-key\`)
+- Paste the restricted key as the value
+- Save, then **copy the secret's UUID**
+
+---
+
+## 3. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **Stripe accounts**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`main\` (or \`test\` for the sandbox account) |
+| **Display name** | e.g. "Production live" |
+| **Mode** | \`live\` or \`test\` |
+| **Restricted secret key** | UUID of the secret from step 2 |
+| **Allowed companies** | tick the companies whose agents may use this account |
+
+Set **Default account key** to \`main\` at the top.
+
+---
+
+## 4. Add a test-mode account (recommended)
+
+Repeat steps 1–3 with a \`rk_test_...\` key, set **Mode** to \`test\`, and use identifier \`test\`. Skills can then pass \`"account": "test"\` during development so they never touch live billing data.
+
+---
+
+## Troubleshooting
+
+- **401 / \`[ESTRIPE_AUTH]\`** — the secret UUID is wrong, or the key was rolled. Update the Paperclip secret value and re-save the plugin config.
+- **403 / \`[ESTRIPE_PERMISSION]\`** — the restricted key is missing a scope. Edit the key in the Stripe dashboard to add it.
+- **\`[ESTRIPE_MIXED_CURRENCY]\`** from \`stripe_get_metrics_snapshot\`** — your active subscriptions span more than one currency. The metrics tool doesn't do FX conversion; export to CSV and aggregate externally, or filter by currency.
+- **Test data showing in production reports** — make sure your test account uses a \`rk_test_...\` key and production uses \`rk_live_...\`. Stripe silently accepts both; the \`mode\` field in config is informational only.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Stripe Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Exposes Stripe operations (customers, subscriptions, charges, balance, disputes, coupons, CSV export, MRR/ARR/churn metrics) as agent tools. Multi-account, per-account company isolation, mutations gated by a master switch.",
   author: "Barry Carr & Tony Allard",

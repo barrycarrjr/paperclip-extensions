@@ -71,11 +71,95 @@ const providerItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Image Tools
+
+Connect an image generation provider so agents can generate, edit, compose, and resize images. Local composition tools (compose, resize, upscale) work without an API key; generation tools require a provider. Reckon on **about 5 minutes** for provider setup.
+
+---
+
+## Choosing a provider
+
+| Provider | Best for | Cost | Models |
+|---|---|---|---|
+| **Replicate** (recommended) | Wide model selection, pay-per-run | ~$0.003–0.05/image | FLUX, SDXL, Stable Diffusion, etc. |
+| **OpenAI** | DALL-E 3 / gpt-image-1, familiar billing | ~$0.04–0.12/image | dall-e-3, gpt-image-1 |
+
+---
+
+## Replicate setup
+
+### 1. Get a Replicate API token
+
+- Sign up / log in at [https://replicate.com](https://replicate.com)
+- Go to [https://replicate.com/account/api-tokens](https://replicate.com/account/api-tokens)
+- Click **Create token** — name it "Paperclip"
+- **Copy the token**
+
+### 2. Create a Paperclip secret
+
+In Paperclip, switch to the company that should use this provider.
+
+- Go to **Secrets → Add**
+- Name it \`replicate-api-token\`
+- Paste the token as the value
+- Save, then **copy the secret's UUID**
+
+### 3. Configure the provider (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **Image providers**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`replicate-main\` |
+| **Provider kind** | \`replicate\` |
+| **API key** | UUID of the secret from step 2 |
+| **Default model** | e.g. \`black-forest-labs/flux-schnell\` (fast) or \`stability-ai/sdxl\` |
+| **Allowed companies** | tick the companies whose agents may use this provider |
+
+Set **Default provider key** at the top.
+
+---
+
+## OpenAI setup
+
+### 1. Get an OpenAI API key
+
+- Go to [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+- Click **+ Create new secret key** — name it "Paperclip"
+- **Copy the key**
+
+### 2. Create a Paperclip secret and configure
+
+Same steps as Replicate above — name the secret \`openai-api-key\`, set **Provider kind** to \`openai\`, and set **Default model** to \`dall-e-3\` or \`gpt-image-1\`.
+
+---
+
+## Local tools (no provider needed)
+
+\`image_compose\`, \`image_resize\`, and \`image_upscale\` run locally using sharp. They still require at least one provider entry to exist for company-isolation enforcement — create a provider entry with any company-appropriate \`allowedCompanies\` list, even if you're not using generation.
+
+---
+
+## Enabling generation
+
+**Allow generative tools** defaults to OFF (cost gate). Flip it ON only after you've reviewed which agents/skills will call \`image_generate\` or \`image_edit\` and are comfortable with the per-image API cost.
+
+---
+
+## Troubleshooting
+
+- **\`[EALLOWED_COMPANIES]\`** — the calling company isn't in the provider's Allowed companies list.
+- **Replicate model not found** — model slugs must be exact (e.g. \`black-forest-labs/flux-schnell\`, not \`flux-schnell\`). Check the model page on replicate.com for the correct slug.
+- **OpenAI content policy refusal** — DALL-E 3 / gpt-image-1 enforce content policies. Revise the prompt.
+- **Generation disabled** — the \`allowGeneration\` switch is OFF. Flip it on in the Configuration tab.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Image Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Generate, compose, resize, and upscale images. Local jimp-based composition + provider-pluggable generation (Replicate / OpenAI). Multi-provider, per-provider allowedCompanies, generation gated by a cost switch.",
   author: "Barry Carr & Tony Allard",

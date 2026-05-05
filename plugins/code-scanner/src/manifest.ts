@@ -35,11 +35,100 @@ const repoItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Code Scanner
+
+Give agents read-only visibility into local git repos — secret leaks, dead exports, stale TODOs, and cross-company agent health. No external credentials; everything runs on the Paperclip host machine. Reckon on **about 10 minutes** including binary installs.
+
+---
+
+## 1. Install gitleaks (for secret scanning)
+
+\`gitleaks\` is a Go binary — download a release from [https://github.com/gitleaks/gitleaks/releases](https://github.com/gitleaks/gitleaks/releases).
+
+**Windows (Paperclip host)**:
+- Download \`gitleaks_<version>_windows_x64.zip\`
+- Extract and place \`gitleaks.exe\` somewhere on the system PATH (e.g. \`C:\\Windows\\System32\\\`) or note the full path
+
+**Linux/macOS (if running Paperclip there)**:
+\`\`\`bash
+# macOS
+brew install gitleaks
+# Linux
+curl -sSfL https://raw.githubusercontent.com/zricethezav/gitleaks/master/scripts/install.sh | sh
+\`\`\`
+
+Verify: \`gitleaks version\` should print the version number.
+
+If gitleaks isn't available, \`code_secret_scan\` returns \`[ESCANNER_GITLEAKS_MISSING]\` — other scan tools still work.
+
+---
+
+## 2. Install knip in target repos (for dead export scanning)
+
+\`knip\` is a Node.js dev tool. In each repo you want to scan:
+
+\`\`\`bash
+pnpm add -D knip
+# or npm install --save-dev knip
+\`\`\`
+
+Alternatively, \`npx knip\` (the default) works without installing if the host has Node.js and npx available.
+
+Verify: \`npx knip --version\` in the repo directory.
+
+---
+
+## 3. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above and fill in:
+
+**Repos to scan** — click **+ Add item** for each repo:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`paperclip\`, \`paperclip-extensions\` |
+| **Display name** | e.g. "Paperclip core repo" |
+| **Absolute repo path** | e.g. \`C:\\path\\to\\repo\` or \`/home/user/repo\` |
+| **Allowed companies** | tick the companies whose agents may scan this repo (\`*\` for Steward) |
+
+**Other settings**:
+
+| Field | Default | Notes |
+|---|---|---|
+| **TODO age threshold** | 6 months | \`code_todo_age_scan\` only reports TODOs older than this |
+| **gitleaks executable** | \`gitleaks\` (PATH) | Override with an absolute path if needed |
+| **knip executable** | \`npx knip\` | Override if the repo uses a local install |
+
+---
+
+## Typical Steward configuration
+
+For the portfolio-wide Steward agent, add both repos and set Allowed companies to \`*\` (portfolio-wide):
+
+\`\`\`
+Repos:
+  - key: paperclip        path: C:\path\to\paperclip              allowed: *
+  - key: extensions       path: C:\path\to\paperclip-extensions   allowed: *
+\`\`\`
+
+The \`agent_observability_query\` tool doesn't need repo access — it reads Paperclip's agent state directly and works immediately without any repo configuration.
+
+---
+
+## Troubleshooting
+
+- **\`[ESCANNER_GITLEAKS_MISSING]\`** — gitleaks isn't on PATH. Either install it and ensure it's findable, or set **gitleaks executable** to the full path.
+- **\`[ESCANNER_KNIP_MISSING]\`** — knip isn't installed in the repo and npx can't resolve it. Run \`pnpm add -D knip\` in the target repo.
+- **Path not found** — the absolute path must point to an existing git working tree on the Paperclip host. Check for typos and use forward slashes or escaped backslashes.
+- **Read permission denied** — the Paperclip server process must have read access to the repo directory.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Code Scanner",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Read-only code and agent-observability detectors. Wraps gitleaks (secret scan), knip (dead exports), git (aged TODOs, doc drift), and Paperclip's own agent state for portfolio-wide health checks. No mutations — every tool returns findings, never changes anything.",
   author: "Barry Carr & Tony Allard",

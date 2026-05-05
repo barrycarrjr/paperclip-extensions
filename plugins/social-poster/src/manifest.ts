@@ -3,11 +3,127 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const PLUGIN_ID = "social-poster";
 const PLUGIN_VERSION = "0.3.0";
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — Social Poster
+
+Connect Facebook Pages, Instagram Business accounts, and/or X (Twitter) accounts so agents can post content. Each platform has its own credential setup. Reckon on **15–30 minutes** total depending on which platforms you connect.
+
+**Important**: set **Allow publishing** to OFF (default) until you've verified everything works. When OFF, tool calls simulate posting and return the would-be payload without hitting any network.
+
+---
+
+## Facebook Pages
+
+### 1. Create a Facebook App (if you don't have one)
+
+- Go to [https://developers.facebook.com/apps](https://developers.facebook.com/apps) → **Create App**
+- **Use case**: Business (allows Pages API)
+- Add the **Facebook Login** and **Pages API** products
+
+### 2. Get a long-lived Page Access Token
+
+The easiest path is the Graph API Explorer:
+
+- Go to [https://developers.facebook.com/tools/explorer](https://developers.facebook.com/tools/explorer)
+- Select your app
+- Click **Generate Access Token** → grant permissions: \`pages_manage_posts\`, \`pages_read_engagement\`, \`pages_show_list\`
+- Exchange the short-lived token for a long-lived one:
+  \`\`\`
+  GET /oauth/access_token?grant_type=fb_exchange_token&client_id=<APP_ID>&client_secret=<APP_SECRET>&fb_exchange_token=<SHORT_LIVED_TOKEN>
+  \`\`\`
+- Then get the permanent Page token:
+  \`\`\`
+  GET /me/accounts?access_token=<LONG_LIVED_USER_TOKEN>
+  \`\`\`
+  Each entry in the response has a \`access_token\` — that's your Page Access Token. Page tokens don't expire as long as the user doesn't revoke them.
+
+### 3. Find your Page ID
+
+In the same \`/me/accounts\` response, each entry has an \`id\` — that's your Page ID. Or find it in Facebook page → **About → Page transparency**.
+
+### 4. Create Paperclip secrets and configure
+
+- Create a Paperclip secret with the Page Access Token; copy the UUID
+- In the Configuration tab under **Facebook Pages**, add an entry:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`brand-a-fb\` |
+| **Page ID** | numeric Facebook Page ID |
+| **Page Access Token** | UUID of the secret |
+| **Brand variant** | \`standard\` or \`kids\` |
+| **Allowed companies** | tick the owning company |
+
+---
+
+## Instagram Business accounts
+
+Instagram Business requires a Facebook Page connected to the IG Business account. The access token is the same Page Access Token from above.
+
+### 1. Get your Instagram Business Account ID
+
+Call the Graph API:
+\`\`\`
+GET /<PAGE_ID>?fields=instagram_business_account&access_token=<PAGE_TOKEN>
+\`\`\`
+The response contains \`instagram_business_account.id\` — that's the numeric IG User ID.
+
+### 2. Configure
+
+In the Configuration tab under **Instagram Business accounts**, add an entry:
+
+| Field | Value |
+|---|---|
+| **Identifier** | e.g. \`brand-a-ig\` |
+| **Instagram User ID** | numeric IG Business Account ID |
+| **Access Token** | UUID of the Facebook Page secret (same one as above) |
+| **Brand variant** | \`standard\` or \`kids\` |
+| **Allowed companies** | tick the owning company |
+
+---
+
+## X (Twitter) accounts
+
+X posting requires OAuth 1.0a User Context — four credentials total.
+
+### 1. Create an X Developer App
+
+- Go to [https://developer.x.com/en/portal/projects-and-apps](https://developer.x.com/en/portal/projects-and-apps)
+- Create a Project and an App inside it
+- Under **App settings → User authentication settings**: enable OAuth 1.0a with **Read and Write** permissions
+
+### 2. Get the four credentials
+
+Under **Keys and Tokens**:
+
+| Credential | Where |
+|---|---|
+| API Key (Consumer Key) | Keys and Tokens → Consumer Keys |
+| API Secret (Consumer Secret) | Keys and Tokens → Consumer Keys |
+| Access Token | Keys and Tokens → Authentication Tokens → Access Token and Secret |
+| Access Token Secret | Keys and Tokens → Authentication Tokens → Access Token and Secret |
+
+Generate the Access Token and Secret via **"Generate"** — this creates them as the app owner's user context.
+
+### 3. Create Paperclip secrets and configure
+
+Create four Paperclip secrets (one per credential) and copy their UUIDs. In the Configuration tab under **X (Twitter) accounts**, add an entry filling in each secret UUID.
+
+---
+
+## Troubleshooting
+
+- **Facebook token expired** — Page tokens don't normally expire, but long-lived user tokens expire after 60 days if unused. Re-exchange via the Graph API and update the Paperclip secret.
+- **Instagram \`[IG_MEDIA_UNPUBLISHED]\`** — the media container was created but publish timed out (>24 h). The next call recreates the container automatically.
+- **X 403 / Forbidden** — the app's OAuth 1.0a permissions are set to Read Only. Change to Read and Write in the developer portal and regenerate the Access Token.
+- **kids brand variant rejecting content** — the worker checks for adult-content patterns in the post body. Remove the flagged phrase or switch to \`standard\` variant for that page.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Social Poster",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Posts to Facebook Pages, Instagram Business accounts, and X (Twitter) via their official APIs. Brand-variant aware; optional scheduling.",
   author: "Barry Carr & Tony Allard",

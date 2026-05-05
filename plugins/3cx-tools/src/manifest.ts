@@ -214,11 +214,92 @@ const accountItemSchema = {
   },
 } as const;
 
-const manifest: PaperclipPluginManifestV1 = {
+const SETUP_INSTRUCTIONS = `# Setup — 3CX PBX Tools
+
+Connect Paperclip to your 3CX PBX so agents can read queue depth, agent presence, call history, and (optionally) originate click-to-call. Reckon on **about 15 minutes** for first-time setup.
+
+---
+
+## 1. Create a 3CX XAPI client
+
+Log into your **3CX Admin Console** (web browser, not the desktop app).
+
+- Go to **Integrations → API** in the left nav
+- Click **+ Add**
+- Fill in:
+  - **Name**: anything recognizable, e.g. "Paperclip"
+  - **Scopes**: check **Read** (required); also check **Call Control** if you plan to use click-to-call, park, transfer, or hangup
+- Click **OK / Save**
+
+**Copy the Client ID and Client Secret now.** The Client Secret is shown only once — if you miss it, regenerate it and update the Paperclip secret.
+
+---
+
+## 2. Create Paperclip secrets
+
+In Paperclip, switch to the company that should own this PBX connection. Then:
+
+- Go to **Secrets → Add** and create two secrets:
+  1. **Name** \`3cx-client-id\` → value = the Client ID from step 1
+  2. **Name** \`3cx-client-secret\` → value = the Client Secret from step 1
+- Save each and **copy their UUIDs**
+
+---
+
+## 3. Configure the plugin (this page, **Configuration** tab)
+
+Click the **Configuration** tab above. Under **3CX accounts**, click **+ Add item** and fill in:
+
+| Field | Value |
+|---|---|
+| **Identifier** | \`main\` |
+| **PBX base URL** | your 3CX URL, e.g. \`https://pbx.example.com\` (no trailing path) |
+| **3CX version** | \`20\` (v18 is reserved for a future release) |
+| **XAPI client_id** | UUID of the \`3cx-client-id\` secret |
+| **XAPI client_secret** | UUID of the \`3cx-client-secret\` secret |
+| **Multi-company mode** | see below |
+| **Allowed companies** | tick the companies that should have PBX access |
+
+Set **Default account key** to \`main\` at the top.
+
+---
+
+## 4. Pick the right multi-company mode
+
+| Mode | When to use |
+|---|---|
+| \`single\` | The entire PBX belongs to one company — no per-company filtering |
+| \`manual\` | One PBX shared across multiple LLCs; you partition by extension ranges / queue IDs / DIDs in the routing table |
+| \`native\` | Your 3CX has the Multi-Company license; you map each Paperclip company to a 3CX \`tenant_id\` |
+
+For most single-business setups, use \`single\`. For a shared PBX serving multiple LLCs, use \`manual\` and fill in each company's extension ranges and queue IDs.
+
+---
+
+## 5. Enable click-to-call (optional)
+
+Leave **Allow click-to-call / park / transfer / hangup** OFF (default) until you've confirmed the read tools work. Then:
+
+- Flip the switch ON
+- Optionally fill in the **User → extension map** so agents can originate calls as "call from my extension" without the user typing their extension number
+
+---
+
+## Troubleshooting
+
+- **\`[EAUTH]\` errors** — the client secret is wrong or expired. Regenerate in 3CX admin, update the Paperclip secret.
+- **\`[ECOMPANY_NOT_ALLOWED]\`** — the calling company isn't ticked in Allowed companies, or isn't in the routing table when mode=manual.
+- **PBX not reachable** — ensure the Paperclip server can reach the PBX URL. If Paperclip is in Docker, the PBX must be on a routable host (not \`localhost\`).
+- **Click-to-call rings the human extension but then hangs up** — the XAPI client is missing the Call Control scope. Regenerate the client with that scope, update the secret.
+- **Queue data missing** — in manual mode, the queue IDs in the routing table must match the queue extensions (the numbers callers dial) OR 3CX internal IDs. Use \`pbx_queue_list\` to discover them.
+`;
+
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "3CX PBX Tools",
+  setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Direct 3CX PBX integration for operational visibility (queue depth, parked calls, today's stats, agent presence, call history) and human-driven call control (click-to-call, park, transfer, hangup) — plus optional realtime WebSocket events. Multi-account; multi-company-mode (single / manual / native); per-account allowedCompanies; mutations gated.",
   author: "Barry Carr & Tony Allard",
