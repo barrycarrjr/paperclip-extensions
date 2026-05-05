@@ -100,7 +100,7 @@ export function createVapiEngine(opts: VapiEngineOptions): PhoneEngine {
       if (typeof input.assistant === "string") {
         body.assistantId = input.assistant;
       } else {
-        body.assistant = mapAssistantConfigToVapi(input.assistant);
+        body.assistant = mapAssistantConfigToVapi(input.assistant, false, opts.engineConfig);
       }
       if (input.idempotencyKey) {
         body.metadata = {
@@ -248,7 +248,7 @@ export function createVapiEngine(opts: VapiEngineOptions): PhoneEngine {
     },
 
     async createAssistant(input: AssistantConfig): Promise<NormalizedAssistant> {
-      const body = mapAssistantConfigToVapi(input);
+      const body = mapAssistantConfigToVapi(input, false, opts.engineConfig);
       const resp = await vapiRequest<VapiAssistant>(client, "/assistant", {
         method: "POST",
         body,
@@ -264,7 +264,7 @@ export function createVapiEngine(opts: VapiEngineOptions): PhoneEngine {
       id: string,
       patch: Partial<AssistantConfig>,
     ): Promise<NormalizedAssistant> {
-      const body = mapAssistantConfigToVapi(patch as AssistantConfig, true);
+      const body = mapAssistantConfigToVapi(patch as AssistantConfig, true, opts.engineConfig);
       const resp = await vapiRequest<VapiAssistant>(
         client,
         `/assistant/${encodeURIComponent(id)}`,
@@ -442,6 +442,8 @@ const PHONE_SAFETY_PREAMBLE = `GENERAL CALL SAFETY (these rules ALWAYS apply, re
 
 6. END THE CALL WHEN DONE. Use the end-call function as soon as the original purpose is complete OR the recipient asks to end the call. Don't loop, don't keep saying goodbye, don't chat past the goal.
 
+7. RECOGNISE VOICEMAIL. If you hear a recorded outgoing-message greeting, an automated prompt like "leave a message at the tone" / "press 5 to leave a callback number" / "the person you have called is unavailable" / "this voicemail box belongs to..." — that is voicemail, not a live person. Do NOT try to converse with it. Leave a brief, structured message that includes: (a) who you are, (b) who you are calling on behalf of, (c) the purpose of the call in one sentence, (d) a clear next step or callback method. Then end the call with the end-call function. The voicemail recipient cannot interrupt or respond, so don't ask questions.
+
 ---
 
 `;
@@ -449,6 +451,7 @@ const PHONE_SAFETY_PREAMBLE = `GENERAL CALL SAFETY (these rules ALWAYS apply, re
 function mapAssistantConfigToVapi(
   cfg: AssistantConfig,
   partial = false,
+  engineConfig: Record<string, unknown> = {},
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {};
   if (cfg.name !== undefined) body.name = cfg.name;
@@ -506,6 +509,38 @@ function mapAssistantConfigToVapi(
     body.maxDurationSeconds = 600;
     // Auto-hangup if either side stops talking for this long.
     body.silenceTimeoutSeconds = 25;
+
+    // Voicemail detection — always enabled at the engine level so the AI
+    // is aware when it's hit a machine instead of a live human. Without
+    // this, the AI tries to converse with voicemail greetings, gets cut
+    // off by the carrier's beep prompt, and ends without leaving a
+    // proper message.
+    //
+    // Provider note: Vapi's voicemailDetection.provider field selects
+    // which AMD (answering-machine-detection) service Vapi uses to
+    // analyze the audio — it is NOT a reference to the operator's
+    // carrier, and using a given provider here does not require the
+    // operator to have an account with it. Default 'google' because it
+    // works across carriers without any operator-side Twilio
+    // relationship. Override via account.engineConfig.voicemailDetectionProvider
+    // if needed (e.g. 'openai' for newer Vapi API versions).
+    const vmProvider =
+      (engineConfig?.voicemailDetectionProvider as string | undefined) ??
+      "google";
+    body.voicemailDetection = {
+      provider: vmProvider,
+      voicemailExpectedDurationSeconds: 25,
+    };
+  }
+
+  // Optional pre-recorded voicemail message. When set, Vapi plays this
+  // message automatically on detected voicemail and then hangs up — no AI
+  // improvisation. Use for confirmation-style calls where voicemail is
+  // common and the message is the same every time. Leave undefined to
+  // let the AI handle voicemail dynamically per its system prompt.
+  if (cfg.voicemailMessage !== undefined) {
+    body.voicemailMessage = cfg.voicemailMessage;
+    body.endCallOnVoicemail = true;
   }
 
   // tools[] (in-call function tools the assistant may invoke mid-call)

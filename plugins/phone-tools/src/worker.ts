@@ -860,6 +860,7 @@ const plugin = definePlugin({
             voice: { type: "string" },
             model: { type: "string" },
             tools: { type: "array", items: { type: "string" } },
+            voicemailMessage: { type: "string" },
             idempotencyKey: { type: "string" },
           },
           required: ["name", "systemPrompt"],
@@ -877,6 +878,7 @@ const plugin = definePlugin({
           voice?: string;
           model?: string;
           tools?: string[];
+          voicemailMessage?: string;
           idempotencyKey?: string;
         };
         if (!p.name) return { error: "[EINVALID_INPUT] `name` is required" };
@@ -915,6 +917,7 @@ const plugin = definePlugin({
             voice: p.voice,
             model: p.model,
             tools: p.tools,
+            voicemailMessage: p.voicemailMessage,
           });
           await track(ctx, runCtx, "phone_assistant_create", r.resolved.accountKey, {
             assistantId: created.id,
@@ -945,6 +948,7 @@ const plugin = definePlugin({
             voice: { type: "string" },
             model: { type: "string" },
             tools: { type: "array", items: { type: "string" } },
+            voicemailMessage: { type: "string" },
           },
           required: ["assistantId"],
         },
@@ -962,6 +966,7 @@ const plugin = definePlugin({
           voice?: string;
           model?: string;
           tools?: string[];
+          voicemailMessage?: string;
         };
         if (!p.assistantId)
           return { error: "[EINVALID_INPUT] `assistantId` is required" };
@@ -986,6 +991,7 @@ const plugin = definePlugin({
           if (p.voice !== undefined) patch.voice = p.voice;
           if (p.model !== undefined) patch.model = p.model;
           if (p.tools !== undefined) patch.tools = p.tools;
+          if (p.voicemailMessage !== undefined) patch.voicemailMessage = p.voicemailMessage;
           const updated = await r.resolved.engine.updateAssistant(p.assistantId, patch);
           await track(ctx, runCtx, "phone_assistant_update", r.resolved.accountKey, {
             assistantId: p.assistantId,

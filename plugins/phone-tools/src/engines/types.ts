@@ -27,6 +27,21 @@ export interface AssistantConfig {
    * mid-call. Set is fixed in v0.1.0 — see plan §"Open questions" #5.
    */
   tools?: string[];
+  /**
+   * Optional pre-recorded voicemail message played automatically by the
+   * engine when an answering machine is detected. When provided, the
+   * engine plays this message and ends the call (no AI improvisation).
+   * Use for calls where voicemail is common AND a static message is
+   * acceptable (confirmations, follow-up reminders).
+   *
+   * Leave undefined to let the AI handle voicemail per its system
+   * prompt (preserves dynamic content like per-call slot times, but
+   * relies on the AI recognising voicemail patterns).
+   *
+   * Either way, voicemail DETECTION is always enabled at the engine
+   * level so the AI is at least aware when it's hit a machine.
+   */
+  voicemailMessage?: string;
 }
 
 export interface StartCallInput {

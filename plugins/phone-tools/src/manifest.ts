@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.2.0";
+const PLUGIN_VERSION = "0.2.2";
 
 const accountItemSchema = {
   type: "object",
@@ -59,7 +59,7 @@ const accountItemSchema = {
       type: "object",
       title: "Engine-specific config",
       description:
-        "Engine-specific extras. For Vapi: leave empty in v0.1.0 (no extras needed). For DIY (v0.2.0): jambonzAccountSid, jambonzApplicationSid, openaiApiKeyRef, realtimeModel, realtimeVoice.",
+        "Engine-specific extras. For Vapi: optional `voicemailDetectionProvider` (string; one of 'google' / 'twilio' / 'openai') to override the answering-machine-detection service Vapi uses — defaults to 'google'. NOT a reference to your carrier; this is Vapi's internal AMD choice. For DIY (v0.3.0): jambonzAccountSid, jambonzApplicationSid, openaiApiKeyRef, realtimeModel, realtimeVoice.",
       additionalProperties: true,
     },
     defaultNumberId: {
@@ -413,6 +413,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
                   firstMessage: { type: "string" },
                   voice: { type: "string", description: "Engine voice spec, e.g. '11labs:rachel'." },
                   model: { type: "string", description: "Engine model spec, e.g. 'openai:gpt-4o'." },
+                  voicemailMessage: {
+                    type: "string",
+                    description:
+                      "Optional pre-recorded message played automatically when the engine detects voicemail. When set, the engine plays this message and ends the call (no AI improvisation). Leave empty to let the AI handle voicemail dynamically per its system prompt — voicemail detection is always on regardless.",
+                  },
                 },
                 required: ["name", "systemPrompt"],
               },
@@ -577,6 +582,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
             items: { type: "string" },
             description: "Names of plugin-internal tools the in-call assistant may invoke mid-call. v0.1.0 ships only 'take_note'; full set lands in v0.1.1.",
           },
+          voicemailMessage: {
+            type: "string",
+            description:
+              "Optional pre-recorded voicemail message. When set, the engine plays this and ends the call automatically when voicemail is detected. Leave empty for AI-handled voicemail (preserves dynamic content per call). Voicemail detection is always on regardless.",
+          },
           idempotencyKey: {
             type: "string",
             description: "Optional. Subsequent calls with the same key short-circuit to the existing assistant.",
@@ -600,6 +610,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           voice: { type: "string" },
           model: { type: "string" },
           tools: { type: "array", items: { type: "string" } },
+          voicemailMessage: { type: "string" },
         },
         required: ["assistantId"],
       },
