@@ -14,6 +14,7 @@ export interface ConfigWorkspace {
 
 export interface InstanceConfig {
   allowMutations?: boolean;
+  allowReadHistory?: boolean;
   workspaces?: ConfigWorkspace[];
   defaultWorkspace?: string;
 }
@@ -77,8 +78,13 @@ export async function getSlackClient(
 
   const tokenRef = useUserToken ? workspace.userTokenRef : workspace.botTokenRef;
   if (!tokenRef) {
+    if (useUserToken) {
+      throw new Error(
+        `[ECONFIG] this operation requires a user token (xoxp-...); add userTokenRef to workspace "${workspace.key}" config on /instance/settings/plugins/slack-tools.`,
+      );
+    }
     throw new Error(
-      `[ECONFIG] Slack workspace "${workspace.key}": no ${useUserToken ? "userTokenRef" : "botTokenRef"} configured.`,
+      `[ECONFIG] Slack workspace "${workspace.key}": no botTokenRef configured.`,
     );
   }
 
@@ -143,6 +149,12 @@ export function wrapSlackError(err: unknown): string {
         return `[ESLACK_RATE_LIMIT] ${slackErr}`;
       case "msg_too_long":
         return `[ESLACK_MSG_TOO_LONG] message exceeds 40,000 chars`;
+      case "file_upload_disabled":
+        return `[ESLACK_FILE_UPLOAD_DISABLED] file uploads are disabled for this workspace`;
+      case "already_reacted":
+        return `[ESLACK_ALREADY_REACTED] ${slackErr}`;
+      case "no_reaction":
+        return `[ESLACK_NO_REACTION] ${slackErr}`;
       default:
         return `[ESLACK_${slackErr.toUpperCase()}] ${slackErr}`;
     }

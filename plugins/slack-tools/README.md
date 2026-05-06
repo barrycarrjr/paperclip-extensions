@@ -45,32 +45,29 @@ whenever its instance config is saved. No manual paperclip restart needed.
 
 ## Configure
 
-Setup is two-step per Slack workspace: create the Slack App + paperclip
-secret, then bind the workspace in the plugin config.
+The plugin uses **dual-token auth**: a bot token for announce/notify
+operations and a user token for "act as me" operations. Configure both at
+install — the whole point of an assistant plugin is acting on the
+operator's behalf, so the user token is first-class. Setup is three steps
+per workspace: create the Slack App from the bundled manifest, store both
+tokens as Paperclip secrets, then bind the workspace in the plugin config.
 
-### 1. Create a Slack App and get a bot token
+### 1. Create a Slack App from the bundled manifest
 
-1. Go to https://api.slack.com/apps and click **Create New App** → "From
-   scratch". Pick a name (e.g. `Paperclip`) and the workspace to install
-   into.
-2. Open the new app's **OAuth & Permissions** page.
-3. Under **Bot Token Scopes**, add:
-   - `chat:write` — post messages to channels the bot is in
-   - `chat:write.public` — post to public channels without joining first
-   - `im:write` — DM users
-   - `users:read` — `slack_lookup_user`, `slack_get_channel` member counts
-   - `users:read.email` — required if you'll look up users by email
-   - `channels:read` — `slack_list_channels` (public)
-   - `groups:read` — `slack_list_channels` (private)
-4. (Optional) Under **User Token Scopes**, add scopes like `chat:write` if a
-   skill will ever need to send a message *as* the operator. Most skills
-   only need the bot token.
-5. Click **Install to Workspace**, approve, and copy:
-   - `Bot User OAuth Token` (`xoxb-...`) — required
-   - `User OAuth Token` (`xoxp-...`) — optional, only if you added user
-     token scopes
+The plugin ships [`slack-app-manifest.json`](slack-app-manifest.json)
+declaring all the OAuth scopes both tokens need, so you don't click ~37
+checkboxes by hand.
 
-### 2. Store the token(s) as paperclip secrets
+Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App**
+→ **From a manifest**, pick the target workspace, paste the contents of
+`slack-app-manifest.json`, then **Next** → **Create**.
+
+Then on the **OAuth & Permissions** page, install the app to your
+workspace and grab BOTH tokens — **Bot User OAuth Token** (`xoxb-…`) and
+**User OAuth Token** (`xoxp-…`) — and paste them as `botTokenRef` and
+`userTokenRef` in the plugin config (step 3 below).
+
+### 2. Store both tokens as paperclip secrets
 
 For each token:
 
@@ -82,6 +79,9 @@ For each token:
 4. Provider: `Local encrypted` (the default).
 5. Value: paste the token. Save.
 6. Copy the secret's UUID.
+
+You'll have two secret UUIDs at the end — one for `xoxb-…`, one for
+`xoxp-…`.
 
 ### 3. Find your default DM target user ID
 
@@ -101,14 +101,62 @@ Slack workspaces. Fill in:
 |---|---|---|
 | `Identifier` | `team-main` | Short stable ID agents pass as the `workspace` parameter. Lowercase, no spaces. **Don't change after skills start using it.** |
 | `Display name` | `Acme Slack` | Free-form label. |
-| `Bot token (xoxb-…)` | (paste secret UUID from step 2) | Stored as a UUID; plugin resolves at runtime. |
-| `User token (xoxp-…, optional)` | (paste secret UUID, or leave blank) | Only if you need user-token-scoped operations. |
+| `Bot token (xoxb-…)` | (paste bot-token secret UUID from step 2) | Bot identity — channel posts, operator DMs. |
+| `User token (xoxp-…)` | (paste user-token secret UUID from step 2) | Operator identity — search, files, reactions, reminders. |
 | `Default DM target user ID` | `U01ABCDEFGH` | Your Slack user ID from step 3. Saves passing `userId` on every DM. |
 | `Default channel ID (optional)` | `C01ABCDEFGH` | If most messages go to one ops channel, paste its ID here. |
 | `Allowed companies` | tick the LLC | Which paperclip companies may use this workspace. Empty = unusable. Typical: one workspace = one LLC, single-element list. |
 
 (Optionally) set **Default workspace key** to the identifier above so
 agents can omit `workspace` on every call.
+
+## Token routing — which tools use which token
+
+The runtime supports both tokens (`getSlackClient(useUserToken=true|false)`
+in `src/slackClient.ts`). The two send tools opt into the user token via
+the `asUser` parameter; the rest are bot-only.
+
+| Tool | Token | Why |
+|---|---|---|
+| `slack_send_dm` | bot, or user when `asUser: true` | Default bot identity for notifications (e.g. daily briefing). `asUser: true` posts as the operator — Brandon sees a DM from *you*, not from "Paperclip Bot". |
+| `slack_send_channel` | bot, or user when `asUser: true` | Same — default bot for announcements; `asUser: true` posts as the operator (operator must be a channel member). |
+| `slack_update_message` | bot | Slack restricts edit to the originating token, so this only edits bot-sent messages. Messages sent with `asUser: true` can't be edited by this tool. |
+| `slack_delete_message` | bot | Same restriction as update — bot-sent messages only. |
+| `slack_lookup_user` | bot | Read-only profile lookup. |
+| `slack_list_channels` | bot | Read-only channel list. |
+| `slack_get_channel` | bot | Read-only channel metadata. |
+
+### Sending as the operator (act-as-me)
+
+Use case: an agent reaches out to a teammate, and the message should
+appear from you so the teammate engages with their boss/colleague rather
+than a bot. Example — the Brandon Activity Monitor pinging Brandon about
+his current work:
+
+```ts
+await tools.invoke("slack_send_dm", {
+  userId: "U_BRANDON_ID",
+  asUser: true,
+  text: "Hey Brandon — quick check on the Q2 audit. What's the holdup?",
+});
+```
+
+Caveats when `asUser: true`:
+
+- Requires `userTokenRef` to be configured on the workspace; otherwise the
+  call returns `[ECONFIG] ... no userTokenRef configured`.
+- The message can't be edited or deleted by `slack_update_message` /
+  `slack_delete_message` (bot-token tools). For round-trip "pending →
+  done" UX, stick with bot identity (`asUser: false` or omit).
+- For channel posts, the operator must be a member of the channel — Slack
+  doesn't honour `chat:write.public` for user tokens the way it does for
+  bot tokens.
+
+Future tools that *only* make sense on the user token — search, file
+upload/download, reactions, reminders — are scoped on the user token by
+the bundled manifest and will ship in a later release. Configuring
+`userTokenRef` now means those tools will work as soon as they ship — no
+Slack-side reinstall and no plugin reconfigure needed.
 
 ## Block Kit templates
 
@@ -273,6 +321,19 @@ and returned as `[ECOMPANY_NOT_ALLOWED]` to the caller.
 - Canvases — use the existing Slack MCP.
 
 ## Versioning
+
+`0.3.1` — close the act-as-me gap on the send tools. Add an
+`asUser: boolean` parameter to `slack_send_dm` and `slack_send_channel`;
+when true, the message is posted via the workspace's `userTokenRef`
+instead of the bot token, so the recipient sees the message from the
+operator rather than the Paperclip Bot. Anchor use case: an
+activity-monitor agent reaching out to a teammate from your identity.
+Bot remains the default; existing morning-briefing flows unchanged.
+
+`0.3.0` — ship `slack-app-manifest.json` so app creation is one-click
+import (~37 OAuth scopes pre-declared). Make user token (`xoxp-`) a
+first-class part of setup alongside the bot token; document token routing
+per tool. Setup-instruction rewrite to match.
 
 `0.1.0` — initial release. send/edit/delete/lookup/list/get; per-workspace
 `allowedCompanies`; bot + optional user token; defaultDmTarget /
