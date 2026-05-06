@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.3.1";
+const PLUGIN_VERSION = "0.4.0";
 
 const workspaceItemSchema = {
   type: "object",
@@ -143,14 +143,26 @@ Copy the returned \`userId\` (U-prefixed) and paste it into **Default DM target 
 
 ## Token routing — which tools use which token
 
-Default = bot token (announce/notify identity). \`slack_send_dm\` and \`slack_send_channel\` opt into the user token by passing \`asUser: true\`, which posts as the operator instead of the Paperclip Bot:
+Default = bot token (announce/notify identity). Send / reaction tools opt into the user token via \`asUser: true\`. Search and status tools always require the user token.
 
-- \`slack_send_dm\` — bot DMs by default (e.g. daily briefing); \`asUser: true\` for "act as me" outreach (e.g. an activity-monitor agent reaching out to a teammate from your identity)
-- \`slack_send_channel\` — bot post by default; \`asUser: true\` posts as the operator (must be a member of the channel)
-- \`slack_update_message\` / \`slack_delete_message\` — bot only. Slack restricts edit/delete to the originating token, so messages sent with \`asUser: true\` can't be edited or deleted by these tools.
-- \`slack_lookup_user\`, \`slack_list_channels\`, \`slack_get_channel\` — bot-token read-only metadata
+- \`slack_send_dm\` / \`slack_send_channel\` — bot by default; \`asUser: true\` posts as the operator (e.g. an activity-monitor agent reaching out to a teammate from your identity).
+- \`slack_add_reaction\` / \`slack_remove_reaction\` — bot reaction by default; \`asUser: true\` reacts as the operator. Slack restricts removal to the originating token, so a bot reaction can't be removed with \`asUser: true\` and vice versa.
+- \`slack_search_messages\` — **user token only**. Bot tokens cannot call \`search.messages\`.
+- \`slack_set_user_status\` — **user token only**. Bots cannot change a user's status.
+- \`slack_update_message\` / \`slack_delete_message\` — bot only. Each token can only edit/delete its own sends, so messages sent with \`asUser: true\` can't be edited via these tools.
+- \`slack_read_channel\`, \`slack_read_thread\`, \`slack_lookup_user\`, \`slack_list_channels\`, \`slack_list_users\`, \`slack_get_channel\` — bot-token reads. \`slack_upload_file\` is also bot-token.
 
-Future tools that *only* make sense on the user token — search, file upload/download, reactions, reminders — are scoped on the user token by the bundled manifest and will ship in a later release. Configuring \`userTokenRef\` now means those tools will work as soon as they ship — no reinstall needed.
+## Read-history safety switch
+
+\`slack_read_channel\`, \`slack_read_thread\`, and \`slack_search_messages\` return raw message bodies — these are gated behind the **Allow reading message history** switch on the Configuration tab. Off by default; flip on after you've reviewed which agents are allowed to read message content. Roster and channel-metadata reads (\`slack_lookup_user\`, \`slack_list_users\`, \`slack_list_channels\`, \`slack_get_channel\`) stay ungated since they don't expose message bodies.
+
+## Required scopes (already in the bundled manifest)
+
+The shipped \`slack-app-manifest.json\` declares everything every current tool needs, including:
+- Bot: \`chat:write\`, \`chat:write.public\`, \`im:write\`, \`channels:read\`, \`groups:read\`, \`channels:history\`, \`groups:history\`, \`im:history\`, \`mpim:history\`, \`reactions:read\`, \`reactions:write\`, \`files:write\`, \`pins:read\`, \`pins:write\`, \`users:read\`, \`users:read.email\`.
+- User: \`search:read\`, \`reactions:write\`, \`users.profile:write\`, plus the rest of the act-as-me set (chat, files, im/groups/channels history, etc.).
+
+If you upgraded from v0.3.x, **re-import the v0.4.0 manifest at api.slack.com/apps** (App Manifest → Edit → paste the new JSON), then **reinstall the app to your workspace**. Reinstalling rotates both tokens, so update the \`SLACK_BOT_TOKEN_*\` and \`SLACK_USER_TOKEN_*\` secrets afterward.
 
 ---
 
@@ -184,13 +196,25 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   },
   instanceConfigSchema: {
     type: "object",
-    propertyOrder: ["allowMutations", "defaultWorkspace", "workspaces"],
+    propertyOrder: [
+      "allowMutations",
+      "allowReadHistory",
+      "defaultWorkspace",
+      "workspaces",
+    ],
     properties: {
       allowMutations: {
         type: "boolean",
         title: "Allow editing & deleting messages",
         description:
           "Master switch for slack_update_message and slack_delete_message. Set false (default) to keep the plugin in send-only mode — mutation tools return [EDISABLED] without hitting Slack. Send/lookup tools are unaffected. Flip to true only after you've reviewed which agents/skills can edit or delete.",
+        default: false,
+      },
+      allowReadHistory: {
+        type: "boolean",
+        title: "Allow reading message history",
+        description:
+          "Master switch for slack_read_channel, slack_read_thread, and slack_search_messages — tools that return raw message bodies. Set false (default) to keep the plugin from exposing channel/thread/search content; gated tools return [EDISABLED] without hitting Slack. Roster and channel-metadata reads (slack_lookup_user, slack_list_users, slack_list_channels, slack_get_channel) are unaffected. Flip to true only after you've reviewed which agents/skills can read message bodies — Slack history is sensitive and contains everything members have ever posted in those channels.",
         default: false,
       },
       defaultWorkspace: {
@@ -394,6 +418,213 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           channelId: { type: "string", description: "C-prefixed channel ID." },
         },
         required: ["channelId"],
+      },
+    },
+    {
+      name: "slack_read_channel",
+      displayName: "Read Slack channel history",
+      description:
+        "Read recent messages from a channel or DM via conversations.history. Returns ts, text, userId, threadTs, replyCount per message. Gated by the plugin's `Allow reading message history` master switch — returns [EDISABLED] when the switch is off.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          channelId: {
+            type: "string",
+            description: "C-prefixed channel ID, or D-prefixed DM ID. Required.",
+          },
+          limit: {
+            type: "number",
+            description: "Max messages to return. Default 20, clamped 1–100.",
+          },
+          oldest: {
+            type: "string",
+            description: "Unix timestamp (seconds, may include sub-second precision e.g. '1696200000.000100'). Only return messages posted after this time.",
+          },
+          latest: {
+            type: "string",
+            description: "Unix timestamp. Only return messages posted before this time.",
+          },
+        },
+        required: ["channelId"],
+      },
+    },
+    {
+      name: "slack_read_thread",
+      displayName: "Read Slack thread replies",
+      description:
+        "Read replies in a message thread via conversations.replies. Returns ts, text, userId, isParent per message; the parent is index 0 with isParent:true. Gated by `Allow reading message history`.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          channelId: {
+            type: "string",
+            description: "Channel ID where the thread lives. Required.",
+          },
+          threadTs: {
+            type: "string",
+            description: "Timestamp (`ts`) of the parent message. Required.",
+          },
+          limit: {
+            type: "number",
+            description: "Max messages to return (including parent). Default 20, clamped 1–100.",
+          },
+        },
+        required: ["channelId", "threadTs"],
+      },
+    },
+    {
+      name: "slack_add_reaction",
+      displayName: "Add Slack reaction",
+      description:
+        "Add an emoji reaction to a message via reactions.add. Default is the bot identity; pass `asUser: true` to react as the operator (requires userTokenRef).",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          channelId: { type: "string", description: "Channel where the message lives." },
+          ts: {
+            type: "string",
+            description: "Timestamp (`ts`) of the message to react to.",
+          },
+          emoji: {
+            type: "string",
+            description:
+              "Emoji name without colons (e.g. 'thumbsup', 'eyes'). Surrounding colons are stripped if present.",
+          },
+          asUser: {
+            type: "boolean",
+            description:
+              "If true, react as the operator using the workspace's userTokenRef (xoxp-...). Default false (bot reaction).",
+          },
+        },
+        required: ["channelId", "ts", "emoji"],
+      },
+    },
+    {
+      name: "slack_remove_reaction",
+      displayName: "Remove Slack reaction",
+      description:
+        "Remove an emoji reaction from a message via reactions.remove. Default bot identity; pass `asUser: true` to remove the operator's reaction (requires userTokenRef). Each token can only remove its own reactions.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          channelId: { type: "string", description: "Channel where the message lives." },
+          ts: { type: "string", description: "Timestamp (`ts`) of the message." },
+          emoji: {
+            type: "string",
+            description: "Emoji name without colons. Surrounding colons are stripped if present.",
+          },
+          asUser: {
+            type: "boolean",
+            description:
+              "If true, remove the operator's reaction using userTokenRef (xoxp-...). Default false (remove bot reaction).",
+          },
+        },
+        required: ["channelId", "ts", "emoji"],
+      },
+    },
+    {
+      name: "slack_upload_file",
+      displayName: "Upload file to Slack",
+      description:
+        "Upload a text/snippet file to a channel via files.uploadV2. Use this for log dumps, code snippets, JSON payloads, etc. Returns the file ID and permalink.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          channelId: {
+            type: "string",
+            description: "C-prefixed channel ID where the file will be shared.",
+          },
+          content: {
+            type: "string",
+            description:
+              "Text content to upload (the file body). For text/code files only — binary uploads aren't exposed by this tool.",
+          },
+          filename: {
+            type: "string",
+            description:
+              "Filename including extension (e.g. 'report.txt', 'queries.sql'). Slack uses the extension to highlight the snippet.",
+          },
+          title: { type: "string", description: "Optional display title shown in Slack." },
+          threadTs: {
+            type: "string",
+            description: "Optional thread timestamp to upload the file as a reply.",
+          },
+        },
+        required: ["channelId", "content", "filename"],
+      },
+    },
+    {
+      name: "slack_search_messages",
+      displayName: "Search Slack messages",
+      description:
+        "Search messages across the workspace via search.messages. Supports Slack search syntax (in:#channel, from:@user, before:, after:, has:link, etc.). Returns ts, channelId, channelName, text, userId, permalink per match. **Requires user token** — bot tokens cannot search. Gated by `Allow reading message history`.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          query: {
+            type: "string",
+            description:
+              "Slack search query string. Supports modifiers like 'in:#ops from:@barry has:link before:2026-04-01'. Required.",
+          },
+          limit: {
+            type: "number",
+            description: "Max matches to return. Default 20, clamped 1–50.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+    {
+      name: "slack_list_users",
+      displayName: "List Slack users",
+      description:
+        "List members of the workspace via users.list (paginated). By default filters out bots and deactivated users. Returns id, name, realName, email, isBot, deleted, tz per member.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          limit: {
+            type: "number",
+            description: "Max users to return. Default 100, clamped 1–500.",
+          },
+          includeDeleted: {
+            type: "boolean",
+            description:
+              "If true, also return bots and deactivated/deleted users. Default false.",
+          },
+        },
+      },
+    },
+    {
+      name: "slack_set_user_status",
+      displayName: "Set Slack user status",
+      description:
+        "Set the operator's Slack status (status text + emoji + optional expiry) via users.profile.set. **Requires user token** — bots cannot change a user's status.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          statusText: {
+            type: "string",
+            description: "Status text. Max 100 chars (Slack limit).",
+          },
+          statusEmoji: {
+            type: "string",
+            description: "Emoji name with surrounding colons (e.g. ':laptop:', ':palm_tree:').",
+          },
+          statusExpiry: {
+            type: "number",
+            description:
+              "Unix timestamp (seconds) when the status should clear. 0 or omitted = no expiry.",
+          },
+        },
+        required: ["statusText"],
       },
     },
   ],

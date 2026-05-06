@@ -841,8 +841,10 @@ const plugin = definePlugin({
           if (p.title) args.title = p.title;
           if (p.threadTs) args.thread_ts = p.threadTs;
           // files.uploadV2 returns { ok, files: [{ ok, files: [{ id, permalink, ... }] }] }.
+          // The SDK's argument union is too tight for a structural cast — go through
+          // `unknown` since the runtime accepts any subset of FileUploadV2 fields.
           const result = (await r.resolved.client.files.uploadV2(
-            args as Parameters<typeof r.resolved.client.files.uploadV2>[0],
+            args as unknown as Parameters<typeof r.resolved.client.files.uploadV2>[0],
           )) as {
             ok?: boolean;
             files?: Array<{ files?: Array<{ id?: string; permalink?: string }> }>;

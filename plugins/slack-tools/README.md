@@ -1,8 +1,9 @@
 # Slack Tools (paperclip plugin)
 
-Send Slack messages from agent tools — DMs to the operator, channel posts,
-Block Kit, edits, deletes, and user/channel lookups. Multi-workspace aware,
-per-workspace `allowedCompanies` isolation, edit/delete gated by a master
+Send Slack messages, react to threads, read channel history, search,
+upload files, list users, and set your Slack status — all from agent
+tools. Multi-workspace aware, per-workspace `allowedCompanies`
+isolation, mutations and history reads each gated by their own master
 switch.
 
 Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
@@ -12,13 +13,21 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 
 | Tool | Kind | Notes |
 |---|---|---|
-| `slack_send_dm` | write | Falls back to `defaultDmTarget` when `userId` is omitted. |
-| `slack_send_channel` | write | Address by `channelId` (preferred) or `channelName`. |
+| `slack_send_dm` | write | Falls back to `defaultDmTarget` when `userId` is omitted. `asUser: true` posts as the operator. |
+| `slack_send_channel` | write | Address by `channelId` (preferred) or `channelName`. `asUser: true` posts as the operator. |
 | `slack_update_message` | mutation | Edit a previous bot message. Gated by `allowMutations`. |
 | `slack_delete_message` | mutation | Delete a previous bot message. Gated by `allowMutations`. |
+| `slack_add_reaction` | write | Add an emoji reaction. `asUser: true` reacts as the operator. |
+| `slack_remove_reaction` | write | Remove an emoji reaction. Each token can only remove its own. |
+| `slack_upload_file` | write | Upload a text/snippet file via files.uploadV2. |
+| `slack_read_channel` | history-read | conversations.history. **Gated by `allowReadHistory`.** |
+| `slack_read_thread` | history-read | conversations.replies. **Gated by `allowReadHistory`.** |
+| `slack_search_messages` | history-read | search.messages. **User token + `allowReadHistory`.** |
 | `slack_lookup_user` | read | Resolve by email or user ID. Use once at setup to find your `defaultDmTarget`. |
 | `slack_list_channels` | read | List channels, optional substring filter. |
 | `slack_get_channel` | read | Single-channel metadata. |
+| `slack_list_users` | read | Roster, paginated. Filters bots/deleted unless `includeDeleted`. |
+| `slack_set_user_status` | write | Set the operator's status. **User token only.** |
 
 Every tool accepts an optional `workspace` parameter; if omitted, falls back
 to the configured `defaultWorkspace`. Send tools accept `threadTs` for
@@ -120,11 +129,19 @@ the `asUser` parameter; the rest are bot-only.
 |---|---|---|
 | `slack_send_dm` | bot, or user when `asUser: true` | Default bot identity for notifications (e.g. daily briefing). `asUser: true` posts as the operator — Brandon sees a DM from *you*, not from "Paperclip Bot". |
 | `slack_send_channel` | bot, or user when `asUser: true` | Same — default bot for announcements; `asUser: true` posts as the operator (operator must be a channel member). |
+| `slack_add_reaction` | bot, or user when `asUser: true` | Bot reaction by default; `asUser: true` reacts as the operator. |
+| `slack_remove_reaction` | bot, or user when `asUser: true` | Each token only removes its own reactions — pick the same token that added it. |
+| `slack_upload_file` | bot | files.uploadV2 — ships text/snippet content to the channel. |
+| `slack_read_channel` | bot | conversations.history. Gated by `allowReadHistory`. |
+| `slack_read_thread` | bot | conversations.replies. Gated by `allowReadHistory`. |
+| `slack_search_messages` | **user (required)** | Bot tokens cannot call `search.messages`. Also gated by `allowReadHistory`. |
+| `slack_set_user_status` | **user (required)** | Bots cannot change a user's status. |
 | `slack_update_message` | bot | Slack restricts edit to the originating token, so this only edits bot-sent messages. Messages sent with `asUser: true` can't be edited by this tool. |
 | `slack_delete_message` | bot | Same restriction as update — bot-sent messages only. |
 | `slack_lookup_user` | bot | Read-only profile lookup. |
 | `slack_list_channels` | bot | Read-only channel list. |
 | `slack_get_channel` | bot | Read-only channel metadata. |
+| `slack_list_users` | bot | Roster lookup. |
 
 ### Sending as the operator (act-as-me)
 
@@ -321,6 +338,21 @@ and returned as `[ECOMPANY_NOT_ALLOWED]` to the caller.
 - Canvases — use the existing Slack MCP.
 
 ## Versioning
+
+`0.4.0` — add 8 tools: `slack_read_channel`, `slack_read_thread`,
+`slack_add_reaction`, `slack_remove_reaction`, `slack_upload_file`,
+`slack_search_messages`, `slack_list_users`, `slack_set_user_status`. New
+`allowReadHistory` master switch gates the message-history reads
+(read_channel, read_thread, search_messages); off by default. Reaction
+tools accept `asUser: true` like the send tools. Search and set-status
+require user token. Bundled `slack-app-manifest.json` updated with the
+extra bot scopes (channels:history, groups:history, im:history,
+mpim:history, reactions:read, reactions:write, files:write, pins:read,
+pins:write); existing v0.3.x installs need to re-import the manifest and
+reinstall the app, then refresh the bot/user token secrets. New
+`wrapSlackError` mappings for `file_upload_disabled`, `already_reacted`,
+`no_reaction`. `[ECONFIG]` for missing user token now spells out which
+field to add and where.
 
 `0.3.1` — close the act-as-me gap on the send tools. Add an
 `asUser: boolean` parameter to `slack_send_dm` and `slack_send_channel`;
