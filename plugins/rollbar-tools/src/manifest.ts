@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "rollbar-tools";
-const PLUGIN_VERSION = "0.2.0";
+const PLUGIN_VERSION = "0.2.1";
 
 const projectItemSchema = {
   type: "object",
@@ -153,6 +153,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       defaultProject: {
         type: "string",
         title: "Default project key",
+        "x-paperclip-optionsFromSibling": {
+          sibling: "projects",
+          valueKey: "key",
+          labelKey: "displayName",
+        },
         description:
           "Identifier of the project used when an agent omits the `project` parameter. Strict: if the calling company isn't in the default project's Allowed companies, the call fails with [ECOMPANY_NOT_ALLOWED] (no fallback). Leave blank to require explicit `project`.",
       },

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "image-tools";
-const PLUGIN_VERSION = "0.2.0";
+const PLUGIN_VERSION = "0.2.1";
 
 const providerItemSchema = {
   type: "object",
@@ -190,6 +190,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       defaultProvider: {
         type: "string",
         title: "Default provider key",
+        "x-paperclip-optionsFromSibling": {
+          sibling: "providers",
+          valueKey: "key",
+          labelKey: "displayName",
+        },
         description:
           "Identifier of the provider used when an agent omits `provider`. Strict: if the calling company isn't in the default provider's Allowed companies, the call fails with [ECOMPANY_NOT_ALLOWED].",
       },

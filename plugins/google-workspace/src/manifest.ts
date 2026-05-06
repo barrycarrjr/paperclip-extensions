@@ -2,7 +2,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS } from "./schemas.js";
 
 const PLUGIN_ID = "google-workspace";
-const PLUGIN_VERSION = "0.3.0";
+const PLUGIN_VERSION = "0.3.1";
 const SETUP_ROUTE = "setup-account";
 
 const SETUP_INSTRUCTIONS = `# Setup — Google Workspace
@@ -136,6 +136,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       defaultAccount: {
         type: "string",
         title: "Default account key",
+        "x-paperclip-optionsFromSibling": {
+          sibling: "accounts",
+          valueKey: "key",
+          labelKey: "displayName",
+        },
         description:
           "Identifier of the account agents fall back to when they don't specify one. Optional — if blank, agents must always pass an `account` parameter.",
       },

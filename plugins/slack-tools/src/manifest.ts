@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.4.0";
+const PLUGIN_VERSION = "0.4.1";
 
 const workspaceItemSchema = {
   type: "object",
@@ -220,6 +220,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       defaultWorkspace: {
         type: "string",
         title: "Default workspace key",
+        "x-paperclip-optionsFromSibling": {
+          sibling: "workspaces",
+          valueKey: "key",
+          labelKey: "displayName",
+        },
         description:
           "Identifier of the workspace used when an agent omits the `workspace` parameter in a tool call. Strict: if the calling company isn't in the default workspace's Allowed companies, the call fails with [ECOMPANY_NOT_ALLOWED] (no automatic fallback). Leave blank to require an explicit `workspace` on every call.",
       },

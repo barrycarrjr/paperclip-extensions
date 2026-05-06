@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.3.0";
+const PLUGIN_VERSION = "0.3.1";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -331,6 +331,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       defaultAccount: {
         type: "string",
         title: "Default account key",
+        "x-paperclip-optionsFromSibling": {
+          sibling: "accounts",
+          valueKey: "key",
+          labelKey: "displayName",
+        },
         description:
           "Account used when an agent omits the `account` parameter. Strict: if the calling company isn't in the default account's Allowed companies, the call fails with [ECOMPANY_NOT_ALLOWED] (no fallback). Leave blank to require an explicit `account` on every call.",
       },
