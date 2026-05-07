@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "code-scanner";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 const repoItemSchema = {
   type: "object",
@@ -262,6 +262,42 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
             type: "boolean",
             description:
               "If true, idle agents are reported alongside paused/error. Default false (idle is normal).",
+          },
+        },
+      },
+    },
+    {
+      name: "org_structural_scan",
+      displayName: "Scan portfolio for structural-org problems",
+      description:
+        "Cross-company organisational drift detector. Finds agents with no manager (and a non-CEO role) and agents idle past a configurable threshold. Each finding carries a stable fingerprint that pairs with Steward's `originKind=\"steward_finding\"` + `originFingerprint` dedupe. Read-only.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          kinds: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: ["orphan_no_manager", "idle_agent"],
+            },
+            description:
+              "Subset of detector kinds to run. Omit to run every detector.",
+          },
+          newAgentGraceDays: {
+            type: "number",
+            description:
+              "Agents younger than this many days are exempt from flagging. Default 7.",
+          },
+          idleAgentDays: {
+            type: "number",
+            description:
+              "An agent with no heartbeat in this many days is flagged as idle. Default 30.",
+          },
+          rootRoles: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Roles that legitimately have no manager (CEO, etc.). Default ['ceo'].",
           },
         },
       },

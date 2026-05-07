@@ -11,6 +11,11 @@ import { runDeadExportScan } from "./scanners/deadExports.js";
 import { runTodoAgeScan } from "./scanners/todoAge.js";
 import { runDocDriftScan } from "./scanners/docDrift.js";
 import { runAgentObservability } from "./scanners/agentObservability.js";
+import {
+  runStructuralOrgScan,
+  STRUCTURAL_FINDING_KINDS,
+  type StructuralFindingKind,
+} from "./scanners/structuralOrg.js";
 
 interface RepoConfig {
   key?: string;
@@ -289,6 +294,79 @@ const plugin = definePlugin({
           });
           return {
             content: `${findings.length} agent-observability finding(s) across the portfolio.`,
+            data: { findings },
+          };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "org_structural_scan",
+      {
+        displayName: "Scan portfolio for structural-org problems",
+        description:
+          "Cross-company organisational drift detector: agents with no manager (and a non-CEO role), agents idle past a threshold. Steward turns each finding into a proposal issue. Read-only.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            kinds: {
+              type: "array",
+              items: { type: "string", enum: [...STRUCTURAL_FINDING_KINDS] },
+              description:
+                "Subset of detector kinds to run. Omit to run every detector.",
+            },
+            newAgentGraceDays: {
+              type: "number",
+              description: "Grace period before a young agent can be flagged. Default 7.",
+            },
+            idleAgentDays: {
+              type: "number",
+              description:
+                "An agent with no heartbeat in this many days is flagged as idle. Default 30.",
+            },
+            rootRoles: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Roles that legitimately have no manager (CEO, etc.). Default ['ceo'].",
+            },
+          },
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as {
+          kinds?: string[];
+          newAgentGraceDays?: number;
+          idleAgentDays?: number;
+          rootRoles?: string[];
+        };
+        try {
+          const allowedKinds = new Set<string>(STRUCTURAL_FINDING_KINDS);
+          const kinds = (p.kinds ?? []).filter((k): k is StructuralFindingKind =>
+            allowedKinds.has(k),
+          );
+          const findings = await runStructuralOrgScan(ctx, {
+            kinds: kinds.length > 0 ? kinds : undefined,
+            newAgentGraceDays:
+              typeof p.newAgentGraceDays === "number" && p.newAgentGraceDays > 0
+                ? p.newAgentGraceDays
+                : 7,
+            idleAgentDays:
+              typeof p.idleAgentDays === "number" && p.idleAgentDays > 0
+                ? p.idleAgentDays
+                : 30,
+            rootRoles:
+              Array.isArray(p.rootRoles) && p.rootRoles.length > 0
+                ? p.rootRoles.map(String)
+                : ["ceo"],
+          });
+          await track(ctx, runCtx, "org_structural_scan", {
+            findings: findings.length,
+          });
+          return {
+            content: `${findings.length} structural-org finding(s) across the portfolio.`,
             data: { findings },
           };
         } catch (err) {
