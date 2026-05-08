@@ -576,20 +576,41 @@ const plugin = definePlugin({
         if (!p.targetFolder) return { error: "targetFolder is required" };
         const folder = resolveFolder(gate.cfg, p.folder);
         try {
-          await withImapConnection(ctx, gate.cfg, p.mailbox as string, async (client) =>
-            moveMessages(client, folder, uids, p.targetFolder as string),
+          const result = await withImapConnection(
+            ctx,
+            gate.cfg,
+            p.mailbox as string,
+            async (client) => moveMessages(client, folder, uids, p.targetFolder as string),
           );
           await ctx.telemetry.track("email_move", {
             mailbox: gate.cfg.key ?? "",
             companyId: runCtx.companyId,
-            count: String(uids.length),
+            count: String(result.movedCount),
+            destinationCreated: String(result.destinationCreated),
           });
           return {
-            content: `Moved ${uids.length} message(s) to ${p.targetFolder}`,
-            data: { ok: true, mailbox: gate.cfg.key, folder, uids, targetFolder: p.targetFolder },
+            content:
+              result.destinationCreated
+                ? `Moved ${result.movedCount} message(s) to ${p.targetFolder} (folder created on first move).`
+                : `Moved ${result.movedCount} message(s) to ${p.targetFolder}.`,
+            data: {
+              ok: true,
+              mailbox: gate.cfg.key,
+              folder,
+              uids,
+              targetFolder: p.targetFolder,
+              movedCount: result.movedCount,
+              destinationCreated: result.destinationCreated,
+            },
           };
         } catch (err) {
-          return { error: `[IMAP_ERROR] ${(err as Error).message}` };
+          const msg = (err as Error).message ?? String(err);
+          // Preserve structured error codes (`[EFOLDER_CREATE_FAILED]`,
+          // `[EMOVE_FAILED]`, `[EMOVE_PARTIAL]`) thrown from moveMessages so
+          // callers can branch on them. Only wrap as [IMAP_ERROR] if the
+          // message doesn't already carry a code.
+          const isStructured = /^\[E[A-Z_]+\]/.test(msg);
+          return { error: isStructured ? msg : `[IMAP_ERROR] ${msg}` };
         }
       },
     );

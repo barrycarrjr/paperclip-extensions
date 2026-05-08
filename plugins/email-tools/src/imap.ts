@@ -272,16 +272,68 @@ export async function setSeenFlag(
   }
 }
 
+export interface MoveMessagesResult {
+  movedCount: number;
+  uidMap: Map<number, number>;
+  destinationCreated: boolean;
+}
+
 export async function moveMessages(
   client: ImapFlow,
   folder: string,
   uids: number[],
   targetFolder: string,
-): Promise<void> {
-  if (uids.length === 0) return;
+): Promise<MoveMessagesResult> {
+  if (uids.length === 0) {
+    return { movedCount: 0, uidMap: new Map(), destinationCreated: false };
+  }
+
+  // Pre-flight: ensure destination exists. mailboxCreate is idempotent on
+  // ImapFlow (returns { created: false } when it already exists). On Gmail
+  // this auto-creates the label so the move can succeed; on stricter IMAP
+  // servers it fails fast with a real error instead of silently no-op'ing.
+  let destinationCreated = false;
+  try {
+    const created = await client.mailboxCreate(targetFolder);
+    destinationCreated = created?.created === true;
+  } catch (createErr) {
+    const msg = (createErr as Error).message ?? "";
+    if (!/already exists|ALREADYEXISTS/i.test(msg)) {
+      throw new Error(
+        `[EFOLDER_CREATE_FAILED] couldn't create target folder "${targetFolder}": ${msg}`,
+      );
+    }
+  }
+
   const lock = await client.getMailboxLock(folder);
   try {
-    await client.messageMove(uids, targetFolder, { uid: true });
+    const result = await client.messageMove(uids, targetFolder, { uid: true });
+
+    // Post-flight: ImapFlow returns `false` if the server didn't ack the move.
+    if (!result) {
+      throw new Error(
+        `[EMOVE_FAILED] messageMove returned false for target "${targetFolder}" (server did not acknowledge).`,
+      );
+    }
+
+    // The uidMap maps source UID → destination UID. An empty map means the
+    // server processed the request without actually translating any UIDs —
+    // typically a silent no-op against a non-existent label or a permissions
+    // issue. Treat as a real failure rather than a phantom success.
+    const uidMap = result.uidMap ?? new Map<number, number>();
+    if (uidMap.size === 0) {
+      throw new Error(
+        `[EMOVE_FAILED] messageMove acknowledged but uidMap is empty for target "${targetFolder}" — no messages were actually moved.`,
+      );
+    }
+
+    if (uidMap.size < uids.length) {
+      throw new Error(
+        `[EMOVE_PARTIAL] messageMove translated ${uidMap.size} of ${uids.length} UIDs for target "${targetFolder}". Aborting before mark-read so caller can retry.`,
+      );
+    }
+
+    return { movedCount: uidMap.size, uidMap, destinationCreated };
   } finally {
     lock.release();
   }
