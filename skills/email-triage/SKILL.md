@@ -84,6 +84,10 @@ the title — both forms are functionally equivalent at run time.
 | `mailbox` | yes | Mailbox identifier (e.g. `support`, `sales`). Must match a `key` in plugin config. |
 | `triageLabel` | no | Destination IMAP folder/label for moved mail. Defaults to `_paperclip/triage`. |
 | `markRead` | no | When `true`, also calls `email_mark_read` after a successful move. Defaults to `true`. |
+| `unreadOnly` | no | When `true`, only consider **unread** (`\Unseen`) mail — pass `unseen: true` to `email_search` and never move/touch a message that's already been marked as read. **Defaults to `true`.** Marked-as-read is the operator's signal that they have already dealt with the message; auto-acting on it would override that signal. Only override to `false` for explicit re-organization tasks the operator has asked for. |
+| `bulkCleanup` | no | When `true`, ignore `last-run` and walk the existing INBOX backlog from `bulkSince`. Designed for a one-shot backlog clearance, not the daily routine. Does NOT update `last-run` at the end of the run, so the next normal run still picks up where it left off. Defaults to `false`. |
+| `bulkSince` | no | ISO date or `YYYY-MM-DD`. Only consulted when `bulkCleanup=true`. Defaults to 90 days ago. |
+| `looseMode` | no | When `true`, auto-move strong-signal unknown senders (List-Unsubscribe header, OR address matches `noreply@`/`no-reply@`/`notifications@`/`marketing@`/`news@`/`mailer@`/`bounces@`/`info@`) to `<triageLabel>` instead of leaving them in INBOX. Person-to-person mail (no signals) is still left alone. Defaults to `false`. |
 
 ## Workflow
 
@@ -140,10 +144,15 @@ Parse the three sections into in-memory lists.
 
 ### 2. Determine since-cutoff
 
-If `last-run` is set and parseable: use it (minus a 5-minute safety overlap
-to catch races with delivery latency).
+If `bulkCleanup=true`: use `bulkSince` (default 90 days ago). Ignore
+`last-run` for this run. **Do not update `last-run`** in Step 5 either —
+this is a one-shot backlog pass and the next normal scheduled run should
+still pick up where the regular cadence left off.
 
-If not: default to 24 hours ago.
+Otherwise:
+- If `last-run` is set and parseable: use it (minus a 5-minute safety overlap
+  to catch races with delivery latency).
+- If not: default to 24 hours ago.
 
 ### 3. Search for new mail
 
@@ -151,18 +160,27 @@ Call `email-tools:email_search` with:
 - `mailbox`: the parameter
 - `folder`: leave default (will use the mailbox's `pollFolder`, normally INBOX)
 - `since`: ISO date computed in step 2
+- `unseen`: `true` when `unreadOnly=true` (the default). This is critical —
+  the operator marks mail as read to signal "I dealt with this." Walking
+  read mail and acting on it would override that signal. Skip the
+  `unseen` parameter only when `unreadOnly=false`.
 - `limit`: 200
 
 If the result is exactly 200, repeat with the most recent date in the result
 set as the new `since`, until you get fewer than 200 (you've caught up). Cap
-total messages processed at 1000 per run — anything more, surface a warning
-and let it run again later.
+total messages processed at 1000 per run (5000 when `bulkCleanup=true`) —
+anything more, surface a warning and let it run again later.
 
 ### 4. Classify and act per message
 
 For each message UID returned:
 
-a. Call `email-tools:email_fetch` to get headers + body.
+a. Call `email-tools:email_fetch` to get headers + body. **If
+   `unreadOnly=true` and the fetched message no longer has `\Unseen`**
+   (the operator marked it as read between Step 3 and Step 4a — race),
+   skip the message entirely: do not move, do not mark, do not add to
+   review queue. The search already filtered for unseen, but this
+   double-check protects against the operator triaging in real time.
 
 b. **Match against Keep-always first** — if any rule matches, skip this
    message entirely. Do not act, do not mention in review queue.
@@ -174,19 +192,30 @@ c. **Match against Auto-triage** — if any rule matches:
      with the same UID after the move succeeds.
    - Increment `movedCount`. Continue to next message.
 
-d. **No match** — only surface to review queue if it looks like a
-   triage candidate, otherwise leave alone:
-   - Has `List-Unsubscribe` header → strong signal it's a marketing list →
-     add sender to review queue (with count).
-   - Sender domain matches `noreply@`, `no-reply@`, `notifications@`,
-     `marketing@`, `news@`, `mailer@`, `bounces@`, `info@` → moderate
-     signal → add sender to review queue.
+d. **No match** — surface to review queue and, when `looseMode=true`,
+   auto-move strong-signal candidates:
+
+   - Has `List-Unsubscribe` header → strong signal it's a marketing list:
+     - If `looseMode=true`: call `email_move` to `<triageLabel>` and (if
+       `markRead=true`) `email_mark_read`. Increment `movedCount`. Still
+       add the sender to the review queue so the operator can graduate it
+       to the rules doc on the next pass.
+     - Else: add sender to review queue (with count). Leave the message
+       in INBOX.
+   - Sender address matches `noreply@`, `no-reply@`, `notifications@`,
+     `marketing@`, `news@`, `mailer@`, `bounces@`, `info@`:
+     - If `looseMode=true`: auto-move and mark read (as above). Still add
+       to review queue.
+     - Else: add sender to review queue (moderate signal). Leave in INBOX.
    - Otherwise: leave it alone. Don't pollute the review queue with normal
-     person-to-person mail.
+     person-to-person mail. `looseMode` does NOT touch person-to-person
+     mail — that's the floor we never cross.
 
 ### 5. Update rules document
 
-- Set `last-run:` to current UTC ISO timestamp.
+- Set `last-run:` to current UTC ISO timestamp — **except when
+  `bulkCleanup=true`**, in which case leave `last-run` alone (per Step 2,
+  bulk cleanups must not disturb the regular cadence's cursor).
 - For each entry in the review queue this run, **merge** with the existing
   Review queue section: if the same sender is already there, increment
   the count; otherwise add a new line.
@@ -302,11 +331,6 @@ Empty lines are ignored.
 
 ## Out of scope
 
-- Bulk historical cleanup of an existing INBOX backlog. This skill only
-  acts on mail that has arrived since `last-run`; it does not walk the
-  full mailbox history. A backlog cleanup is a one-shot operation,
-  better handled with provider-side filters or a separate bulk-cleanup
-  skill.
 - Auto-unsubscribe (clicking `List-Unsubscribe` URLs / sending unsubscribe
   mailtos) — defer to a future skill. Daily triage just gets noise out
   of INBOX; the operator can decide separately whether to actually
