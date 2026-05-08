@@ -51,9 +51,12 @@ variable's `defaultValue`.
 
 | Param | Required | Notes |
 |---|---|---|
-| `mailbox` | yes | Help Scout mailbox identifier — the `key` in plugin config (NOT the numeric Help Scout mailboxId). |
+| `mailbox` | yes | Plugin **account key** from help-scout config (e.g. `industry-bureau`, `support`). Despite the variable name, this is the plugin account identifier — it maps to the `account` parameter on every help-scout tool call, NOT to `mailboxId`. The variable was named `mailbox` for operator readability and is kept that way for compatibility. |
+| `mailboxId` | no | Optional — numeric Help Scout mailbox ID inside the account, only needed if the account hosts multiple mailboxes and you want to scope this routine to one. If omitted, the plugin falls back to the account's `defaultMailbox`. |
 | `noiseTag` | no | Tag added to auto-handled conversations. Defaults to `infra-noise`. |
 | `closeStatus` | no | Status to set on auto-handled conversations. Defaults to `closed`. Use `spam` if you want them filtered server-side. |
+
+> **Plugin parameter names** — every help-scout tool accepts `account` (account key) and `mailboxId` (numeric Help Scout ID). It does NOT accept `mailbox`. If you pass `mailbox`, the plugin silently drops it and falls back to `defaultAccount` / `defaultMailbox`, which can produce false-empty results if the defaults are wrong. Always map this skill's `mailbox` variable to the tool's `account` parameter.
 
 ## Workflow
 
@@ -86,12 +89,30 @@ Parse the three sections into in-memory lists.
 If `last-run` is set and parseable: use it (minus a 5-minute safety
 overlap). Otherwise default to 24 hours ago.
 
-### 3. Search for new conversations
+### 3. Verify credentials see the mailbox
+
+**Before** searching, call `help-scout:helpscout_list_mailboxes` with
+`account: <skill's mailbox variable>`. Inspect the response:
+
+- `data.mailboxes.length === 0` — credentials are scoped wrong (no
+  mailbox membership, missing scopes, or auth'd against the wrong Help
+  Scout install). **Abort the run** with an error comment tagged
+  `[ECREDENTIAL_NO_MAILBOXES]` on the run issue. Do NOT proceed to
+  search/classify — a successful zero-mailbox call would feed the
+  next steps a false-empty queue and the agent would silently report
+  "all clean" when the real problem is broken credentials. Surface the
+  error so the operator can re-authorize the OAuth app.
+- `data.mailboxes.length >= 1` — credentials are good, proceed.
+
+### 4. Search for new conversations
 
 Call `help-scout:helpscout_find_conversation` with:
-- `mailbox`: the mailbox parameter (mapped to `mailboxId` if the plugin
-  supports key-to-ID resolution; otherwise the operator must pass the
-  numeric ID via plugin config).
+- `account`: the **account key** (the skill's `mailbox` variable —
+  re-emphasizing because the parameter name on the tool is `account`,
+  not `mailbox`).
+- `mailboxId` (optional): if the routine has the optional `mailboxId`
+  variable set, pass it here. Otherwise omit and the plugin uses the
+  account's `defaultMailbox`.
 - `status: "active"` — only currently-active conversations are eligible
   for triage. The skill never reopens closed/spam.
 - `since`: ISO timestamp from step 2.
@@ -99,7 +120,12 @@ Call `help-scout:helpscout_find_conversation` with:
 - Paginate via `page` until results are empty or you hit the per-run cap
   (default 500 conversations; surface a warning if hit).
 
-### 4. Classify and act per conversation
+If `data.totalCount === 0` AND the queue genuinely had activity (you can
+sanity-check by glancing at the Help Scout UI), the credentials likely
+allow `list_mailboxes` but lack scope for `/conversations`. Surface
+`[ECREDENTIAL_INSUFFICIENT_SCOPE]` on the run issue.
+
+### 5. Classify and act per conversation
 
 For each conversation returned:
 
@@ -126,14 +152,14 @@ d. **No match** — only surface to review queue if it looks like a
    - Otherwise: leave it alone. Person-to-person conversations stay in
      the active queue, untouched.
 
-### 5. Update rules document
+### 6. Update rules document
 
 - Set `last-run:` to current UTC ISO timestamp.
 - Merge new review-queue entries with existing.
 - Don't touch Auto-noise or Keep-active — those are human-edited.
 - Save back via `PUT /api/issues/<PARENT_ID>/documents/helpscout-triage-rules`.
 
-### 6. Report
+### 7. Report
 
 Append a comment on **this run's issue** (NOT the rules-home / parent
 issue). Use `PAPERCLIP_ISSUE_ID` from the heartbeat env.
@@ -216,10 +242,10 @@ curl -s -X POST \
     --arg agent "$PAPERCLIP_AGENT_ID" \
     --arg run "$PAPERCLIP_RUN_ID" \
     --arg company "$PAPERCLIP_COMPANY_ID" \
-    --arg mailbox "<mailbox-key>" \
+    --arg account "<account-key>" \
     --arg since "2026-05-06T11:00:00Z" '{
       tool: "help-scout:helpscout_find_conversation",
-      parameters: { mailbox: $mailbox, status: "active", since: $since, limit: 50 },
+      parameters: { account: $account, status: "active", since: $since, limit: 50 },
       runContext: { agentId: $agent, runId: $run, companyId: $company }
     }')"
 ```

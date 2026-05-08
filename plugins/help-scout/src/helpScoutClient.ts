@@ -252,13 +252,26 @@ export async function helpScoutRequest<T = unknown>(
       ? opts.expectStatus.includes(res.status)
       : res.ok;
 
+  // Parse JSON body regardless of content-type. Help Scout's API returns
+  // `application/hal+json` for most resources (HAL-formatted JSON), and
+  // `application/problem+json` for some errors. A naive
+  // `contentType.includes("application/json")` check misses both because
+  // they're "+json" suffix variants, not the bare "application/json" type.
+  // Trying to parse anything non-empty + non-204 covers all variants.
   let body: unknown = null;
-  const contentType = res.headers.get("content-type") ?? "";
-  if (contentType.includes("application/json") && res.status !== 204) {
+  if (res.status !== 204) {
     try {
-      body = await res.json();
+      const text = await res.text();
+      if (text) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          // Non-JSON body — leave body as null. The status-code branch below
+          // surfaces the right error code without needing the parsed body.
+        }
+      }
     } catch {
-      // tolerate empty / malformed JSON on non-2xx
+      // Body read failed; leave body null.
     }
   }
 
