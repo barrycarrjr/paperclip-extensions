@@ -4,7 +4,8 @@ import { assertCompanyAccess } from "./companyAccess.js";
 export interface ConfigAccount {
   key?: string;
   displayName?: string;
-  apiKeyRef?: string;
+  clientIdRef?: string;
+  clientSecretRef?: string;
   defaultMailbox?: string;
   allowedMailboxes?: string[];
   allowedCompanies?: string[];
@@ -17,10 +18,15 @@ export interface InstanceConfig {
 }
 
 const HELP_SCOUT_BASE = "https://api.helpscout.net/v2";
+const HELP_SCOUT_TOKEN_URL = "https://api.helpscout.net/v2/oauth2/token";
+/** Refresh the access token if it expires in less than this window — keeps us off the 401 retry path on the request side. */
+const TOKEN_REFRESH_LEAD_MS = 60_000;
 
 interface CachedAuth {
-  apiKey: string;
-  resolvedRef: string;
+  accessToken: string;
+  expiresAt: number;
+  clientIdRef: string;
+  clientSecretRef: string;
   reportCache: Map<string, { data: unknown; expiresAt: number }>;
 }
 
@@ -31,8 +37,54 @@ const cacheKey = (companyId: string, accountKey: string) =>
 export interface ResolvedAccount {
   account: ConfigAccount;
   accountKey: string;
+  /** Bearer token (Help Scout access_token). Auto-refreshing — caller can re-fetch via refreshAccessToken if a 401 still happens. */
   apiKey: string;
   reportCache: Map<string, { data: unknown; expiresAt: number }>;
+  /** Force a fresh access_token exchange and update both the resolved object and the cache. Used by helpScoutRequest's 401 retry. */
+  refreshAccessToken: () => Promise<string>;
+}
+
+async function exchangeForAccessToken(
+  clientId: string,
+  clientSecret: string,
+): Promise<{ accessToken: string; expiresInSec: number }> {
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: clientId,
+    client_secret: clientSecret,
+  });
+  let res: Response;
+  try {
+    res = await fetch(HELP_SCOUT_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: body.toString(),
+    });
+  } catch (err) {
+    throw new Error(`[EHELP_SCOUT_NETWORK] token exchange: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const errBody = (await res.json()) as { error?: string; error_description?: string };
+      if (errBody?.error_description) detail = errBody.error_description;
+      else if (errBody?.error) detail = errBody.error;
+    } catch {
+      // ignore parse errors
+    }
+    throw new Error(`[EHELP_SCOUT_TOKEN_EXCHANGE] ${detail}`);
+  }
+  const json = (await res.json()) as { access_token?: string; expires_in?: number };
+  if (!json.access_token) {
+    throw new Error("[EHELP_SCOUT_TOKEN_EXCHANGE] response missing access_token");
+  }
+  return {
+    accessToken: json.access_token,
+    expiresInSec: typeof json.expires_in === "number" ? json.expires_in : 172_800,
+  };
 }
 
 export async function getHelpScoutAccount(
@@ -68,37 +120,70 @@ export async function getHelpScoutAccount(
     companyId: runCtx.companyId,
   });
 
-  if (!account.apiKeyRef) {
+  if (!account.clientIdRef || !account.clientSecretRef) {
     throw new Error(
-      `[ECONFIG] Help Scout account "${account.key}" has no apiKeyRef configured.`,
+      `[ECONFIG] Help Scout account "${account.key}" is missing clientIdRef or clientSecretRef. Both are required (OAuth2 client_credentials).`,
     );
   }
 
   const ck = cacheKey(runCtx.companyId, account.key ?? requestedKey);
+
+  // Force-refresh function — used both on initial cache miss and after a 401 retry.
+  const refresh = async (): Promise<string> => {
+    const clientId = await ctx.secrets.resolve(account.clientIdRef!);
+    if (!clientId) {
+      throw new Error(
+        `[ECONFIG] Help Scout account "${account.key}": clientIdRef secret did not resolve.`,
+      );
+    }
+    const clientSecret = await ctx.secrets.resolve(account.clientSecretRef!);
+    if (!clientSecret) {
+      throw new Error(
+        `[ECONFIG] Help Scout account "${account.key}": clientSecretRef secret did not resolve.`,
+      );
+    }
+    const { accessToken, expiresInSec } = await exchangeForAccessToken(clientId, clientSecret);
+    const expiresAt = Date.now() + expiresInSec * 1000;
+    const existing = authCache.get(ck);
+    const reportCache =
+      existing && existing.clientIdRef === account.clientIdRef
+        ? existing.reportCache
+        : new Map<string, { data: unknown; expiresAt: number }>();
+    authCache.set(ck, {
+      accessToken,
+      expiresAt,
+      clientIdRef: account.clientIdRef!,
+      clientSecretRef: account.clientSecretRef!,
+      reportCache,
+    });
+    return accessToken;
+  };
+
   const cached = authCache.get(ck);
-  if (cached && cached.resolvedRef === account.apiKeyRef) {
+  const validCached =
+    cached &&
+    cached.clientIdRef === account.clientIdRef &&
+    cached.clientSecretRef === account.clientSecretRef &&
+    cached.expiresAt - Date.now() > TOKEN_REFRESH_LEAD_MS;
+
+  if (validCached) {
     return {
       account,
       accountKey: account.key ?? requestedKey,
-      apiKey: cached.apiKey,
-      reportCache: cached.reportCache,
+      apiKey: cached!.accessToken,
+      reportCache: cached!.reportCache,
+      refreshAccessToken: refresh,
     };
   }
 
-  const apiKey = await ctx.secrets.resolve(account.apiKeyRef);
-  if (!apiKey) {
-    throw new Error(
-      `[ECONFIG] Help Scout account "${account.key}": secret "${account.apiKeyRef}" did not resolve.`,
-    );
-  }
-
-  const reportCache = new Map<string, { data: unknown; expiresAt: number }>();
-  authCache.set(ck, { apiKey, resolvedRef: account.apiKeyRef, reportCache });
+  const accessToken = await refresh();
+  const fresh = authCache.get(ck)!;
   return {
     account,
     accountKey: account.key ?? requestedKey,
-    apiKey,
-    reportCache,
+    apiKey: accessToken,
+    reportCache: fresh.reportCache,
+    refreshAccessToken: refresh,
   };
 }
 
@@ -122,23 +207,37 @@ export async function helpScoutRequest<T = unknown>(
     }
   }
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${resolved.apiKey}`,
-    Accept: "application/json",
-  };
-  if (opts.body !== undefined) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), {
+  const doFetch = async (bearer: string): Promise<Response> => {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${bearer}`,
+      Accept: "application/json",
+    };
+    if (opts.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+    return fetch(url.toString(), {
       method: opts.method ?? "GET",
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
+  };
+
+  let res: Response;
+  try {
+    res = await doFetch(resolved.apiKey);
   } catch (err) {
     throw new Error(`[EHELP_SCOUT_NETWORK] ${(err as Error).message}`);
+  }
+
+  // 401 = access token expired/revoked between cache refresh and now. Retry once with a fresh token.
+  if (res.status === 401) {
+    try {
+      const freshToken = await resolved.refreshAccessToken();
+      resolved.apiKey = freshToken;
+      res = await doFetch(freshToken);
+    } catch (err) {
+      throw new Error(`[EHELP_SCOUT_AUTH] ${(err as Error).message}`);
+    }
   }
 
   // Help Scout 429 — surface, don't retry inside the request helper. The
@@ -205,6 +304,54 @@ export function assertMailboxAllowed(resolved: ResolvedAccount, mailboxId: strin
 
 export function normalizeTag(tag: string): string {
   return tag.trim().toLowerCase();
+}
+
+/**
+ * One-shot helper: resolves a configured account's credentials, exchanges for
+ * an access token, and calls /v2/mailboxes. Returns a flat list. Throws on any
+ * failure with the standard error codes.
+ *
+ * Used by the `list-mailboxes` plugin action that powers the dynamic dropdowns
+ * for `defaultMailbox` / `allowedMailboxes` on the plugin config form. Board
+ * users invoking the action don't have a ToolRunContext, so this function
+ * deliberately doesn't go through getHelpScoutAccount (which requires one).
+ */
+export async function listMailboxesForAccount(
+  ctx: PluginContext,
+  account: ConfigAccount,
+): Promise<Array<{ id: string; name: string; email: string }>> {
+  if (!account.clientIdRef || !account.clientSecretRef) {
+    throw new Error(
+      `[ECONFIG] Account "${account.key ?? "(no-key)"}" is missing clientIdRef or clientSecretRef.`,
+    );
+  }
+  const clientId = await ctx.secrets.resolve(account.clientIdRef);
+  if (!clientId) {
+    throw new Error(`[ECONFIG] clientIdRef did not resolve for account "${account.key}".`);
+  }
+  const clientSecret = await ctx.secrets.resolve(account.clientSecretRef);
+  if (!clientSecret) {
+    throw new Error(`[ECONFIG] clientSecretRef did not resolve for account "${account.key}".`);
+  }
+  const { accessToken } = await exchangeForAccessToken(clientId, clientSecret);
+  const res = await fetch(`${HELP_SCOUT_BASE}/mailboxes?size=50`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`[EHELP_SCOUT_${res.status}] failed to list mailboxes`);
+  }
+  const json = (await res.json()) as {
+    _embedded?: { mailboxes?: Array<{ id: number; name: string; email: string }> };
+  };
+  const list = json._embedded?.mailboxes ?? [];
+  return list.map((m) => ({
+    id: String(m.id),
+    name: m.name,
+    email: m.email,
+  }));
 }
 
 /**

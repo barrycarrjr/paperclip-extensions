@@ -11,6 +11,7 @@ import {
   type ResolvedAccount,
   getHelpScoutAccount,
   helpScoutRequest,
+  listMailboxesForAccount,
   normalizeTag,
   resolveMailboxId,
 } from "./helpScoutClient.js";
@@ -1181,6 +1182,60 @@ const plugin = definePlugin({
         }
       },
     );
+
+    // ─── Form-driven actions (called by JsonSchemaForm via x-paperclip-optionsFrom) ──
+
+    /**
+     * `list-mailboxes` — populates the dynamic dropdown for `defaultMailbox`
+     * and the multi-select for `allowedMailboxes` on the plugin config form.
+     *
+     * Iterates every configured account, exchanges credentials for an access
+     * token, calls /v2/mailboxes for each, and returns combined options. If
+     * an account fails (bad creds, network), it's skipped — the operator
+     * sees a partial list rather than a hard error blocking the form.
+     *
+     * Two-pass UX note: the user must SAVE the account row (with valid
+     * client ID + secret refs) before this action can list its mailboxes.
+     * On a fresh row pre-save, the action returns whatever's already
+     * configured plus a hint in the response.
+     */
+    ctx.actions.register("list-mailboxes", async () => {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = config.accounts ?? [];
+      const options: Array<{ value: string; label: string }> = [];
+      const errors: Array<{ accountKey: string; message: string }> = [];
+
+      for (const account of accounts) {
+        const accountKey = account.key ?? "(no-key)";
+        if (!account.clientIdRef || !account.clientSecretRef) {
+          errors.push({
+            accountKey,
+            message: "missing clientIdRef or clientSecretRef — fill in and save first",
+          });
+          continue;
+        }
+        try {
+          const mailboxes = await listMailboxesForAccount(ctx, account);
+          for (const m of mailboxes) {
+            // Label format: "<name> (<email>) — <accountKey>" so a dropdown
+            // is unambiguous when there are multiple accounts.
+            const accountSuffix = accounts.length > 1 ? ` — ${accountKey}` : "";
+            options.push({
+              value: m.id,
+              label: `${m.name} (${m.email})${accountSuffix}`,
+            });
+          }
+        } catch (err) {
+          errors.push({ accountKey, message: (err as Error).message });
+        }
+      }
+
+      return {
+        options,
+        accountsConfigured: accounts.length,
+        errors,
+      };
+    });
   },
 
   async onHealth() {

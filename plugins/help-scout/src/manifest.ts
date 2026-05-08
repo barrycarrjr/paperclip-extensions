@@ -1,15 +1,16 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.2.1";
+const PLUGIN_VERSION = "0.3.0";
 
 const accountItemSchema = {
   type: "object",
-  required: ["key", "apiKeyRef", "allowedCompanies"],
+  required: ["key", "clientIdRef", "clientSecretRef", "allowedCompanies"],
   propertyOrder: [
     "key",
     "displayName",
-    "apiKeyRef",
+    "clientIdRef",
+    "clientSecretRef",
     "defaultMailbox",
     "allowedMailboxes",
     "allowedCompanies",
@@ -27,25 +28,36 @@ const accountItemSchema = {
       description:
         "Human-readable label shown in this settings form (e.g. 'Customer Support', 'Brand-B Support'). Free-form.",
     },
-    apiKeyRef: {
+    clientIdRef: {
       type: "string",
       format: "secret-ref",
-      title: "Personal Access Token",
+      title: "OAuth2 Client ID",
       description:
-        "Paste the UUID of the secret holding this account's Help Scout Personal Access Token. Create the secret first on the company's Secrets page; never paste the raw token here. To get the token: in Help Scout go to Manage → Your Profile → Authentication → API Keys, generate a Personal Access Token. PATs are full-account scope; treat as sensitive.",
+        "Paste the UUID of the secret holding this Help Scout app's OAuth2 Client ID. Create the secret first on the company's Secrets page; never paste the raw value here. See the Setup tab for how to get the Client ID from Help Scout.",
+    },
+    clientSecretRef: {
+      type: "string",
+      format: "secret-ref",
+      title: "OAuth2 Client Secret",
+      description:
+        "Paste the UUID of the secret holding this Help Scout app's OAuth2 Client Secret. Same Help Scout app as Client ID above. The plugin exchanges these for short-lived (48h) access tokens via client_credentials grant and refreshes automatically.",
     },
     defaultMailbox: {
       type: "string",
-      title: "Default mailbox ID (optional)",
+      title: "Default mailbox (optional)",
       description:
-        "Numeric Help Scout mailbox ID (e.g. '12345'). When a tool call needs a mailbox and the agent omits one, this is the fallback. Find the ID by running helpscout_list_mailboxes once after setup.",
+        "When a tool call needs a mailbox and the agent omits one, this is the fallback. The dropdown is populated by calling the Help Scout API with the saved credentials above — click Save Configuration once the Client ID and Client Secret refs are filled, then this dropdown will populate.",
+      "x-paperclip-optionsFrom": { actionKey: "list-mailboxes" },
+      "x-paperclip-showWhenAllPresent": ["clientIdRef", "clientSecretRef"],
     },
     allowedMailboxes: {
       type: "array",
       items: { type: "string" },
-      title: "Allowed mailbox IDs",
+      title: "Allowed mailbox IDs (optional)",
       description:
-        "If non-empty, restricts every tool call that addresses a mailbox to these mailbox IDs. Empty/missing = unrestricted within this account. Useful when one account has many mailboxes but only one should be visible to agents in a given company. Operator-side enforcement layered on top of allowedCompanies.",
+        "If non-empty, restricts every tool call that addresses a mailbox to these mailbox IDs. Empty/missing = unrestricted within this account. Same flow as Default mailbox above — appears after the credentials are filled and saved.",
+      "x-paperclip-itemsOptionsFrom": { actionKey: "list-mailboxes" },
+      "x-paperclip-showWhenAllPresent": ["clientIdRef", "clientSecretRef"],
     },
     allowedCompanies: {
       type: "array",
@@ -59,65 +71,88 @@ const accountItemSchema = {
 
 const SETUP_INSTRUCTIONS = `# Setup — Help Scout
 
-Connect a Help Scout account so agents can find conversations, reply, add notes, manage customers, and pull reports. Reckon on **about 5 minutes**.
+Connect a Help Scout account so agents can find conversations, reply, add notes, manage customers, and pull reports. Reckon on **about 10 minutes** the first time.
+
+Help Scout's Mailbox API uses **OAuth2 with the client_credentials grant**. The plugin handles token refresh automatically — you only need to provide the Client ID and Client Secret once.
 
 ---
 
-## 1. Create a Help Scout Personal Access Token
+## 1. Create a Help Scout custom app (gives you Client ID + Client Secret)
 
 - Log into Help Scout
-- Click your avatar (top right) → **Your Profile → Authentication**
-- Scroll down to **API Keys** and click **Generate an API Key**
-- Give it a name (e.g. "Paperclip") and click **Generate**
-- **Copy the token now** — it's shown only once
+- Click your avatar (top right) → **Your Profile**
+- In the left sidebar click **My Apps**
+- Click **Create App** (top right)
+- Fill in:
+  - **App Name**: e.g. \`Paperclip\`
+  - **Redirection URL**: paste any URL — Help Scout requires the field but doesn't use it for the client_credentials flow. \`https://www.google.com\` works fine.
+- Click **Create**
+- The next page shows **App ID** (= Client ID) and **App Secret** (= Client Secret). Copy both — the App Secret is shown only once.
 
-> Personal Access Tokens have full account access. Keep them in the secret store and rotate them if an employee leaves.
-
----
-
-## 2. Create a Paperclip secret
-
-In Paperclip, switch to the company that should own this Help Scout connection.
-
-- Go to **Secrets → Add**
-- Name it (e.g. \`helpscout-pat\`)
-- Paste the token as the value
-- Save, then **copy the secret's UUID**
+> The custom app has full Mailbox API scope on your Help Scout account. Treat the Client Secret like a password.
 
 ---
 
-## 3. Configure the plugin (this page, **Configuration** tab)
+## 2. Create two Paperclip secrets
+
+In Paperclip, go to the company that should own these secrets and open **Secrets → Add**.
+
+> If you store shared cross-company secrets in a portfolio-root or "HQ"-style company, create them there instead. Secret UUIDs are globally unique and the plugin resolves them regardless of which company holds them — you only need one copy of the credentials no matter how many LLCs use this Help Scout account.
+
+Secret names follow the all-caps snake_case convention used across paperclip plugins (\`IMAP_PERSONAL_PASS\`, \`SLACK_BOT_TOKEN\`, etc.) — keep that pattern so they sort together in the secrets list.
+
+- Create one secret for the **Client ID**:
+  - Name: \`HELPSCOUT_CLIENT_ID\`
+  - Value: the App ID from step 1
+  - Save and **copy the secret's UUID**
+- Create a second secret for the **Client Secret**:
+  - Name: \`HELPSCOUT_SECRET_ID\`
+  - Value: the App Secret from step 1
+  - Save and **copy the secret's UUID**
+
+---
+
+## 3. Add the account row (**Configuration** tab — first save)
 
 Click the **Configuration** tab above. Under **Help Scout accounts**, click **+ Add item** and fill in:
 
 | Field | Value |
 |---|---|
-| **Identifier** | \`main\` |
+| **Identifier** | \`main\` (or a per-brand key like \`support\`, \`sales\`) |
 | **Display name** | e.g. "Customer Support" |
-| **Personal Access Token** | UUID of the secret from step 2 |
-| **Default mailbox ID** | leave blank for now — fill in after step 4 |
-| **Allowed mailbox IDs** | leave blank to allow all mailboxes; restrict later if needed |
+| **OAuth2 Client ID** | UUID of \`HELPSCOUT_CLIENT_ID\` secret from step 2 |
+| **OAuth2 Client Secret** | UUID of \`HELPSCOUT_SECRET_ID\` secret from step 2 |
 | **Allowed companies** | tick the companies whose agents may use this account |
 
-Set **Default account key** to \`main\` at the top.
+Set **Default account key** at the top to the identifier you just used. Click **Save Configuration**.
+
+> The Default mailbox and Allowed mailbox IDs fields don't appear yet — they're hidden until both credential refs are filled and saved, because they need to call Help Scout's API to populate.
 
 ---
 
-## 4. Find your mailbox ID
+## 4. Pick the mailbox (Configuration tab — second pass)
 
-After saving the configuration, run \`helpscout_list_mailboxes\` (no parameters needed). It returns each mailbox's \`id\`, \`name\`, and email address. Copy the numeric ID for your primary mailbox and paste it into **Default mailbox ID** in the account config.
+After step 3's save, the same row reveals two new fields:
+
+- **Default mailbox**: a dropdown listing every mailbox visible on your Help Scout account, fetched live via the credentials you just saved. Pick the one you want as the default for this account key.
+- **Allowed mailbox IDs**: a checkbox list of the same mailboxes. Tick only the ones agents in this account's allowed companies should be able to address. Leave all unchecked to allow every mailbox on the account (often fine for a single-mailbox setup; necessary to restrict when one Help Scout account hosts many brands' inboxes).
+
+Click **Save Configuration** again.
+
+> If the dropdown shows "No options available yet", the action couldn't reach Help Scout. Check that both secrets resolve to the values shown in Help Scout's My Apps page; the most common cause is pasting the App ID where the App Secret should be (or vice versa).
 
 ---
 
 ## 5. Enable mutations when ready
 
-**Allow create/reply/note/status/tag changes** defaults to OFF (read-only). Flip it ON once you've verified read tools work and you're ready for agents to reply or create conversations.
+**Allow create/reply/note/status/tag changes** at the top of the page defaults to OFF (read-only). Flip it ON once you've verified read tools work and you're ready for agents to reply, tag, or change status.
 
 ---
 
 ## Troubleshooting
 
-- **401 Unauthorized** — the PAT was copied incorrectly or has been revoked. Regenerate in Help Scout, update the Paperclip secret.
+- **\`[EHELP_SCOUT_AUTH]\`** — Client ID or Secret is wrong, or the app was deleted in Help Scout. Verify both secrets resolve to the values shown in Help Scout's My Apps page; recreate the app if needed.
+- **\`[EHELP_SCOUT_TOKEN_EXCHANGE]\`** — Help Scout's OAuth endpoint rejected the credentials. Same fix as above.
 - **\`[ECOMPANY_NOT_ALLOWED]\`** — the calling company isn't ticked in Allowed companies.
 - **Mailbox not found** — the default mailbox ID is wrong, or the mailbox is restricted by Allowed mailbox IDs. Run \`helpscout_list_mailboxes\` to verify the IDs.
 - **Duplicate conversations** — use \`idempotencyKey\` on \`helpscout_create_conversation\` to prevent double-creation if a skill retries.

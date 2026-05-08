@@ -51,45 +51,34 @@ config save. No manual paperclip restart needed.
 
 ## Configure
 
-Two-step per Help Scout account: create a Personal Access Token + paperclip
-secret, then bind the account in the plugin config.
+Help Scout's Mailbox API uses OAuth2 with the **client_credentials** grant.
+The plugin handles token exchange and refresh automatically — you provide
+the Client ID and Client Secret once, the plugin trades them for short-lived
+(48h) access tokens and refreshes when they expire.
 
-### 1. Issue a Help Scout Personal Access Token
+### 1. Create a Help Scout custom app
 
 1. Sign in to Help Scout as an admin user on the account.
-2. Top-right avatar → **Your Profile** → **Authentication** → **API Keys**.
-3. Click **Generate Personal Access Token**. Name it (e.g. `paperclip`).
-4. Copy the token. It's full-account scope and shown only once — paste it
-   into a paperclip secret immediately, don't email or store in chat.
+2. Top-right avatar → **Your Profile** → **My Apps** (in the left sidebar).
+3. Click **Create App**.
+4. Fill in:
+   - **App Name**: e.g. `Paperclip`.
+   - **Redirection URL**: any URL — Help Scout requires the field but doesn't
+     use it for the client_credentials grant. `https://www.google.com` is
+     what Help Scout's own docs suggest for placeholder.
+5. Click **Create**. The next page shows the **App ID** (= Client ID) and
+   **App Secret** (= Client Secret). The App Secret is shown only once.
 
-> Help Scout also supports OAuth-app (client_id/client_secret) for
-> server-to-server auth. This plugin uses PATs for simplicity.
-> If you ever need OAuth (e.g. you're managing accounts you don't own),
-> file a follow-up — `apiKeyRef` would expand into a token-exchange flow.
+### 2. Store both as paperclip secrets
 
-### 2. Store the token as a paperclip secret
+In `<COMPANY-PREFIX>/company/settings/secrets`, create **two** secrets. Use the all-caps snake_case convention shared by other plugin secrets (`IMAP_PERSONAL_PASS`, `SLACK_BOT_TOKEN`, etc.) so they sort together:
 
-1. Open `<COMPANY-PREFIX>/company/settings/secrets`.
-2. Click **+ Create secret**.
-3. Name it descriptively (e.g. `HELPSCOUT_PAT_MAIN`).
-4. Provider: `Local encrypted`.
-5. Value: paste the PAT.
-6. Copy the secret's UUID.
+1. `HELPSCOUT_CLIENT_ID` — value: the App ID from step 1.
+2. `HELPSCOUT_SECRET_ID` — value: the App Secret from step 1.
 
-### 3. Find your mailbox ID (if you want to set `defaultMailbox`)
+Copy both UUIDs.
 
-You can do this from the plugin AFTER step 4 by calling
-`helpscout_list_mailboxes`, or directly via the Help Scout API:
-
-```bash
-curl -H "Authorization: Bearer YOUR_PAT" \
-  https://api.helpscout.net/v2/mailboxes
-```
-
-The response has `_embedded.mailboxes[].id`. Pick the one you want as
-default.
-
-### 4. Bind the account in the plugin config
+### 3. Add the account row — first save
 
 Open `/instance/settings/plugins/help-scout`. Click **+ Add item** under
 Help Scout accounts. Fill in:
@@ -98,13 +87,28 @@ Help Scout accounts. Fill in:
 |---|---|---|
 | `Identifier` | `support` | Short stable ID agents pass as `account`. Lowercase, no spaces. **Don't change after skills reference it.** |
 | `Display name` | `Customer Support` | Free-form label. |
-| `Personal Access Token` | (secret UUID from step 2) | The plugin resolves at runtime. |
-| `Default mailbox ID (optional)` | `12345` | The one you found in step 3. |
-| `Allowed mailbox IDs` | `["12345"]` or empty | If non-empty, restricts every call to these mailbox IDs. |
+| `OAuth2 Client ID` | (UUID of `HELPSCOUT_CLIENT_ID` secret from step 2) | The plugin resolves at runtime. |
+| `OAuth2 Client Secret` | (UUID of `HELPSCOUT_SECRET_ID` secret from step 2) | Same Help Scout app. |
 | `Allowed companies` | tick the LLC | Empty = unusable. Single-company is typical. |
 
-(Optionally) set **Default account key** to the identifier above so
-agents can omit `account` on every call.
+(Optionally) set **Default account key** at the top to the identifier
+above so agents can omit `account` on every call. Click **Save Configuration**.
+
+The Default mailbox and Allowed mailbox IDs fields don't appear yet —
+they're hidden until both credential refs are filled and saved, because
+they need to call Help Scout's API to populate.
+
+### 4. Pick the mailbox — second pass
+
+After step 3's save the same row reveals two new fields:
+
+- **Default mailbox** — a dropdown of every mailbox visible on the
+  Help Scout account, populated by calling `/v2/mailboxes` with the
+  saved credentials. Pick the default for this account key.
+- **Allowed mailbox IDs** — checkboxes for the same list. Leave empty
+  to allow all mailboxes; tick specific ones to restrict.
+
+Click **Save Configuration** again.
 
 ## Tag normalization
 
@@ -202,7 +206,8 @@ PUTs the full set. Existing tags survive.
 | `[EACCOUNT_REQUIRED]` | No account param and no default. |
 | `[EACCOUNT_NOT_FOUND]` | Account identifier not in plugin config. |
 | `[ECOMPANY_NOT_ALLOWED]` | Calling company isn't in this account's `allowedCompanies`. |
-| `[ECONFIG]` | Account lacks `apiKeyRef` or the secret didn't resolve. |
+| `[ECONFIG]` | Account lacks `clientIdRef`/`clientSecretRef` or one of the secrets didn't resolve. |
+| `[EHELP_SCOUT_TOKEN_EXCHANGE]` | Help Scout's OAuth2 endpoint rejected the credentials. Verify both secrets resolve to the values shown in Help Scout's My Apps page. |
 | `[EDISABLED]` | Mutation tool called while `allowMutations=false`. |
 | `[EINVALID_INPUT]` | Required param missing or contradictory. |
 | `[EHELP_SCOUT_MAILBOX_NOT_ALLOWED]` | The addressed mailbox isn't in the account's `allowedMailboxes`. |
