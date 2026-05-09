@@ -4,6 +4,10 @@ Paperclip plugin that lets agents print plain-text content to any Windows printe
 
 > **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
 
+## Recent changes
+
+- **v0.1.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## What it does
 
 Registers two agent tools:

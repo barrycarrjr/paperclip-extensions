@@ -6,6 +6,10 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 > **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
 
+## Recent changes
+
+- **v0.3.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## Two-API split — important to understand before configuring
 
 3CX v20 splits its programmable surface into two independent API families,

@@ -18,6 +18,10 @@ No mutation tools. There's nothing this plugin can write to.
 
 > **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
 
+## Recent changes
+
+- **v0.2.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## Prerequisites — install on the host
 
 The plugin shells out to existing tools. Install them once on the

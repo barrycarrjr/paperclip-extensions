@@ -2,6 +2,10 @@
 
 Paperclip plugin that lets agents and operators place AI-driven phone calls through Vapi.ai. **v0.3.0 ships the Assistants UI** — a top-level "Assistants" sidebar entry, an 8-step builder wizard, a Phone tab on the agent detail page, "Place call" / "Test on my phone" modals, and a hard daily cost cap per assistant. The agent-tool surface from v0.1.0 still works the same way for skill / heartbeat consumers; the new UI is operator-facing.
 
+## Recent changes
+
+- **v0.3.1** — Patch bump. Includes the post-v0.3.0 voice-id qualification fix — bare OpenAI voice IDs (`alloy`/`echo`/`shimmer`/`onyx`/etc.) sent by the Assistant Builder wizard are now auto-qualified to `openai:<id>` server-side before they reach Vapi, fixing an `[EVAPI_400] voice.provider must be one of …` rejection.
+
 ## What's in v0.3.0
 
 | Capability | Status |

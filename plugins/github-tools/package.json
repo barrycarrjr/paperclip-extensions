@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-github-tools",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Paperclip plugin that exposes GitHub repository operations (issues, comments, repos, PRs, releases, search) as agent tools. Multi-account, per-account allowedCompanies, per-account optional allowedRepos allow-list, mutations gated.",
   "type": "module",
   "private": true,

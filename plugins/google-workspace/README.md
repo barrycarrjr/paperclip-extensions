@@ -4,6 +4,10 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 
 > **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab — including the in-browser **Connect a Google account** wizard that walks the entire OAuth flow with no terminal needed. This README is an overview of capabilities and a reference for tool/event shapes.
 
+## Recent changes
+
+- **v0.3.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## What this plugin registers
 
 | Tool | What it does | Mutation? |

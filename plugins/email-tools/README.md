@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.5.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.5.1** — `email_move` now verifies the message actually moved into
   the destination folder before reporting success.
 - **v0.5.0** — minor bump to align with the cross-plugin release.
