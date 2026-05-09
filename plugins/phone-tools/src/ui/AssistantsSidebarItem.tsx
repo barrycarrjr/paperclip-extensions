@@ -29,8 +29,12 @@ export function AssistantsSidebarItem(_props: PluginSidebarProps) {
 
   if (loading || !data?.visible) return null;
 
+  // Use the prefix verbatim — Paperclip routes are case-sensitive, and
+  // every other sidebar link (e.g. /MME/org) keeps the canonical casing.
+  // Lower-casing here was producing /mme/assistants when the rest of the
+  // app uses /MME/...
   const href = host.companyPrefix
-    ? `/${host.companyPrefix.toLowerCase()}/assistants`
+    ? `/${host.companyPrefix}/assistants`
     : `/assistants`;
 
   return (
