@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-3cx-tools",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Paperclip plugin that exposes 3CX PBX operations (queue depth, parked calls, today's stats, agent presence, call history, click-to-call, park/transfer/hangup, realtime WebSocket events) as agent tools. Multi-account, multi-company-mode (single / manual / native), per-account company isolation, mutations gated.",
   "type": "module",
   "private": true,

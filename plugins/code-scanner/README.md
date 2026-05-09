@@ -20,6 +20,8 @@ No mutation tools. There's nothing this plugin can write to.
 
 ## Recent changes
 
+- **v0.2.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.2.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 ## Prerequisites — install on the host

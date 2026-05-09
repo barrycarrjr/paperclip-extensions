@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.3.1";
+const PLUGIN_VERSION = "0.3.3";
 
 const accountItemSchema = {
   type: "object",

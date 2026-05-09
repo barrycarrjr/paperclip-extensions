@@ -6,6 +6,8 @@ guardrails); optional Facebook scheduling.
 
 ## Recent changes
 
+- **v0.3.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.3.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.3.0** — `setupInstructions` rendered as a Setup tab on the plugin's

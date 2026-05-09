@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "google-analytics";
-const PLUGIN_VERSION = "0.3.1";
+const PLUGIN_VERSION = "0.3.2";
 
 const SETUP_INSTRUCTIONS = `# Setup — Google Analytics
 

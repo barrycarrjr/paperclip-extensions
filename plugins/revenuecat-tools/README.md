@@ -12,6 +12,8 @@ and pull approximate metrics snapshots. Multi-project, per-project
 
 ## Recent changes
 
+- **v0.2.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.2.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 ## Tools registered

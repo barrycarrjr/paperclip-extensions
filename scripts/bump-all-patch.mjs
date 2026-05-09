@@ -9,9 +9,9 @@
  *
  * Run: node scripts/bump-all-patch.mjs
  *
- * Per-plugin notes:
- * - phone-tools gets a real changelog line ("voice-id qualification fix, post-0.3.0").
- * - All others get a uniform alignment-bump line.
+ * Per-plugin notes are configured in SPECIAL_NOTES below — edit those each
+ * release to describe what's actually shipping. Plugins not in SPECIAL_NOTES
+ * get the uniform alignment-bump line.
  *
  * Idempotency: re-running the script is NOT safe. Each invocation bumps
  * patch by 1 unconditionally. Run once per release.
@@ -26,8 +26,8 @@ const REPO_ROOT = dirname(__dirname);
 const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
-  "phone-tools":
-    "Patch bump. Includes the post-v0.3.0 voice-id qualification fix — bare OpenAI voice IDs (`alloy`/`echo`/`shimmer`/`onyx`/etc.) sent by the Assistant Builder wizard are now auto-qualified to `openai:<id>` server-side before they reach Vapi, fixing an `[EVAPI_400] voice.provider must be one of …` rejection.",
+  "notepad":
+    "Patch bump. The Converted tab now works once the host plugin-database validator accepts plugin SELECTs that JOIN against `public.issues` (host-side fix landed alongside this release). No plugin-code change beyond the version bump.",
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";

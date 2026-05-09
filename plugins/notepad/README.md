@@ -125,6 +125,8 @@ to allow-list a company. The migration runs automatically on first install.
 
 ## Recent changes
 
+- **v0.1.1** — Patch bump. The Converted tab now works once the host plugin-database validator accepts plugin SELECTs that JOIN against `public.issues` (host-side fix landed alongside this release). No plugin-code change beyond the version bump.
+
 - **0.1.0 (2026-05-09)** — Initial release. Per-company sidebar entry +
   `/:companyPrefix/notepad` page; CRUD over notes; convert-to-issue flow
   with optional Clippy cleanup pass and graceful raw-text fallback. Uses

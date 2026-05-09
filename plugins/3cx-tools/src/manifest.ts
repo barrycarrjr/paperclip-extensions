@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.3.2";
+const PLUGIN_VERSION = "0.3.3";
 
 const companyRoutingItemSchema = {
   type: "object",
