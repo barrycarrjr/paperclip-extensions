@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.2.3";
+const PLUGIN_VERSION = "0.3.0";
 
 const accountItemSchema = {
   type: "object",
@@ -333,9 +333,15 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "plugin.state.read",
     "plugin.state.write",
     "telemetry.track",
+    "api.routes.register",
+    "agents.read",
+    "companies.read",
+    "ui.sidebar.register",
+    "ui.detailTab.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
+    ui: "./dist/ui",
   },
   webhooks: [
     {
@@ -646,6 +652,121 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       },
     },
   ],
+  apiRoutes: [
+    {
+      routeKey: "assistants.compose-preview",
+      method: "POST",
+      path: "/assistants/compose-preview",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.phone-config.get",
+      method: "GET",
+      path: "/assistants/:agentId/phone-config",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.phone-config.set",
+      method: "POST",
+      path: "/assistants/:agentId/phone-config",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.phone-config.test",
+      method: "POST",
+      path: "/assistants/:agentId/phone-config/test",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.calls.list",
+      method: "GET",
+      path: "/assistants/:agentId/calls",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.calls.place",
+      method: "POST",
+      path: "/assistants/:agentId/calls",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.calls.status",
+      method: "GET",
+      path: "/assistants/:agentId/calls/:callId/status",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.calls.transcript",
+      method: "GET",
+      path: "/assistants/:agentId/calls/:callId/transcript",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.calls.recording",
+      method: "GET",
+      path: "/assistants/:agentId/calls/:callId/recording-url",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "operator-phone.get",
+      method: "GET",
+      path: "/operator-phone",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "operator-phone.set",
+      method: "POST",
+      path: "/operator-phone",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "accounts.numbers",
+      method: "GET",
+      path: "/accounts/numbers",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+  ],
+  ui: {
+    slots: [
+      {
+        type: "sidebar",
+        id: "assistants-sidebar",
+        displayName: "Assistants",
+        exportName: "AssistantsSidebarItem",
+      },
+      {
+        type: "detailTab",
+        id: "agent-phone-tab",
+        displayName: "Phone",
+        exportName: "AgentPhoneTab",
+        entityTypes: ["agent"],
+      },
+    ],
+  },
 };
 
 export default manifest;

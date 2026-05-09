@@ -1,6 +1,8 @@
 import {
   definePlugin,
   runWorker,
+  type PluginApiRequestInput,
+  type PluginApiResponse,
   type PluginContext,
   type ToolResult,
   type ToolRunContext,
@@ -11,6 +13,10 @@ import {
   getEnginesForEndpoint,
   getResolvedAccount,
 } from "./engines/registry.js";
+import { handleAssistantsApi } from "./api/assistants-routes.js";
+import { handleOperatorPhoneApi } from "./api/operator-phone-routes.js";
+import { recordSpend } from "./assistants/cost-cap.js";
+import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
 import type {
   AssistantConfig,
   CallDirection,
@@ -271,6 +277,26 @@ async function recordTerminalCallIfNew(
     endReason: args.endReason,
   });
 
+  // Accumulate the call's cost into the assistant's daily-cap window if we
+  // can map this call back to a Paperclip assistant agentId. The mapping is
+  // written when assistants-routes places the call.
+  if (args.costUsd && args.costUsd > 0) {
+    try {
+      const mapping = await ctx.state.get({
+        scopeKind: "instance",
+        stateKey: `call-agent:${args.callId}`,
+      });
+      if (typeof mapping === "string" && mapping.length > 0) {
+        await recordSpend(ctx, mapping, args.costUsd);
+      }
+    } catch (err) {
+      ctx.logger.warn("phone-tools: failed to record assistant spend", {
+        callId: args.callId,
+        err: (err as Error).message,
+      });
+    }
+  }
+
   // Cost telemetry — one shot per call. Emitted once per company
   // attached to the call (single company in the polling case;
   // potentially many in the webhook fan-out case).
@@ -382,6 +408,76 @@ const plugin = definePlugin({
         );
       }
     }
+
+    // ─── UI getData handlers ──────────────────────────────────────────
+
+    // Sidebar visibility: returns whether the calling company is in any
+    // account's allowedCompanies list. The host UI component reads this
+    // via usePluginData("assistants.sidebar-visible").
+    ctx.data.register("assistants.sidebar-visible", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const config = (await ctx.config.get()) as InstanceConfig;
+      return computeSidebarVisibility(companyId, config.accounts ?? []);
+    });
+
+    // Phone tab visibility + summary on AgentDetail. Returns whether this
+    // agent has role="assistant" and (if so) the saved phone config plus
+    // today's spend window. The component renders nothing when isAssistant
+    // is false — that's how we keep CEO/CFO tabs uncluttered.
+    ctx.data.register("assistants.recent-calls", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const agentId = typeof params.agentId === "string" ? params.agentId : null;
+      if (!companyId || !agentId) return { calls: [] };
+      const { readPhoneConfig } = await import("./assistants/cost-cap.js");
+      const config = await readPhoneConfig(ctx, agentId);
+      if (!config) return { calls: [] };
+      try {
+        const resolved = await getResolvedAccount(
+          ctx,
+          { agentId: "", runId: "data", companyId, projectId: "" } as ToolRunContext,
+          "assistants-data",
+          config.account,
+        );
+        const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        const result = await resolved.engine.listCalls({
+          since,
+          direction: "outbound",
+          limit: 25,
+          assistantId: config.vapiAssistantId ?? undefined,
+        });
+        return { calls: result.calls };
+      } catch (err) {
+        ctx.logger.warn("phone-tools: recent-calls fetch failed", { err: (err as Error).message });
+        return { calls: [], error: (err as Error).message };
+      }
+    });
+
+    ctx.data.register("assistants.agent-phone-status", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const agentId = typeof params.agentId === "string" ? params.agentId : null;
+      if (!companyId || !agentId) {
+        return { isAssistant: false, agent: null, config: null, today: null };
+      }
+      const agent = await ctx.agents.get(agentId, companyId).catch(() => null);
+      if (!agent) {
+        return { isAssistant: false, agent: null, config: null, today: null };
+      }
+      // String-cast: the "assistant" role lives in the host's @paperclipai/shared
+      // but the plugin SDK's Agent type may pre-date it. Compare as a string so
+      // we work across SDK versions.
+      if (String(agent.role) !== "assistant") {
+        return { isAssistant: false, agent: { id: agent.id, name: agent.name, role: String(agent.role) }, config: null, today: null };
+      }
+      const { readPhoneConfig, readCostWindow } = await import("./assistants/cost-cap.js");
+      const config = await readPhoneConfig(ctx, agentId);
+      const today = await readCostWindow(ctx, agentId);
+      return {
+        isAssistant: true,
+        agent: { id: agent.id, name: agent.name, role: agent.role },
+        config,
+        today,
+      };
+    });
 
     // ─── Reads ─────────────────────────────────────────────────────────
 
@@ -1209,6 +1305,19 @@ const plugin = definePlugin({
     webhookCtx?.logger?.info?.(
       "phone-tools: config changed — engine cache cleared",
     );
+  },
+
+  async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
+    if (!webhookCtx) {
+      return { status: 503, body: { error: "phone-tools worker not initialised yet" } };
+    }
+    const ctx = webhookCtx;
+    const handlers = [handleAssistantsApi, handleOperatorPhoneApi];
+    for (const handle of handlers) {
+      const result = await handle(ctx, input);
+      if (result) return result;
+    }
+    return { status: 404, body: { error: `Unknown plugin route: ${input.routeKey}` } };
   },
 
   async onHealth() {
