@@ -10,6 +10,11 @@
 //   - package.json            ← sanitized: only fields paperclip needs at
 //                               runtime (name, version, type, paperclipPlugin,
 //                               dependencies, engines)
+//   - <migrationsDir>/        ← when the manifest declares
+//                               `database.migrationsDir`, the SQL migration
+//                               files at that path are included verbatim. The
+//                               host resolves the dir relative to the install
+//                               root and reads .sql files from it.
 import { readdir, readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -68,6 +73,22 @@ async function packOne(pluginDir) {
   const zip = new JSZip();
   zip.file("package.json", JSON.stringify(sanitized, null, 2) + "\n");
   await addDirToZip(zip, distDir, "dist");
+
+  // Include manifest-declared migrations directory if present. The host
+  // resolves `database.migrationsDir` relative to the install root and reads
+  // .sql files from it; without this they'd be missing and activation fails
+  // with ENOENT scandir on the migrations path.
+  const migrationsDir = manifest.database?.migrationsDir;
+  if (migrationsDir) {
+    const absMigrations = path.join(pluginDir, migrationsDir);
+    if (existsSync(absMigrations)) {
+      await addDirToZip(zip, absMigrations, migrationsDir);
+    } else {
+      throw new Error(
+        `Manifest declares database.migrationsDir="${migrationsDir}" but ${absMigrations} does not exist.`,
+      );
+    }
+  }
 
   const buf = await zip.generateAsync({
     type: "nodebuffer",

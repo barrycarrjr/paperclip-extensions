@@ -1,0 +1,37 @@
+{
+  "name": "paperclip-plugin-notepad",
+  "version": "0.1.0",
+  "description": "Per-company freeform notepad mounted in the company sidebar. Operators jot ideas/meeting notes/half-formed asks; a 'Convert to issue' action runs the note through the company's chat-agent (Clippy) for an AI cleanup pass and creates a real issue.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js",
+    "ui": "./dist/ui/"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "esbuild": "^0.27.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr & Tony Allard"
+}
