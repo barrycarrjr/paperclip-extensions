@@ -4,13 +4,16 @@ Posts to Facebook Pages, Instagram Business accounts, and X (Twitter) via
 their official APIs. Brand-variant aware (`standard` / `kids` content
 guardrails); optional Facebook scheduling.
 
-## What's new in v0.2.0
+## Recent changes
 
-- **Per-resource company isolation.** Every Facebook page / Instagram
-  account / X account now carries an `allowedCompanies` list. Agents
-  calling from a company not on the list get back `[ECOMPANY_NOT_ALLOWED]`.
-- **Display name per resource.** The settings form labels each row using
-  the new Display name field (e.g. "Brand A FB") instead of "Item 1".
+- **v0.3.0** — `setupInstructions` rendered as a Setup tab on the plugin's
+  settings page (canonical install walkthrough); `name` field on each
+  resource is now optional.
+- **v0.2.0** — per-resource `allowedCompanies` isolation. Every Facebook
+  page / Instagram account / X account now carries an `allowedCompanies`
+  list. Agents calling from a company not on the list get back
+  `[ECOMPANY_NOT_ALLOWED]`. Display name per resource on the settings
+  form.
 
 ## Install
 

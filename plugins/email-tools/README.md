@@ -1,19 +1,26 @@
 # Email Tools (paperclip plugin)
 
-Exposes `email_send` as an agent tool. Multi-mailbox SMTP via nodemailer
-with smart provider defaults (Gmail, Office365, Rackspace, Fastmail, etc.).
+Multi-mailbox email plugin: send via SMTP and receive via IMAP, exposed as
+agent tools. Smart provider defaults (Gmail, Office365, Rackspace,
+Fastmail, etc.). Per-mailbox `allowedCompanies` isolation; sends and reads
+each gated by their own master switch.
 
-## What's new in v0.3.0
+## Recent changes
 
-- **Per-mailbox company isolation.** Every mailbox now carries an
-  `allowedCompanies` list. Agents calling `email_send` from a company
-  not on the list get back `[ECOMPANY_NOT_ALLOWED]`.
-- **Display name per mailbox.** The settings form labels each row using
-  the new `name` field (e.g. "Personal Mailbox") instead of "Item 1".
-- **Env-file fallback removed.** Mailboxes can no longer be defined via
-  `%USERPROFILE%\.paperclip\instances\default\email-tools.env`. Every
-  mailbox must live in plugin config now (which is the only place that
-  can express `allowedCompanies`). See "Migrating from v0.2.0" below.
+- **v0.5.1** — `email_move` now verifies the message actually moved into
+  the destination folder before reporting success.
+- **v0.5.0** — minor bump to align with the cross-plugin release.
+- **v0.4.0** — turned the previously send-only plugin into a full inbox
+  companion. Adds `email_search`, `email_fetch`, `email_get_attachment`,
+  `email_thread`, `email_mark_read`, `email_mark_unread`, `email_move`,
+  `email_reply`. Per-mailbox IMAP polling + IDLE for sub-minute push.
+  Per-mailbox dispatch (`onReceive.mode = none | event | issue`); issue
+  mode files an issue under the mailbox's `ingestCompanyId`. Bulk ops
+  accept `uid: number | number[]`. `setupInstructions` rendered as a Setup
+  tab on the plugin's settings page (canonical install walkthrough).
+- **v0.3.0** — per-mailbox `allowedCompanies` enforcement; `name` field
+  per mailbox; env-file fallback removed (every mailbox must live in
+  plugin config now). See "Migrating from v0.2.0" below.
 
 ## Install
 

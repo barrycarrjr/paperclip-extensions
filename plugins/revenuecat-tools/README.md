@@ -8,6 +8,8 @@ and pull approximate metrics snapshots. Multi-project, per-project
 > (mobile-app subscription billing). Web SaaS billed only through Stripe
 > doesn't need it.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Tools registered
 
 | Tool | Kind | Notes |

@@ -2,6 +2,8 @@
 
 Paperclip plugin that lets agents print plain-text content to any Windows printer visible to the machine running Paperclip — locally attached printers and LAN printers both work.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## What it does
 
 Registers two agent tools:

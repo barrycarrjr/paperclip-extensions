@@ -5,6 +5,8 @@ resolve / mute mutations. Multi-project, per-project `allowedCompanies`,
 and **separate read + write tokens** so mutations are physically
 impossible without an explicit operator opt-in.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Tools registered
 
 | Tool | Kind | Notes |

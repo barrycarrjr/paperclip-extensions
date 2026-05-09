@@ -7,6 +7,8 @@ Multi-account, per-account `allowedCompanies` isolation, optional
 per-account `allowedRepos` allow-list, and a master `allowMutations` gate.
 Idempotent issue creation via auto-applied labels.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Tools registered
 
 | Tool | Kind | Notes |

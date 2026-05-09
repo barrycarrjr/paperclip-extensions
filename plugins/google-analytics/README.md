@@ -4,17 +4,16 @@ Read GA4 reports, GA4 realtime data, and Search Console search analytics.
 Service-account auth via the encrypted secrets store; one secret can be
 shared across many sites.
 
-## What's new in v0.2.0
+## Recent changes
 
-- **Per-site company isolation.** Every site now carries an
-  `allowedCompanies` list. Agents calling from a company not on the list
-  get back `[ECOMPANY_NOT_ALLOWED]`. `list_sites` only returns sites the
-  calling company is allowed to read.
-- **Display name per site.** The settings form labels each row using
-  the new Display name field (e.g. "Acme Corp site") instead of "Item 1".
-- **Auth client cache is keyed by `(companyId, secretRef)`.** Two
-  companies that share a service-account secret each get their own auth
-  client — never share an authed client across company boundaries.
+- **v0.3.0** — `setupInstructions` rendered as a Setup tab on the plugin's
+  settings page (canonical install walkthrough); `name` field on each site
+  is now optional.
+- **v0.2.0** — per-site `allowedCompanies` isolation. Agents calling from
+  a company not on the list get back `[ECOMPANY_NOT_ALLOWED]`.
+  `list_sites` only returns sites the calling company is allowed to read.
+  Auth client cache keyed by `(companyId, secretRef)` — two companies that
+  share a service-account secret each get their own auth client.
 
 ## Install
 

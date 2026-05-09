@@ -1,46 +1,46 @@
 # `phone-tools`
 
-Paperclip plugin that lets agents place AI-driven phone calls. **v0.1.0 ships outbound calling via Vapi.ai**, smoke-tested end-to-end. Inbound, the DIY engine (self-hosted Jambonz + modular STT/LLM/TTS pipeline), and 3CX SIP-trunk routing land in subsequent versions — all share the same plugin tool surface, so consuming skills don't need to change when capabilities are added.
+Paperclip plugin that lets agents and operators place AI-driven phone calls through Vapi.ai. **v0.3.0 ships the Assistants UI** — a top-level "Assistants" sidebar entry, an 8-step builder wizard, a Phone tab on the agent detail page, "Place call" / "Test on my phone" modals, and a hard daily cost cap per assistant. The agent-tool surface from v0.1.0 still works the same way for skill / heartbeat consumers; the new UI is operator-facing.
 
-## What's supported in v0.1.0
+## What's in v0.3.0
 
 | Capability | Status |
 |---|---|
-| Outbound calls via Vapi (`phone_call_make`) | ✅ shipped, smoke-tested |
-| Call status / transcript / list | ✅ shipped, smoke-tested |
-| List Vapi assistants & phone numbers | ✅ shipped, smoke-tested |
-| Create / update / delete Vapi assistants (`phone_assistant_create/update/delete`) | ✅ shipped, smoke-tested (full CRUD round-trip) |
-| AI self-hangup (assistant ends call when goal is met) | ✅ shipped, verified live |
+| Outbound calls via Vapi (`phone_call_make`) | ✅ shipped, smoke-tested (12+ PSTN calls) |
+| Call status / transcript / list / recording-URL | ✅ shipped |
+| Vapi assistant CRUD with partial PATCH on update | ✅ shipped |
+| AI self-hangup when goal is met | ✅ shipped, verified live |
 | Multi-account, per-account `allowedCompanies` isolation, fail-safe deny | ✅ shipped |
 | Mutations gated by `allowMutations` (live toggle, no restart) | ✅ shipped |
-| Account / allowedCompanies / engineConfig edits hot-reload (no worker restart) | ✅ shipped (`onConfigChanged` clears engine cache) |
+| Account / allowedCompanies / engineConfig edits hot-reload (no worker restart) | ✅ shipped |
 | Per-account concurrency cap (`maxConcurrentCalls`) | ✅ shipped |
-| Safety preamble (identity-claim resistance, PII refusal, anti-injection, AI-honesty) auto-prepended to every assistant prompt | ✅ shipped |
-| Cost telemetry on call termination (works for outbound-only setups via polling + dedup-protected from inbound webhook fan-out) | ✅ shipped |
-| First consuming skill: `phone-appointment-booker` | ✅ shipped (markdown procedure in `extensions/skills/`) |
+| Safety preamble auto-prepended to every assistant prompt (identity-claim resistance, PII refusal, anti-injection, AI-honesty) — survived adversarial prompt-injection in production | ✅ shipped |
+| Cost telemetry on call termination (works for outbound-only setups via polling, dedup-protected from inbound webhook fan-out) | ✅ shipped |
+| **Assistants sidebar entry** — visibility-gated to companies in any account's `allowedCompanies` | ✅ new in v0.3.0 |
+| **Assistant Builder wizard** — 8 questions, no prompt-writing required, ~5 min from install to first real call | ✅ new in v0.3.0 |
+| **Phone tab on Agent detail** — voice / caller ID / daily cap / today's spend bar / Place-call + Test-on-my-phone buttons / recent calls | ✅ new in v0.3.0 |
+| **Per-assistant daily cost cap** (default $10/day, resets at UTC midnight) | ✅ new in v0.3.0 |
+| **Operator's verified test number** (one-time, reused across all assistants) | ✅ new in v0.3.0 |
 
-## Preview in v0.1.0 (code shipped, not yet smoke-tested — first-class in v0.2.0)
-
-The code paths exist in the worker — they're just not exercised by v0.1.0's smoke suite, so consider them best-effort until v0.2 lands.
+## Preview / partial (code shipped, not yet first-class)
 
 | Capability | Why preview |
 |---|---|
-| Inbound calls (webhook → `plugin.phone-tools.call.received` event) | Needs `webhookSecretRef` populated, Vapi Server URL set, and a real DID routed to Vapi |
-| `phone_call_end` (force-hangup) | Untested live |
-| `phone_call_recording_url` | Needs `recordingEnabled` per account + a completed call with a recording |
-| 3CX SIP-trunk routing (calls leave through your own DID — also fixes "Spam Likely" caller-ID labels) | Requires Vapi-side BYO SIP config; v0.1.0 uses Vapi's provisioned number which carries fresh-VoIP / pooled-number reputation |
+| Inbound calls (webhook → `plugin.phone-tools.call.received` event) | Needs `webhookSecretRef` populated, Vapi Server URL set, and a real DID routed to Vapi. Outbound is the verified path today. |
+| `phone_call_end` (force-hangup) | Code path exists; not in regular smoke. |
+| 3CX SIP-trunk routing | Needs Vapi-side BYO SIP config; quickstart uses Vapi's provisioned number, which carries fresh-VoIP / pooled-number reputation. The plugin's Setup tab walks you through it. |
 
 ## Future versions (planned)
 
 | Version | What lands |
 |---|---|
-| v0.2.0 | Full inbound (real DID + 3CX SIP trunk + webhook signature verify), recording-URL smoke, force-hangup smoke, additional consuming skills (no-show-recovery, customer-satisfaction, renewal-confirmation chained into real CRM/calendar workflows) |
-| v0.3.0 | DIY engine — see "v0.3.0 DIY engine architecture" section below. Modular STT/LLM/TTS pipeline with **ElevenLabs TTS primary, local Qwen TTS fallback** (for cost floor + privacy mode). Same `PhoneEngine` interface so it slots in without touching skills. |
-| Later | DTMF mid-call, warm transfer to a human extension, voicemail-drop, mid-call function tools (in-call assistant invokes Paperclip tools), deeper 3CX Call Control API integration |
+| v0.4.0 | Inbound routes UI on the Phone tab (DID → Assistant mapping, business hours, voicemail-drop fallback). Assistant phone capability for executive-role agents (currently Phone tab is only meaningful for `role: "assistant"`). |
+| v0.5.0 | DIY engine — Jambonz + Deepgram (STT) + Claude/GPT (LLM) + ElevenLabs (TTS, with Qwen-local fallback). Same `PhoneEngine` interface so it slots in without touching skills or wizards. Same engine dropdown on the account config. |
+| Later | DTMF mid-call, warm transfer to a human extension, voicemail-drop, mid-call function tools, deeper 3CX Call Control API integration |
 
-## What it does
+## Tools
 
-Tools registered:
+Tools registered (agent-facing):
 
 | Tool | Direction | Reads/Writes | Notes |
 |---|---|---|---|
@@ -52,87 +52,82 @@ Tools registered:
 | `phone_call_list` | both | read | List recent calls with filters. |
 | `phone_assistant_list` | n/a | read | List configured assistants. |
 | `phone_assistant_create` | n/a | mutation | Create a named assistant (idempotent on name). |
-| `phone_assistant_update` | n/a | mutation | Patch an assistant. |
+| `phone_assistant_update` | n/a | mutation | Patch an assistant (partial PATCH). |
 | `phone_assistant_delete` | n/a | mutation | Remove an assistant. |
 | `phone_number_list` | n/a | read | List engine-side phone numbers. |
 
-Events emitted (subscribe with `ctx.events.on("plugin.phone-tools.<event>", ...)`):
+## Scoped HTTP API (operator-facing, used by the Assistants UI)
 
-| Event | Payload kind | When |
+Mounted under `/api/plugins/phone-tools/api/*`:
+
+| Method | Path | What it does |
 |---|---|---|
-| `plugin.phone-tools.call.received` | inbound webhook | Inbound call rings; engine asks who should answer. |
-| `plugin.phone-tools.call.started` | both | Call connected. |
-| `plugin.phone-tools.call.transcript.partial` | both | Live transcript chunk during call. |
-| `plugin.phone-tools.call.transcript.final` | both | Full transcript after call ends. |
-| `plugin.phone-tools.call.ended` | both | Call terminated; payload includes durationSec, costUsd, endReason. |
-| `plugin.phone-tools.call.function_call` | both | The in-call assistant invoked one of its tools. |
+| `POST` | `/assistants/compose-preview` | Pure prompt composition from wizard answers. Returns `{firstMessage, systemPrompt}`. |
+| `GET` | `/assistants/:agentId/phone-config` | Read per-assistant phone config + today's cost window. |
+| `POST` | `/assistants/:agentId/phone-config` | Create or update per-assistant phone config. Mirrors the assistant onto Vapi. |
+| `POST` | `/assistants/:agentId/phone-config/test` | Place a one-off test call to the operator's verified phone. |
+| `GET` | `/assistants/:agentId/calls` | List the assistant's recent calls (last 7 days, max 25). |
+| `POST` | `/assistants/:agentId/calls` | Place a one-off call (used by the "Have <name> call someone" modal). |
+| `GET` | `/assistants/:agentId/calls/:callId/status` | Status snapshot for the live-transcript modal. |
+| `GET` | `/assistants/:agentId/calls/:callId/transcript` | Structured transcript turns for the live-transcript modal. |
+| `GET` | `/assistants/:agentId/calls/:callId/recording-url` | Short-lived signed URL to the call recording (if account has `recordingEnabled`). |
+| `GET` | `/operator-phone` | The operator's verified test-call number, scoped per user. |
+| `POST` | `/operator-phone` | Set/update the operator's verified test-call number. |
+| `GET` | `/accounts/numbers` | List allow-listed phone-number IDs for the caller-ID dropdown. |
 
-## Setup walkthrough — Vapi engine + 3CX
+All routes are board-auth and resolve company via `?companyId=<uuid>`. Mutations on `:agentId` enforce the same `allowedCompanies` check as the agent tools — an assistant in company A can't be configured / called from company B.
 
-You'll need to configure things in three places, in this order:
+## Events
 
-1. **Vapi.ai** — sign up, get an API key, configure a SIP trunk pointing at your 3CX
-2. **3CX** — accept the SIP trunk from Vapi, set up an inbound route + an outbound rule
-3. **Paperclip** — install the plugin, create the secrets, fill in the settings page
+Subscribe with `ctx.events.on("plugin.phone-tools.<event>", ...)`:
 
-### 1. Vapi.ai
+| Event | When |
+|---|---|
+| `plugin.phone-tools.call.received` | Inbound call rings; engine asks who should answer (preview path; needs webhooks). |
+| `plugin.phone-tools.call.started` | Call connected. |
+| `plugin.phone-tools.call.transcript.partial` | Live transcript chunk during call. |
+| `plugin.phone-tools.call.transcript.final` | Full transcript after call ends. |
+| `plugin.phone-tools.call.ended` | Call terminated; payload includes `durationSec`, `costUsd`, `endReason`. The plugin also accumulates the call's cost into the originating assistant's daily cap window at this point. |
+| `plugin.phone-tools.call.function_call` | The in-call assistant invoked one of its tools. |
 
-1. Sign up at https://dashboard.vapi.ai. Create an Org if needed.
-2. **API key:** Org → API Keys → create a **Private API Key** (NOT the public/web key). Copy it.
-3. **Webhook secret:** Org → Server URL → set Server URL to `https://<your-paperclip-host>/api/plugins/phone-tools/webhooks/vapi`. Set "Server URL Secret" to a strong random string. Copy it. Vapi signs every webhook with HMAC-SHA256 using this secret.
-4. **SIP trunk to 3CX (for inbound):** Phone Numbers → Add Phone Number → choose **BYO SIP Trunk**. Configure it with your 3CX SIP credentials so Vapi can register against your 3CX as a SIP user. Note the number's `id` (UUID) — you'll need it as `defaultNumberId`.
-5. **Outbound numbers:** Same panel. Vapi can dial out via the same BYO trunk, in which case 3CX is the carrier and the call originates from one of your DIDs.
-6. **(Optional) Create an assistant** in the dashboard to get an `assistantId` for `defaultAssistantId`. Or skip — agents can pass an inline assistant config to `phone_call_make` without one saved.
+## Setup
 
-### 2. 3CX (Enterprise edition required for SIP trunks)
+The full operator-walkthrough lives on the **Setup** tab of the plugin's settings page in Paperclip — that's the authoritative source and includes screenshots of every Vapi / 3CX panel. **About 15–20 minutes** for first-time setup.
 
-Reference: https://www.3cx.com/docs/manual/sip-trunks/.
+Quick orientation before you click in:
 
-1. **Add SIP Trunk:** Admin → SIP Trunks → Add → Generic SIP Trunk. Name it "Vapi". Use the registration credentials Vapi gave you.
-2. **Codec:** Set to **G.711 µ-law (PCMU)** as primary. Vapi supports both PCMU and Opus; PCMU has the broadest compat with PSTN trunks.
-3. **NAT:** if 3CX is behind NAT, enable **STUN** in the trunk's advanced settings. Vapi's media servers expect to reach you on the SIP-advertised IP.
-4. **Inbound route:** Admin → Inbound Rules → Add. Match a DID you own → Route to the Vapi trunk. This makes external calls to that DID hit Vapi → trigger the `assistant-request` webhook → emit `plugin.phone-tools.call.received`.
-5. **Outbound rule (optional):** Admin → Outbound Rules → Add. Pattern: any outbound number Vapi dials uses the Vapi trunk as the gateway. This makes Vapi-initiated calls leave through one of your 3CX DIDs.
-6. **Test:** Call the inbound DID from a cell phone. You should see the call hit Vapi (Vapi dashboard → Calls). If 3CX rejects with "no route", check the trunk registration status.
+1. **Vapi.ai** — sign up, create a Private API Key, optionally provision a phone number for the quickstart path (Vapi's provisioned number works but recipients see "Spam Likely" — fine for smoke tests, not for real customer calls).
+2. **Paperclip secret** — create a secret holding the Vapi Private API Key. Per company that will use phone tools.
+3. **Plugin settings → Configuration tab** — add an account: `key=main`, `engine=vapi`, paste the secret UUID, set `defaultNumberId` to the Vapi number's UUID (run `phone_number_list` once if you forgot), tick the company under `allowedCompanies`. Save.
+4. **(Optional, for production)** — follow the **Setup** tab's "Production via 3CX SIP trunk" section to route calls through your own DID for branded caller-ID. Skips the "Spam Likely" label.
+5. **Flip `allowMutations` on** when you're ready to actually place calls.
 
-### 3. Paperclip
+Smoke-test with `scripts/smoke-outbound.sh` (Bash) or `scripts/smoke-outbound.ps1` (PowerShell) — places a 30-second test call with a built-in demo assistant and prints the transcript. Cost: ~$0.07.
 
-Replace `<extensions>` with the path to your `paperclip-extensions` checkout and `<paperclip>` with your `paperclip` checkout. On Windows these typically live under `%USERPROFILE%\` (e.g. `%USERPROFILE%\paperclip-extensions`); on macOS/Linux under `$HOME/`.
+### Dev-redeploy loop
+
+After `pnpm build`, push the new `dist/` into the running plugin and cycle the worker in one shot:
 
 ```bash
-# Build the plugin
-cd <extensions>/plugins/phone-tools
-pnpm install && pnpm build
-
-# Install it into your local Paperclip
-cd <paperclip>
-pnpm --filter paperclipai exec tsx src/index.ts plugin install --local <extensions>/plugins/phone-tools
+bash scripts/dev-redeploy.sh
 ```
 
-> **Dev-loop tip:** after `pnpm build`, use `scripts/dev-redeploy.sh` (which runs `paperclipai plugin reinstall phone-tools` under the hood) to push the new `dist/` into `~/.paperclip/installed-plugins/` and reload the worker in one shot. Subsequent `pnpm build` does NOT auto-refresh the installed copy on its own — `paperclipai plugin reinstall <key>` is what bridges the two.
+The script calls `paperclipai plugin reinstall phone-tools --local-path <dir>`. Plain `pnpm build` does NOT auto-refresh the installed copy — `paperclipai plugin reinstall` is what bridges source → installed copy.
 
-Then in the Paperclip UI:
+## Operator-facing UI surface
 
-1. **Create the two secrets** (per company that will use phone tools):
-   - Secrets page → Add → name `vapi-api-key`, value = the Private API Key from step 1.2. Copy the secret UUID.
-   - Add → name `vapi-webhook-secret`, value = the Server URL Secret from step 1.3. Copy that UUID.
-2. **Open the plugin settings:** `/instance/settings/plugins/phone-tools`.
-3. **Add an account:**
-   - Identifier: `main` (or per-company: `c3-main`, `m3-main`, etc.)
-   - Engine: `vapi`
-   - Engine API key: paste the `vapi-api-key` secret UUID
-   - Webhook signing secret: paste the `vapi-webhook-secret` secret UUID
-   - Default phone-number ID: the UUID from step 1.4 (run `phone_number_list` once if you forgot)
-   - Default assistant ID: leave blank if you didn't pre-create one in Vapi
-   - Allowed companies: tick the company that owns these calls (single-company recommended)
-   - Recording enabled: leave **off** unless you've added a consent disclosure to your assistant's first message
-   - Max concurrent calls: 3 (default)
-4. **Set Default account key** to `main` (or whatever you named it).
-5. **Allow mutations:** leave **off** until you've placed at least one test call manually via `phone_call_make` and reviewed the transcript.
+When the plugin is installed AND the current company is in any account's `allowedCompanies` list, the operator sees:
 
-## Sample tool invocations
+- **Assistants** entry in the company sidebar, right under the Agents section. (Hidden otherwise — fail-safe deny.)
+- **Assistants list page** at `/:companyPrefix/assistants` — filtered to agents with `role: "assistant"`. Empty state has "+ Create your first Assistant" CTA.
+- **Assistant Builder wizard** at `/:companyPrefix/assistants/new` — 8 steps: type (Personal EA / Custom), name, principal, capability tasks, capability checklist (Phone enabled, Email/Calendar/SMS coming soon), voice (with inline play buttons backed by the OpenAI CDN voice samples), caller ID, and review-with-Test-on-my-phone.
+- **Phone tab on AgentDetail** for any agent with `role: "assistant"` — voice, caller ID, daily cap with today's-spend bar, Place-call modal, Test-on-my-phone modal, recent calls list. The tab pane is empty for non-assistant roles (CEO/CFO/etc.) — the manifest can't filter by role today, only by entity type.
 
-Place an outbound call:
+The wizard creates the Agent via `POST /api/companies/:id/agent-hires` (so companies that require board approval go through the approval queue; the wizard auto-approves on personal-fork setups). It writes the composed system prompt into the agent's instructions bundle (`AGENTS.md`) using the same write path the existing Instructions tab uses, so the operator can later edit the prompt freely.
+
+## Sample agent-tool invocations
+
+The agent tools haven't changed; existing skills/heartbeats work the same. Place an outbound call:
 
 ```json
 {
@@ -143,7 +138,7 @@ Place an outbound call:
       "name": "AppointmentBooker",
       "systemPrompt": "You are calling on behalf of <CALLER NAME> to book a haircut. The shop is 'Sharp Cuts'. Preferred times: Tuesday or Wednesday afternoon, between 2pm and 5pm. Be polite, brief, and confirm the booking time before hanging up.",
       "firstMessage": "Hi, this is an automated assistant calling on behalf of <CALLER NAME>. I'd like to book a haircut. Is this a good time to chat?",
-      "voice": "11labs:rachel",
+      "voice": "openai:alloy",
       "model": "openai:gpt-4o"
     },
     "metadata": { "issueRef": "iss_abc123" },
@@ -152,20 +147,24 @@ Place an outbound call:
 }
 ```
 
-Get status:
-
-```json
-{ "tool": "phone_call_status", "params": { "callId": "<callId from above>" } }
-```
+Voice spec is `provider:voiceId`. The Assistants wizard handles this automatically — bare OpenAI voice IDs (`alloy`, `echo`, `shimmer`, `onyx`, etc.) get qualified to `openai:<id>` server-side. Tool callers that pass a fully qualified `provider:voiceId` work unchanged.
 
 Subscribe to inbound calls (in your skill / heartbeat):
 
 ```ts
 ctx.events.on("plugin.phone-tools.call.received", async (event) => {
   // event.payload = { kind, callId, from, to, numberId, assistantId?, startedAt, accountKey, engine }
-  // … decide who/what should handle it; e.g. find the customer by `from`
 });
 ```
+
+## Cost cap (Assistants only)
+
+Every assistant has a daily USD cap. Defaults to `$10/day`. Stored per-agent in plugin state under `assistants:cost-window:<agentId>:<YYYY-MM-DD>`.
+
+- The cap fires inside the wrapper around `phone_call_make` paths used by the Assistants UI (the `/assistants/:agentId/calls` and `/assistants/:agentId/phone-config/test` routes). Calls over the cap return `[ECOST_CAP]` with a message and the cap resets at UTC midnight.
+- The cost is accumulated when each call's terminal state is observed (poll OR webhook, whichever fires first — dedup-protected).
+- Operator can change the cap on the Phone tab → Daily cap input. Setting to `0` disables the gate (operator opt-out; plugin doesn't enforce).
+- Direct `phone_call_make` invocations from agent runs (not via the Assistants UI) bypass the cap today — they're governed by the per-account `maxConcurrentCalls` and the cross-plugin budget service. Routing those through the cap too is a v0.4 enhancement.
 
 ## Error codes
 
@@ -177,9 +176,10 @@ ctx.events.on("plugin.phone-tools.call.received", async (event) => {
 | `[ENUMBER_NOT_ALLOWED]` | The phone-number ID isn't in the account's `allowedNumbers`. |
 | `[EASSISTANT_NOT_ALLOWED]` | The assistant ID isn't in the account's `allowedAssistants`, OR an inline assistant was passed when only ID-based assistants are allowed. |
 | `[ECONCURRENCY_LIMIT]` | Account already has `maxConcurrentCalls` outbound calls in flight. |
-| `[ERECORDING_DISABLED]` | `phone_call_recording_url` was called on an account that has `recordingEnabled=false`. |
+| `[ECOST_CAP]` | Per-assistant daily USD cap reached. Resets at UTC midnight (operator-timezone reset is a future enhancement). |
+| `[ERECORDING_DISABLED]` | `phone_call_recording_url` was called on an account with `recordingEnabled=false`. |
 | `[EDISABLED]` | A mutation tool was called while the master `allowMutations` switch is off. |
-| `[EENGINE_NOT_AVAILABLE]` | Account selected `engine: "diy"` but DIY ships in v0.3.0. |
+| `[EENGINE_NOT_AVAILABLE]` | Account selected `engine: "diy"` but DIY ships in v0.5.0. |
 | `[EENGINE_UNKNOWN]` | Account selected an engine kind that isn't recognized. |
 | `[EINVALID_INPUT]` | A required parameter was missing/empty. |
 | `[ECONFIG]` | Plugin config is wrong (missing apiKeyRef, secret didn't resolve, etc.). |
@@ -191,6 +191,8 @@ Every account carries `allowedCompanies`. Default is **deny**: a missing or empt
 
 In addition to the account-level check, individual phone numbers and assistants can be further restricted via `allowedNumbers` / `allowedAssistants`. Tools enforce these; `phone_number_list` and `phone_assistant_list` filter the response so an agent in company A doesn't even *see* numbers / assistants scoped to company B.
 
+The Assistants sidebar and Phone tab apply the same gate — they don't render for companies that aren't allow-listed in any account.
+
 **Inbound webhooks** are emitted per-company. The plugin fans out the event to every company in the receiving account's `allowedCompanies`. Accounts using `["*"]` portfolio-wide do **not** emit inbound events (no obvious target); narrow the allow-list to specific company UUIDs to enable inbound.
 
 ## Cost considerations
@@ -198,57 +200,32 @@ In addition to the account-level check, individual phone numbers and assistants 
 - Vapi: ~$0.05/min on top of underlying model + voice provider costs (typically $0.10–0.25/min total).
 - 3CX SIP trunk to PSTN: whatever your trunk provider charges (Twilio, Telnyx, your local CLEC, etc.). Usually $0.01–0.02/min.
 - Total: rough order of magnitude **$0.10–0.30 per minute** of conversation.
-- The `maxConcurrentCalls` per-account cap (default 3) is a guardrail against runaway costs from a misbehaving agent.
+- The `maxConcurrentCalls` per-account cap (default 3) is the per-account guardrail.
+- The per-assistant daily `costCapDailyUsd` (default $10) is the per-assistant guardrail.
 - `ctx.telemetry.track("phone-tools.call.vapi", { durationSec, costUsd, … })` fires on every `call.ended`, so the cost-events service aggregates it.
 
 ## Recording + consent
 
 Leave `recordingEnabled` **off** unless you've added an audible consent disclosure to your assistant's `firstMessage`. Many US states (and most of Canada / EU) require explicit two-party consent. The plugin does not auto-inject the disclosure — that's intentionally on the operator so the wording fits the use case.
 
-## Limitations / out of scope (v0.1.0)
+## Tests
 
-- DTMF mid-call (`phone_dtmf_send`) — punted.
-- Warm transfer to a human extension (`phone_call_transfer`) — punted.
-- Voicemail-drop (record + leave without ringing) — punted.
-- Multi-party conferencing — punted.
-- Direct integration with the 3CX Call Control API for richer routing decisions ("if AI flags angry caller, transfer to extension 200") — consider after v0.2 if there's demand.
-- Per-call budget enforcement — handled at the `cost-events` service layer once the cross-plugin budget API lands.
+Pure-function unit tests live alongside the implementation:
 
-## v0.3.0 DIY engine architecture (planned)
+- `src/assistants/compose.test.ts` — prompt composition (10 cases)
+- `src/assistants/cost-cap.test.ts` — daily-cap accounting (10 cases)
+- `src/assistants/sidebar-visibility.test.ts` — sidebar visibility predicate (7 cases — including the three the Phase A plan calls out manually)
 
-Same `PhoneEngine` interface as the Vapi engine — drop-in from the consuming skill's perspective — but the audio loop is assembled from independent components instead of a single hosted service. Audio + transcripts stay on operator-controlled infrastructure (or operator-chosen vendors), giving a cost floor and a privacy mode.
+Run with `pnpm test` (uses `node --test --import tsx`).
 
-**Pipeline:**
+## Limitations / out of scope (today)
 
-| Layer | Default | Fallback / Alternative | Why |
-|---|---|---|---|
-| SIP gateway | **Jambonz** (self-hosted on a small VM) | — | Open source, designed for AI voice agents, speaks SIP natively, exposes calls as WebSocket events |
-| STT | **Deepgram** (streaming, sub-200ms) | local **Whisper** (eventually) for full air-gap mode | Cloud STT is meaningfully better today; local Whisper is the privacy floor when needed |
-| LLM | per-account config (Claude default; GPT / Gemini / local options) | — | Already plugin-LLM-agnostic; the engine just streams text in/out |
-| TTS | **ElevenLabs** (primary) | **Qwen TTS local** (fallback) | ElevenLabs has best-in-class quality + sub-300ms streaming; Qwen TTS runs locally for (a) ElevenLabs API failure, (b) ElevenLabs rate limit, (c) per-account "always local" privacy mode |
-| Audio relay | per-call WebSocket bridge inside the plugin worker | — | Glues Jambonz audio frames to STT input and TTS output to Jambonz audio frames |
-
-**TTS fallback behaviour:**
-
-The TTS layer is the operator's biggest privacy/cost lever, so it gets explicit fallback machinery:
-
-1. **Primary:** ElevenLabs — best voice quality, fast streaming, ~$0.05–0.10/min.
-2. **Fallback to Qwen TTS local on:**
-   - ElevenLabs API returns 5xx for >2 consecutive chunks
-   - ElevenLabs API returns 429 (rate limit)
-   - Account is configured with `ttsMode: "always-local"` (per-account opt-in for sensitive calls — e.g. medical, financial, legal)
-3. **Per-account choice:** the engineConfig can pin to one TTS provider only (`tts: "elevenlabs"` or `tts: "qwen-local"`) for operators who want predictable behaviour.
-
-When fallback fires mid-call, the call continues without interruption — the operator gets a slightly different voice for the remainder. A `tts.fallback_engaged` event fires so the operator knows.
-
-**Why this architecture (vs. the original "OpenAI Realtime in one connection" sketch):**
-
-The first DIY draft was "Jambonz + OpenAI Realtime — one streaming connection does STT+LLM+TTS." Simpler but locks you to OpenAI's voices and models. Splitting into Deepgram (STT) + LLM-of-choice + ElevenLabs/Qwen (TTS) costs slightly more orchestration code in the engine but:
-- Lets you use Claude (which Paperclip is already built on) instead of being forced to GPT
-- Lets you swap TTS providers per-account without code changes
-- Gives you a real local-fallback path so a privacy-mode account can keep audio entirely on-prem
-- Matches the "image-tools provider config" pattern the rest of the plugin ecosystem uses
-
-The plugin spec for this is in [plugin-plans/09-phone-tools.md](../../plugin-plans/09-phone-tools.md) §Phase 2 (DIY engine).
-
-Switching one account from `vapi` to `diy` will only require changing the engine dropdown and supplying the DIY-specific secrets — no code changes in skills that consume the plugin.
+- DTMF mid-call (`phone_dtmf_send`).
+- Warm transfer to a human extension (`phone_call_transfer`).
+- Voicemail-drop (record + leave without ringing).
+- Multi-party conferencing.
+- Direct integration with the 3CX Call Control API for richer routing.
+- Per-call budget enforcement at the `cost-events` service layer (separate cross-plugin budget API; today the per-assistant daily cap is the closest thing).
+- Cost cap on direct `phone_call_make` invocations from agent runs (Assistants UI flows are gated; agent-tool flows aren't yet).
+- Operator-timezone cap reset (cap currently rolls over at UTC midnight).
+- Voice cloning, multi-language assistants, A/B prompt testing — out of scope until further notice.

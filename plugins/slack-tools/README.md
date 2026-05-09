@@ -9,6 +9,8 @@ switch.
 Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 `slack_send_dm` with a Block Kit body.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Tools registered
 
 | Tool | Kind | Notes |

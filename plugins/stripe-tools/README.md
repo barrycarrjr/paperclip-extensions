@@ -9,6 +9,8 @@ Multi-account aware. Every Stripe account is scoped to a per-resource
 `allowedCompanies` list — agents in the wrong company get
 `[ECOMPANY_NOT_ALLOWED]`. Mutations are off by default.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Tools registered
 
 | Tool | Kind | Notes |

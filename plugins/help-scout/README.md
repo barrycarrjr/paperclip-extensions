@@ -9,6 +9,8 @@ Multi-account, per-account `allowedCompanies` isolation, optional
 per-account `allowedMailboxes` allow-list, and a master `allowMutations`
 gate.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Tools registered
 
 | Tool | Kind | Notes |

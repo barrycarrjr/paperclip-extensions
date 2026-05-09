@@ -4,6 +4,8 @@ Direct 3CX PBX integration for **operational visibility** (queue depth, parked c
 
 This is the operations / observability surface for the PBX itself, scoped per Paperclip company.
 
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/event shapes.
+
 ## Two-API split — important to understand before configuring
 
 3CX v20 splits its programmable surface into two independent API families,
