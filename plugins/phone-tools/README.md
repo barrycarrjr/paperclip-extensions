@@ -4,6 +4,8 @@ Paperclip plugin that lets agents and operators place AI-driven phone calls thro
 
 ## Recent changes
 
+- **v0.3.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.3.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.3.2** — Sidebar `Assistants` link no longer lower-cases the company prefix. The href used to render `/mme/assistants` while every other Paperclip route uses `/MME/...`; the `toLowerCase()` call was unnecessary and inconsistent with the rest of the app. Some route configurations are case-sensitive, so the bad casing could 404.

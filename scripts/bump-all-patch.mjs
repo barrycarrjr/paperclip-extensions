@@ -26,8 +26,8 @@ const REPO_ROOT = dirname(__dirname);
 const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
-  "notepad":
-    "Patch bump. The Converted tab now works once the host plugin-database validator accepts plugin SELECTs that JOIN against `public.issues` (host-side fix landed alongside this release). No plugin-code change beyond the version bump.",
+  "backup-tools":
+    "First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.",
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";

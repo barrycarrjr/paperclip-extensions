@@ -102,6 +102,8 @@ Create a bucket via the console at <http://localhost:9001>, generate an access k
 
 ## Recent changes
 
+- **v0.1.1** — First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.
+
 ### 0.1.0 (2026-05-09)
 
 - Initial release.
