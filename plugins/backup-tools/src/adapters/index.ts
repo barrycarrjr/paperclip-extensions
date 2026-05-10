@@ -8,6 +8,7 @@ import type { PluginContext } from "@paperclipai/plugin-sdk";
 import type { BackupDestinationAdapter } from "./types.js";
 import { S3Adapter, type S3AdapterConfig } from "./s3.js";
 import { GoogleDriveAdapter, type GoogleDriveAdapterConfig } from "./googleDrive.js";
+import { LocalAdapter, type LocalAdapterConfig } from "./local.js";
 
 export type DestinationConfigEntry = {
   id: string;
@@ -84,9 +85,19 @@ export async function createAdapterForDestination(
   }
 
   if (entry.kind === "local" || entry.kind === "nas-smb") {
-    throw new Error(
-      `[EBACKUP_LOCAL_NOT_AVAILABLE] destination ${entry.id} kind=${entry.kind}: v0.1 does not yet support host filesystem writes. Run MinIO and use kind=s3 instead.`,
-    );
+    const cfg = entry.config as Partial<{ path: string }>;
+    if (!cfg.path) {
+      throw new Error(
+        `[EBACKUP_DEST_CONFIG_INCOMPLETE] destination ${entry.id} kind=${entry.kind} requires config.path (absolute filesystem path; ~ expands to home dir).`,
+      );
+    }
+    const fullCfg: LocalAdapterConfig = { path: cfg.path };
+    return new LocalAdapter({
+      kind: entry.kind,
+      destinationId: entry.id,
+      label: entry.label,
+      config: fullCfg,
+    });
   }
 
   throw new Error(`[EBACKUP_DEST_KIND_UNKNOWN] kind=${entry.kind}`);

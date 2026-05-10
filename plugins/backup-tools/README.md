@@ -27,12 +27,29 @@ Encrypted system snapshots for your Paperclip instance, on a schedule (or on dem
 See the [setup page on the plugin's settings tab](`/instance/settings/plugins/backup-tools`) — that's the canonical doc, rendered from `manifest.ts`'s `setupInstructions`. Quick summary:
 
 1. **Create the passphrase secret.** Name it `BACKUP_PASSPHRASE`, ≥ 32 chars. Store outside Paperclip too. Lose it = lose all archives.
-2. **Configure ≥ 1 destination.** v0.1 supports `s3` (AWS / R2 / B2 / Wasabi / MinIO / etc) and `google-drive`. Local/NAS destinations are placeholders for v0.2 once the host gains the `host.fs.write-allowlisted` capability.
+2. **Configure ≥ 1 destination.** Choose: `local` (any directory on the host — simplest), `nas-smb` (a mounted SMB share path — same code as local), `s3` (AWS / R2 / B2 / Wasabi / MinIO / etc.), or `google-drive`.
 3. **Configure ≥ 1 schedule.** Pick a cadence (hourly/daily/weekly/monthly) and bind to one or more destination IDs. `keepLast` controls retention per destination.
 4. **Allow ≥ 1 company.** `allowedCompanies` controls which companies' agents can use the backup_* tools and see backup status. Restore is instance-admin-only regardless.
 5. **Run a manual backup** via the Overview tab to verify destinations work end-to-end.
 
-### MinIO quickstart for local backups
+### Local-directory quickstart (no external service)
+
+Add a destination with kind=`local`:
+
+```jsonc
+{
+  "id": "local-disk",
+  "kind": "local",
+  "label": "Local disk",
+  "config": {
+    "path": "~/.paperclip/backups"
+  }
+}
+```
+
+The directory is auto-created if missing. `~` expands to your OS home dir. No external service — archives just land as `.pcback` files in that folder.
+
+### MinIO quickstart (optional, for S3-API testing)
 
 Run MinIO:
 ```
@@ -81,7 +98,7 @@ Create a bucket via the console at <http://localhost:9001>, generate an access k
 | `EBACKUP_DEST_DISABLED` | destination is configured but `enabled: false` |
 | `EBACKUP_DEST_CONFIG_INCOMPLETE` | required fields missing on a destination's `config` |
 | `EBACKUP_DEST_KIND_UNKNOWN` | unrecognized adapter `kind` |
-| `EBACKUP_LOCAL_NOT_AVAILABLE` | kind=local or kind=nas-smb (deferred to v0.2) |
+| `EBACKUP_UNSAFE_KEY` | archive key contained `..` or path separators (local adapter only) |
 | `EBACKUP_DEST_UNREACHABLE` | health check or list failed |
 | `EBACKUP_DEST_QUOTA` | destination rejected upload with quota / size error |
 | `EBACKUP_UPLOAD_FAILED` | generic upload failure |
@@ -102,6 +119,7 @@ Create a bucket via the console at <http://localhost:9001>, generate an access k
 
 ## Recent changes
 
+- **v0.1.4** — Local-disk destinations now actually work (`kind: local` and `kind: nas-smb`). Earlier versions deferred this to v0.2 pending a host `fs-write-allowlisted` capability, but the plugin worker has been writing the in-flight encrypted archive to `tmpdir()` all along — no new host capability was actually needed. The `LocalAdapter` writes archives directly to any operator-nominated absolute path, auto-creates the directory, uses `.partial` rename-on-success to avoid leaving half-written files, and rejects unsafe keys with path separators or `..`.
 - **v0.1.3** — Fix worker startup crash `Dynamic require of "buffer" is not supported`. The AWS SDK's `@smithy/util-buffer-from` calls `require("buffer")` for Node's built-in Buffer module; esbuild's default ESM output doesn't ship a working `require`, so the bundled `__require` shim threw at the first SDK call. Fix: inject a `createRequire(import.meta.url)` banner into the worker bundle so bundled CJS can resolve Node built-ins.
 - **v0.1.2** — Fix install-time migration validator failure. The original `migrations/0001_init.sql` used unqualified table names (e.g. `CREATE TABLE backups`) and contained an apostrophe in a leading SQL comment that confused the host validator's quote-stripping regex; install rejected with `Plugin migrations may contain DDL statements only`. v0.1.2 fully qualifies every table and index with the plugin's database namespace and removes apostrophes from comments. Worker SQL also now uses `${ctx.db.namespace}.<table>` everywhere so runtime queries pass the same validator.
 - **v0.1.1** — First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.

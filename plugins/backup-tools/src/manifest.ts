@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "backup-tools";
-const PLUGIN_VERSION = "0.1.3";
+const PLUGIN_VERSION = "0.1.4";
 
 // ---------------------------------------------------------------------------
 // instanceConfigSchema sub-shapes
@@ -137,7 +137,7 @@ const localDestinationConfigSchema = {
       type: "string",
       title: "Local path",
       description:
-        "Absolute path on the host filesystem. **v0.1 status:** the plugin SDK does not yet expose host-filesystem write access — selecting kind: 'local' returns [EBACKUP_LOCAL_NOT_AVAILABLE] until the host gains the `host.fs.write-allowlisted` capability. Workaround: run MinIO locally and use kind: 's3' against http://localhost:9000.",
+        "Absolute path on the host filesystem (e.g. `C:\\Users\\barry\\backups`, `/Volumes/Backups`, `~/.paperclip/backups`). The plugin will create the directory if it doesn't exist. Tilde (`~`) is expanded to the OS user's home dir. Make sure the path is on a drive with enough free space for `keepLast` × (archive size) of backups.",
     },
   },
 } as const;
@@ -151,7 +151,7 @@ const nasSmbDestinationConfigSchema = {
       type: "string",
       title: "Mount path",
       description:
-        "Absolute path on the host where the NAS share is mounted (e.g. //192.168.1.10/backups). Same v0.1 limitation as kind: 'local' — see above.",
+        "Absolute path on the host where the NAS share is mounted (e.g. `//192.168.1.10/backups` after `mount -t cifs`, or `Z:\\backups` on Windows after mapping the share). From the plugin's perspective this is identical to `kind: local` — the SMB-vs-local distinction is purely operator-facing.",
     },
   },
 } as const;
@@ -172,7 +172,7 @@ const destinationItemSchema = {
       enum: ["s3", "google-drive", "local", "nas-smb"],
       title: "Kind",
       description:
-        "Which adapter handles this destination. v0.1 supports s3 + google-drive. local + nas-smb are placeholders for v0.2.",
+        "Which adapter handles this destination. `s3` for AWS / R2 / B2 / Wasabi / MinIO. `google-drive` for Drive. `local` for any directory on the host disk. `nas-smb` for a mounted SMB share — functionally identical to `local`, just labeled differently for clarity.",
     },
     label: {
       type: "string",
@@ -301,9 +301,13 @@ Then create a bucket, generate an access key in the MinIO console, and configure
 3. Pick (or create) a Drive folder, copy its ID from the URL.
 4. Add a destination: kind=\`google-drive\`, label="Drive", config = { oauthClientIdSecretRef, oauthClientSecretSecretRef, oauthRefreshTokenSecretRef, folderId, sharedDriveId? }.
 
-### Option C / D — local / NAS-SMB
+### Option C — Local directory (simplest for testing)
 
-**v0.1 limitation:** the plugin SDK does not yet expose host-filesystem write. Selecting kind=local or nas-smb returns \`[EBACKUP_LOCAL_NOT_AVAILABLE]\`. Workaround: run MinIO (above) and use kind=s3.
+Add a destination with kind=\`local\`, label="Local disk", config = \`{ path: "C:\\Users\\barry\\.paperclip\\backups" }\` (or any absolute path you like; \`~\` expands to home). The plugin auto-creates the directory. No external service needed. Recommended for v0.1 testing.
+
+### Option D — NAS / mounted SMB share
+
+Same as \`local\`, just point \`config.path\` at a path where you've already mounted the share (Windows: a mapped drive like \`Z:\\backups\`; macOS/Linux: a mount point like \`/Volumes/NAS/backups\`).
 
 ---
 
