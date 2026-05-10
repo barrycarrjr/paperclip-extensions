@@ -102,6 +102,7 @@ Create a bucket via the console at <http://localhost:9001>, generate an access k
 
 ## Recent changes
 
+- **v0.1.3** — Fix worker startup crash `Dynamic require of "buffer" is not supported`. The AWS SDK's `@smithy/util-buffer-from` calls `require("buffer")` for Node's built-in Buffer module; esbuild's default ESM output doesn't ship a working `require`, so the bundled `__require` shim threw at the first SDK call. Fix: inject a `createRequire(import.meta.url)` banner into the worker bundle so bundled CJS can resolve Node built-ins.
 - **v0.1.2** — Fix install-time migration validator failure. The original `migrations/0001_init.sql` used unqualified table names (e.g. `CREATE TABLE backups`) and contained an apostrophe in a leading SQL comment that confused the host validator's quote-stripping regex; install rejected with `Plugin migrations may contain DDL statements only`. v0.1.2 fully qualifies every table and index with the plugin's database namespace and removes apostrophes from comments. Worker SQL also now uses `${ctx.db.namespace}.<table>` everywhere so runtime queries pass the same validator.
 - **v0.1.1** — First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.
 
