@@ -108,11 +108,25 @@ async function getAdapter(
 }
 
 // ─── Database helpers ────────────────────────────────────────────────────────
+//
+// The host's plugin-SQL validator requires every table reference in runtime
+// SQL to be fully qualified with the plugin's database namespace. The
+// namespace is derived dynamically (sha256 of plugin key); ctx.db.namespace
+// exposes it. We never hardcode it — the migration file does, but at runtime
+// we read it off ctx.db.
+
+const TABLES = {
+  backups: (ns: string) => `${ns}.backups`,
+  destResults: (ns: string) => `${ns}.backup_destination_results`,
+  scheduleState: (ns: string) => `${ns}.schedule_state`,
+  restoreRuns: (ns: string) => `${ns}.restore_runs`,
+};
 
 async function ensureSchedulesSeeded(ctx: PluginContext, schedules: ScheduleEntry[]) {
+  const ns = ctx.db.namespace;
   for (const s of schedules) {
     await ctx.db.execute(
-      `INSERT INTO schedule_state (schedule_id, cadence, next_run_after, last_run_at, last_run_status, consecutive_failures)
+      `INSERT INTO ${TABLES.scheduleState(ns)} (schedule_id, cadence, next_run_after, last_run_at, last_run_status, consecutive_failures)
        VALUES ($1, $2, now(), NULL, NULL, 0)
        ON CONFLICT (schedule_id) DO UPDATE SET cadence = EXCLUDED.cadence`,
       [s.id, s.cadence],
@@ -121,8 +135,9 @@ async function ensureSchedulesSeeded(ctx: PluginContext, schedules: ScheduleEntr
 }
 
 async function pickDueSchedules(ctx: PluginContext, cadence: ScheduleEntry["cadence"]): Promise<string[]> {
+  const ns = ctx.db.namespace;
   const rows = await ctx.db.query<{ schedule_id: string }>(
-    `SELECT schedule_id FROM schedule_state
+    `SELECT schedule_id FROM ${TABLES.scheduleState(ns)}
      WHERE cadence = $1 AND next_run_after <= now()`,
     [cadence],
   );
@@ -153,10 +168,11 @@ async function updateScheduleAfterRun(
   cadence: ScheduleEntry["cadence"],
   status: "succeeded" | "failed" | "partial",
 ) {
+  const ns = ctx.db.namespace;
   const next = nextRunFor(cadence, new Date());
   const isFailure = status !== "succeeded";
   await ctx.db.execute(
-    `UPDATE schedule_state SET
+    `UPDATE ${TABLES.scheduleState(ns)} SET
        last_run_at = now(),
        last_run_status = $2,
        next_run_after = $3,
@@ -376,12 +392,13 @@ async function runBackup(
     throw new Error("[EBACKUP_NO_PASSPHRASE] passphrase resolved empty or too short");
   }
 
+  const ns = ctx.db.namespace;
   const archiveUuid = generateArchiveUuid();
   const startedAt = new Date();
   const backupId = randomUUID();
 
   await ctx.db.execute(
-    `INSERT INTO backups (id, archive_uuid, cadence, schedule_id, status, started_at, triggered_by_actor_id, triggered_by_agent_id)
+    `INSERT INTO ${TABLES.backups(ns)} (id, archive_uuid, cadence, schedule_id, status, started_at, triggered_by_actor_id, triggered_by_agent_id)
      VALUES ($1, $2, $3, $4, 'running', $5, $6, $7)`,
     [backupId, archiveUuid, cadence, scheduleId, startedAt.toISOString(), triggeredBy.actorId ?? null, triggeredBy.agentId ?? null],
   );
@@ -428,7 +445,7 @@ async function runBackup(
         await adapter.upload(remoteKey, stream, archiveSizeBytes);
         perDestResults.push({ id: destId, status: "succeeded", remoteKey });
         await ctx.db.execute(
-          `INSERT INTO backup_destination_results (backup_id, destination_id, destination_kind, status, remote_key, size_bytes, upload_started_at, upload_completed_at)
+          `INSERT INTO ${TABLES.destResults(ns)} (backup_id, destination_id, destination_kind, status, remote_key, size_bytes, upload_started_at, upload_completed_at)
            VALUES ($1, $2, $3, 'succeeded', $4, $5, $6, now())`,
           [backupId, destId, adapter.kind, remoteKey, archiveSizeBytes, startedAt.toISOString()],
         );
@@ -436,7 +453,7 @@ async function runBackup(
         const errMsg = err instanceof Error ? err.message : String(err);
         perDestResults.push({ id: destId, status: "failed", error: errMsg });
         await ctx.db.execute(
-          `INSERT INTO backup_destination_results (backup_id, destination_id, destination_kind, status, error_code, error_message, upload_started_at, upload_completed_at)
+          `INSERT INTO ${TABLES.destResults(ns)} (backup_id, destination_id, destination_kind, status, error_code, error_message, upload_started_at, upload_completed_at)
            VALUES ($1, $2, $3, 'failed', $4, $5, $6, now())`,
           [backupId, destId, "unknown", extractErrorCode(errMsg), errMsg.slice(0, 1000), startedAt.toISOString()],
         );
@@ -451,7 +468,7 @@ async function runBackup(
       successes === 0 ? "failed" : successes < destinationIds.length ? "partial" : "succeeded";
 
     await ctx.db.execute(
-      `UPDATE backups SET status = $2, completed_at = now(), size_bytes = $3, manifest_json = $4 WHERE id = $1`,
+      `UPDATE ${TABLES.backups(ns)} SET status = $2, completed_at = now(), size_bytes = $3, manifest_json = $4 WHERE id = $1`,
       [backupId, finalStatus, archiveSizeBytes, JSON.stringify(envelope)],
     );
 
@@ -479,7 +496,7 @@ async function runBackup(
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     await ctx.db.execute(
-      `UPDATE backups SET status = 'failed', completed_at = now(), error_summary = $2 WHERE id = $1`,
+      `UPDATE ${TABLES.backups(ns)} SET status = 'failed', completed_at = now(), error_summary = $2 WHERE id = $1`,
       [backupId, errMsg.slice(0, 1000)],
     );
     if (scheduleId && cadence !== "manual") {
@@ -583,7 +600,7 @@ const plugin = definePlugin({
           const schedule = cfgNow.schedules?.find((s) => s.id === scheduleId);
           if (!schedule || schedule.enabled === false) {
             await ctx.db.execute(
-              `UPDATE schedule_state SET next_run_after = $2 WHERE schedule_id = $1`,
+              `UPDATE ${TABLES.scheduleState(ctx.db.namespace)} SET next_run_after = $2 WHERE schedule_id = $1`,
               [scheduleId, nextRunFor(cadence, new Date()).toISOString()],
             );
             continue;
@@ -660,7 +677,7 @@ const plugin = definePlugin({
         const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
         const rows = await ctx.db.query<Record<string, unknown>>(
           `SELECT id, archive_uuid, cadence, schedule_id, status, started_at, completed_at, size_bytes, error_summary
-           FROM backups ${where} ORDER BY started_at DESC LIMIT ${limit}`,
+           FROM ${TABLES.backups(ctx.db.namespace)} ${where} ORDER BY started_at DESC LIMIT ${limit}`,
           args,
         );
         return { content: `${rows.length} backup(s)`, data: { backups: rows } };
@@ -680,12 +697,13 @@ const plugin = definePlugin({
           return { error: "[ECOMPANY_NOT_ALLOWED]" };
         }
         const p = params as { backupId: string };
+        const ns = ctx.db.namespace;
         const [backup] = await ctx.db.query<Record<string, unknown>>(
-          `SELECT * FROM backups WHERE id = $1`, [p.backupId],
+          `SELECT * FROM ${TABLES.backups(ns)} WHERE id = $1`, [p.backupId],
         );
         if (!backup) return { error: "[EBACKUP_NOT_FOUND]" };
         const dests = await ctx.db.query<Record<string, unknown>>(
-          `SELECT * FROM backup_destination_results WHERE backup_id = $1`, [p.backupId],
+          `SELECT * FROM ${TABLES.destResults(ns)} WHERE backup_id = $1`, [p.backupId],
         );
         return { data: { backup, destinations: dests } };
       },
@@ -746,11 +764,12 @@ const plugin = definePlugin({
     });
 
     ctx.data.register("dashboard.health", async () => {
+      const ns2 = ctx.db.namespace;
       const [last] = await ctx.db.query<{ status: string; started_at: string; size_bytes: number | null }>(
-        `SELECT status, started_at, size_bytes FROM backups ORDER BY started_at DESC LIMIT 1`,
+        `SELECT status, started_at, size_bytes FROM ${TABLES.backups(ns2)} ORDER BY started_at DESC LIMIT 1`,
       );
       const dueRows = await ctx.db.query<{ next_run_after: string }>(
-        `SELECT next_run_after FROM schedule_state ORDER BY next_run_after ASC LIMIT 1`,
+        `SELECT next_run_after FROM ${TABLES.scheduleState(ns2)} ORDER BY next_run_after ASC LIMIT 1`,
       );
       return {
         lastRun: last ?? null,
@@ -802,15 +821,16 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
     case "backups.list": {
       const rows = await ctx.db.query(
         `SELECT id, archive_uuid, cadence, schedule_id, status, started_at, completed_at, size_bytes
-         FROM backups ORDER BY started_at DESC LIMIT 100`,
+         FROM ${TABLES.backups(ctx.db.namespace)} ORDER BY started_at DESC LIMIT 100`,
       );
       return { status: 200, body: { backups: rows } };
     }
     case "backups.get": {
       const id = (params as { id: string }).id;
-      const [backup] = await ctx.db.query(`SELECT * FROM backups WHERE id = $1`, [id]);
+      const ns3 = ctx.db.namespace;
+      const [backup] = await ctx.db.query(`SELECT * FROM ${TABLES.backups(ns3)} WHERE id = $1`, [id]);
       if (!backup) return { status: 404, body: { error: "[EBACKUP_NOT_FOUND]" } };
-      const dests = await ctx.db.query(`SELECT * FROM backup_destination_results WHERE backup_id = $1`, [id]);
+      const dests = await ctx.db.query(`SELECT * FROM ${TABLES.destResults(ns3)} WHERE backup_id = $1`, [id]);
       return { status: 200, body: { backup, destinations: dests } };
     }
     case "backups.run-now": {
@@ -832,7 +852,7 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
     case "schedules.run-due-eval": {
       const id = (params as { id: string }).id;
       const [row] = await ctx.db.query<{ schedule_id: string; cadence: string; next_run_after: string }>(
-        `SELECT schedule_id, cadence, next_run_after FROM schedule_state WHERE schedule_id = $1`, [id],
+        `SELECT schedule_id, cadence, next_run_after FROM ${TABLES.scheduleState(ctx.db.namespace)} WHERE schedule_id = $1`, [id],
       );
       if (!row) return { status: 404, body: { error: "schedule not seeded" } };
       const due = new Date(row.next_run_after) <= new Date();
