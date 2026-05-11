@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.6.0";
+const PLUGIN_VERSION = "0.7.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -301,7 +301,7 @@ The same steps apply — create an App Password or use your regular password if 
 - **Inbound mail not ingesting** — make sure **Enable receive** is ON and **Ingest company** is set. Check the plugin worker logs (Status tab) for poll errors.
 `;
 
-const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
+const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; database?: { namespaceSlug: string; migrationsDir: string } } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
@@ -322,7 +322,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "issues.create",
     "plugin.state.read",
     "plugin.state.write",
+    "database.namespace.migrate",
+    "database.namespace.read",
+    "database.namespace.write",
   ],
+  database: {
+    namespaceSlug: "email_tools",
+    migrationsDir: "migrations",
+  },
   entrypoints: {
     worker: "./dist/worker.js",
   },

@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.7.0** — PostgreSQL database namespace (`plugin_email_tools_7cbee3fdf3`). New `migrations/001_init.sql` creates `email_triaged` table tracking per-UID triage decisions (keep-always, dismiss, auto-triage, move) so the Email view survives page refreshes without touching IMAP read flags. `email.list-messages` now filters triaged UIDs from results and returns `uidValidity`. New bridge actions: `email.record-triage` (INSERT into `email_triaged`), `email.send-reply` (SMTP reply with threading headers, equivalent to `email_reply` tool), `email.send-new` (SMTP send, equivalent to `email_send` tool). Both send actions require `allowSend = true`. Capabilities added: `database.namespace.migrate`, `database.namespace.read`, `database.namespace.write`.
+
 - **v0.6.0** — Adds UI bridge handlers for the new Paperclip Email view. New `ctx.data.register` handlers: `email.list-mailboxes` (returns mailboxes visible to a company), `email.list-messages` (IMAP search returning headers), `email.fetch-message` (full parsed body), `email.list-folders` (IMAP LIST). New `ctx.actions.register` handlers: `email.move-message` (marks read + moves, respects `disallowMove`), `email.mark-read`. These are called by the Email page in the main UI via the plugin bridge API (`POST /api/plugins/:pluginId/data/:key` and `actions/:key`) — no agent/run context required. A new `listFolders` helper was added to `imap.ts`.
 
 - **v0.5.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

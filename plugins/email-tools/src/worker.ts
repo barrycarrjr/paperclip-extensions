@@ -11,6 +11,7 @@ import {
   fetchHeaders,
   fetchParsedMessage,
   getAttachment,
+  getUidValidity,
   listFolders,
   moveMessages,
   openConnection,
@@ -781,10 +782,28 @@ const plugin = definePlugin({
       const limit = typeof params.limit === "number" ? Math.min(params.limit, 200) : 50;
       const conn = await openConnection(rt);
       try {
+        const uidValidity = await getUidValidity(conn, folder);
         const uids = await searchMessages(conn, { folder, unseen: unseen || undefined });
-        const slicedUids = uids.slice(-limit);
+
+        // Filter out UIDs that have already been triaged in the DB.
+        let filteredUids = uids;
+        try {
+          const triagedRows = await ctx.db.query<{ uid: number }>(
+            `SELECT uid FROM plugin_email_tools_7cbee3fdf3.email_triaged
+             WHERE mailbox_key = $1 AND uid_validity = $2`,
+            [mailboxKey, uidValidity],
+          );
+          if (triagedRows.length > 0) {
+            const triagedSet = new Set(triagedRows.map((r) => r.uid));
+            filteredUids = uids.filter((u) => !triagedSet.has(u));
+          }
+        } catch {
+          // DB not yet migrated or other transient error — fall through with unfiltered list.
+        }
+
+        const slicedUids = filteredUids.slice(-limit);
         const messages = await fetchHeaders(conn, folder, slicedUids);
-        return { messages };
+        return { messages, uidValidity };
       } finally {
         await safeLogout(conn);
       }
@@ -914,6 +933,129 @@ const plugin = definePlugin({
       } finally {
         await safeLogout(conn);
       }
+    });
+
+    // Records a triage decision in the DB so the message is filtered from future list-messages calls.
+    ctx.actions.register("email.record-triage", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      const uidValidity = typeof params.uid_validity === "number" ? params.uid_validity : null;
+      const folder = typeof params.folder === "string" ? params.folder : null;
+      const action = typeof params.action === "string" ? params.action : null;
+      if (!companyId || !mailboxKey || uid === null || uidValidity === null || !folder || !action) {
+        throw new Error("companyId, mailbox, uid, uid_validity, folder, and action are required");
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.record-triage",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      await ctx.db.execute(
+        `INSERT INTO plugin_email_tools_7cbee3fdf3.email_triaged
+           (company_id, mailbox_key, folder, uid, uid_validity, action)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (mailbox_key, uid_validity, uid) DO NOTHING`,
+        [companyId, mailboxKey, folder, uid, uidValidity, action],
+      );
+      return { ok: true };
+    });
+
+    // Sends a reply to a message via SMTP — bridge equivalent of the email_reply agent tool.
+    ctx.actions.register("email.send-reply", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      if (!companyId || !mailboxKey || uid === null) {
+        throw new Error("companyId, mailbox, and uid are required");
+      }
+      const body = typeof params.body === "string" ? params.body : null;
+      if (!body) throw new Error("body is required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      if (!config.allowSend) throw new Error("Sending is disabled. Enable allowSend on the plugin settings page.");
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.send-reply",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const replyAll = params.replyAll === true;
+      const bodyHtml = typeof params.body_html === "string" ? params.body_html : undefined;
+
+      const original = await withImapConnection(ctx, cfg, mailboxKey, (client) =>
+        fetchParsedMessage(client, folder, uid),
+      );
+      if (!original) throw new Error(`Message UID ${uid} not found in "${folder}"`);
+
+      const ourAddress = (cfg.smtpFrom ?? cfg.user ?? "").toLowerCase();
+      const replyTo = original.fromAddress ? [original.fromAddress] : original.from ? [original.from] : [];
+      let cc: string[] = [];
+      if (replyAll) {
+        const merged = [...original.to, ...original.cc].flatMap((s) =>
+          s.split(",").map((x) => x.trim()).filter(Boolean),
+        );
+        cc = merged.filter((addr) => !addr.toLowerCase().includes(ourAddress));
+      }
+      const subject = original.subject?.match(/^re:/i) ? original.subject : `Re: ${original.subject ?? ""}`.trim();
+      const refsChain = [...original.references];
+      if (original.messageId && !refsChain.includes(original.messageId)) {
+        refsChain.push(original.messageId);
+      }
+
+      const rt = await buildSmtpRuntime(ctx, cfg, mailboxKey);
+      const info = await sendViaSmtp(rt, {
+        from: rt.smtpFrom,
+        to: replyTo,
+        cc: cc.length > 0 ? cc : undefined,
+        subject,
+        body,
+        bodyHtml,
+        inReplyTo: original.messageId ?? undefined,
+        references: refsChain.length > 0 ? refsChain : undefined,
+      });
+      return { ok: true, messageId: info.messageId };
+    });
+
+    // Sends a new message via SMTP — bridge equivalent of the email_send agent tool.
+    ctx.actions.register("email.send-new", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      if (!config.allowSend) throw new Error("Sending is disabled. Enable allowSend on the plugin settings page.");
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.send-new",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const to = params.to;
+      const subject = typeof params.subject === "string" ? params.subject : null;
+      const body = typeof params.body === "string" ? params.body : null;
+      if (!to || !subject || !body) throw new Error("to, subject, and body are required");
+      const rt = await buildSmtpRuntime(ctx, cfg, mailboxKey);
+      const info = await sendViaSmtp(rt, {
+        from: rt.smtpFrom,
+        to: to as string | string[],
+        cc: params.cc as string | string[] | undefined,
+        bcc: params.bcc as string | string[] | undefined,
+        subject,
+        body,
+        bodyHtml: typeof params.body_html === "string" ? params.body_html : undefined,
+      });
+      return { ok: true, messageId: info.messageId };
     });
 
     idleManager = new IdleManager(ctx);
