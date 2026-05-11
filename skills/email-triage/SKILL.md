@@ -93,7 +93,21 @@ the title — both forms are functionally equivalent at run time.
 
 ### 1. Load rules
 
-a. Resolve the rules-home issue:
+Sender rules live in the email-tools plugin database — **do not** read or
+parse the Markdown rules-home document for Auto-triage / Keep-always
+entries. The Markdown's rule sections are deprecated read-only history.
+
+Call the `email-tools:email_list_rules` agent tool with the `mailbox`
+parameter. The response is:
+
+```json
+{ "autoTriage": ["@noisy.com", "marketing@bigco.com", ...],
+  "keepAlways": ["boss@company.com", "@important.tld", ...] }
+```
+
+Use these two lists for the matching in Step 4. The `parentIssueId` of
+the routine still points at the rules-home issue — that's where the
+Review queue lives (Step 5). Resolve it the same way:
 
 ```bash
 PARENT_ID=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
@@ -105,42 +119,9 @@ If `PARENT_ID` is null/empty, abort with an error comment on the run
 issue: "No rules-home issue linked. Set the routine's parentIssueId to
 an issue holding the email-triage-rules document."
 
-b. Read the document:
-
-```bash
-DOC=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-  "$PAPERCLIP_API_URL/api/issues/$PARENT_ID/documents/email-triage-rules")
-```
-
-If the document doesn't exist (HTTP 404), seed it with the empty
-template below using `PUT` (same endpoint):
-
-```markdown
-# Email triage rules — mailbox: <mailbox>
-
-last-run:
-
-## Auto-triage senders
-
-<!-- One sender per line. Match is case-insensitive substring of From:. -->
-<!-- Forms:                                                                -->
-<!--   newsletter@example.com   — full email match                         -->
-<!--   @marketing.example.com   — domain anywhere in From                  -->
-<!--   subject: webinar invite  — Subject substring match instead          -->
-
-## Keep-always senders
-
-<!-- Same syntax. Beats Auto-triage if both match. -->
-
-## Review queue
-
-<!-- Auto-populated by this skill. One line per sender:
-     `<count> messages from <sender>`.
-     Graduate entries by moving them into Auto-triage or Keep-always above,
-     then delete the line here. -->
-```
-
-Parse the three sections into in-memory lists.
+If the document doesn't exist (HTTP 404 on first fetch in Step 5),
+create it with just a Review-queue section — there's no need to seed
+Auto-triage / Keep-always sections anymore (rules are in the DB).
 
 ### 2. Determine since-cutoff
 
@@ -211,7 +192,11 @@ d. **No match** — surface to review queue and, when `looseMode=true`,
      person-to-person mail. `looseMode` does NOT touch person-to-person
      mail — that's the floor we never cross.
 
-### 5. Update rules document
+### 5. Update rules document (Review queue only)
+
+The rules-home document is now used **only** for the Review queue
+section. Auto-triage / Keep-always rules live in the email-tools
+plugin DB (see Step 1) and must not be written from this skill.
 
 - Set `last-run:` to current UTC ISO timestamp — **except when
   `bulkCleanup=true`**, in which case leave `last-run` alone (per Step 2,
@@ -219,8 +204,10 @@ d. **No match** — surface to review queue and, when `looseMode=true`,
 - For each entry in the review queue this run, **merge** with the existing
   Review queue section: if the same sender is already there, increment
   the count; otherwise add a new line.
-- Don't touch Auto-triage or Keep-always sections — those are
-  human-edited.
+- **Never modify** the Auto-triage or Keep-always sections of the
+  document if they exist — they are deprecated legacy state. The
+  operator's per-sender classifications live in the DB and are reflected
+  back in the UI's icon styling, not in this Markdown.
 - Save back via `PUT /api/issues/<PARENT_ID>/documents/email-triage-rules`
   with body `{ title, format: "markdown", body: <new-markdown> }`.
 
@@ -280,21 +267,16 @@ Tool names use `<pluginId>:<toolName>` — so `email-tools:email_search`,
 `email-tools:email_fetch`, `email-tools:email_mark_read`,
 `email-tools:email_move`.
 
-## Rule matching syntax (in the rules document)
+## Rule matching syntax
 
-Lines under `## Auto-triage senders` and `## Keep-always senders` use one
-of three forms. Match is case-insensitive, substring of the relevant
-header.
+Patterns returned by `email_list_rules` use one of three forms. Match
+is case-insensitive against the relevant header.
 
 | Form | Example | Matches |
 |---|---|---|
 | Full address | `newsletter@vercel.com` | `From:` contains exact email |
 | Domain (leading `@`) | `@marketing.linkedin.com` | `From:` contains domain anywhere |
 | Subject substring | `subject: webinar invite` | `Subject:` contains the substring |
-
-Comments (lines starting with `<!--` and `#`) are ignored.
-
-Empty lines are ignored.
 
 ## Errors
 
@@ -317,10 +299,11 @@ Empty lines are ignored.
 
 ## After running
 
-- The rules document on the rules-home issue is the source of truth.
-  Operator graduates entries from Review queue → Auto-triage or
-  Keep-always by editing the document directly in the Paperclip UI.
-  Next run picks up the new rules automatically.
+- Sender rules live in the email-tools plugin DB. The operator graduates
+  entries from the Review queue → Auto-triage or Keep-always via the UI
+  buttons in the Email view, MorningBrief, or UnifiedInbox; those views
+  write the rule directly to the DB via `email.set-rule`. Next run picks
+  up the new rules automatically via `email_list_rules`.
 - Once a sender pattern is consistently triaged, recommend the operator
   install a **provider-side filter** (Gmail Filter / Outlook Rule) so the
   message never even hits INBOX. Skill output should call this out

@@ -721,6 +721,49 @@ const plugin = definePlugin({
       },
     );
 
+    ctx.tools.register(
+      "email_list_rules",
+      {
+        displayName: "List Email Triage Rules",
+        description:
+          "Return the operator's sender rules from the email-tools DB. Use this in place of reading the Markdown rules-home doc.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { mailbox?: string };
+        if (typeof p.mailbox !== "string" || !p.mailbox) {
+          return { error: "mailbox is required" };
+        }
+        const config = (await ctx.config.get()) as InstanceConfig;
+        const cfg = findConfigMailbox(config, p.mailbox);
+        if (!cfg) return { error: `Mailbox "${p.mailbox}" not configured` };
+        try {
+          assertCompanyAccess(ctx, {
+            tool: "email_list_rules",
+            resourceLabel: `Mailbox "${p.mailbox}"`,
+            resourceKey: p.mailbox,
+            allowedCompanies: cfg.allowedCompanies,
+            companyId: runCtx.companyId,
+          });
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+        const rows = await ctx.db.query<{ sender_pattern: string; rule_type: string }>(
+          `SELECT sender_pattern, rule_type
+           FROM plugin_email_tools_7cbee3fdf3.email_sender_rules
+           WHERE company_id = $1 AND mailbox_key = $2
+           ORDER BY rule_type, sender_pattern`,
+          [runCtx.companyId, p.mailbox],
+        );
+        const autoTriage = rows.filter((r) => r.rule_type === "auto-triage").map((r) => r.sender_pattern);
+        const keepAlways = rows.filter((r) => r.rule_type === "keep-always").map((r) => r.sender_pattern);
+        return {
+          content: `auto-triage: ${autoTriage.length} sender(s), keep-always: ${keepAlways.length} sender(s)`,
+          data: { autoTriage, keepAlways },
+        };
+      },
+    );
+
     ctx.jobs.register("poll-mailboxes", async () => {
       const config = (await ctx.config.get()) as InstanceConfig;
       await runPoll(ctx, config);
