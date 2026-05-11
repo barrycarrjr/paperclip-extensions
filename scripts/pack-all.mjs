@@ -196,5 +196,113 @@ await writeFile(
   "utf-8",
 );
 
+// ---------------------------------------------------------------------------
+// Roadmap: a single source of truth for ideas across the whole portfolio
+// (skills, agents, routines, features, plugins, etc.). Every paperclip
+// instance pointed at this repo fetches dist-pcplugins/roadmap.json and
+// renders it on /roadmap.
+//
+// The output is the union of:
+//   - one item per built plugin            (type=plugin, status=shipped)
+//   - one item per coming-soon.json stub   (type=plugin, status=planned)
+//   - every item in roadmap.json verbatim  (skills/agents/routines/etc.)
+//
+// Schema (see roadmap.json $comment for the full cheatsheet):
+//   { schemaVersion, generatedAt, items: [
+//       { id, type, title, description, status,
+//         addedAt?, linkedPluginId?, notes? }
+//     ] }
+// ---------------------------------------------------------------------------
+const VALID_ROADMAP_TYPES = new Set([
+  "skill",
+  "agent",
+  "routine",
+  "feature",
+  "plugin",
+  "other",
+]);
+const VALID_ROADMAP_STATUSES = new Set([
+  "idea",
+  "planned",
+  "in-progress",
+  "shipped",
+  "wont-do",
+]);
+
+const roadmapItems = [];
+
+// 1. Built plugins → shipped items.
+for (const r of results) {
+  roadmapItems.push({
+    id: `plugin-${r.id}`,
+    type: "plugin",
+    title: r.displayName,
+    description: r.description,
+    status: "shipped",
+    linkedPluginId: r.id,
+  });
+}
+
+// 2. Coming-soon plugins → planned items. (We re-read `coming-soon.json`
+// rather than introspecting `index.json` so the keys we use here match the
+// raw source-of-truth, not the index's enriched shape.)
+if (existsSync(comingSoonPath)) {
+  const comingSoonData = JSON.parse(await readFile(comingSoonPath, "utf-8"));
+  const stubs = Array.isArray(comingSoonData.plugins) ? comingSoonData.plugins : [];
+  const builtIds = new Set(results.map((r) => r.id));
+  for (const stub of stubs) {
+    if (!stub?.id || builtIds.has(stub.id)) continue;
+    roadmapItems.push({
+      id: `plugin-${stub.id}`,
+      type: "plugin",
+      title: stub.displayName ?? stub.id,
+      description: stub.description ?? "",
+      status: "planned",
+      linkedPluginId: stub.id,
+    });
+  }
+}
+
+// 3. Curated roadmap.json entries (skills, agents, routines, features…)
+const roadmapPath = path.join(REPO_ROOT, "roadmap.json");
+if (existsSync(roadmapPath)) {
+  const roadmapData = JSON.parse(await readFile(roadmapPath, "utf-8"));
+  const items = Array.isArray(roadmapData.items) ? roadmapData.items : [];
+  for (const item of items) {
+    if (!item?.id || !item?.title) {
+      console.warn("Skipping roadmap entry missing id or title:", item);
+      continue;
+    }
+    if (item.type && !VALID_ROADMAP_TYPES.has(item.type)) {
+      console.warn(`Roadmap "${item.id}" has unknown type "${item.type}"`);
+    }
+    if (item.status && !VALID_ROADMAP_STATUSES.has(item.status)) {
+      console.warn(`Roadmap "${item.id}" has unknown status "${item.status}"`);
+    }
+    roadmapItems.push({
+      id: item.id,
+      type: item.type ?? "other",
+      title: item.title,
+      description: item.description ?? "",
+      status: item.status ?? "idea",
+      ...(item.addedAt ? { addedAt: item.addedAt } : {}),
+      ...(item.linkedPluginId ? { linkedPluginId: item.linkedPluginId } : {}),
+      ...(item.notes ? { notes: item.notes } : {}),
+    });
+  }
+}
+
+const roadmap = {
+  schemaVersion: 1,
+  generatedAt: new Date().toISOString(),
+  items: roadmapItems,
+};
+await writeFile(
+  path.join(OUTPUT_DIR, "roadmap.json"),
+  JSON.stringify(roadmap, null, 2) + "\n",
+  "utf-8",
+);
+
 console.log(`\nPacked ${results.length} plugin(s) to ${OUTPUT_DIR}/`);
 console.log(`Wrote ${path.join(OUTPUT_DIR, "index.json")}`);
+console.log(`Wrote ${path.join(OUTPUT_DIR, "roadmap.json")} (${roadmapItems.length} items)`);

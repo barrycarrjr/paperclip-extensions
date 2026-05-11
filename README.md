@@ -106,7 +106,11 @@ CI:
 3. Generates an `index.json` listing all packed plugins with their metadata
 4. Merges any `coming-soon.json` placeholder entries into `index.json` with
    `comingSoon: true` so plugin *ideas* surface in the Plugin Manager
-5. Creates a GitHub release with the `.pcplugin` files + `index.json` attached
+5. Generates a `roadmap.json` for the host's `/instance/settings/roadmap`
+   page — merging built plugins (shipped), `coming-soon.json` stubs
+   (planned), and curated entries from `roadmap.json` at the repo root
+6. Creates a GitHub release with the `.pcplugin` files + `index.json` +
+   `roadmap.json` attached
 
 The Plugin Library UI in any paperclip instance pointed at this repo
 auto-picks up the new release on next page load (cached for 60s server-side).
@@ -136,6 +140,40 @@ tries to install one. When a stub becomes a real plugin (a `plugins/<id>/`
 folder with the same id ships), the built plugin takes precedence and the
 stub is silently skipped — but it's still good practice to delete the stub
 from `coming-soon.json` in the same commit.
+
+### Cross-portfolio roadmap (skills / agents / routines / features / etc.)
+
+Coming-soon plugins surface on the Plugin Manager. For everything else —
+skill ideas, agent ideas, routines, broader features — use
+[`roadmap.json`](./roadmap.json):
+
+```json
+{
+  "items": [
+    {
+      "id": "agent-cfo-quickbooks",
+      "type": "agent",
+      "title": "CFO Agent with QuickBooks reads",
+      "description": "Once quickbooks-tools ships, wire the CFO agent to it for P&L + AR/AP queries.",
+      "status": "planned",
+      "linkedPluginId": "quickbooks-tools"
+    }
+  ]
+}
+```
+
+Required: `id`, `title`. Optional: `type` (`skill | agent | routine |
+feature | plugin | other`, default `other`), `description`, `status` (`idea
+| planned | in-progress | shipped | wont-do`, default `idea`), `addedAt`
+(YYYY-MM-DD), `linkedPluginId` (cross-links to a plugin in the Plugin
+Manager), `notes` (free-form markdown).
+
+The release pipeline merges built plugins (status=shipped) and
+`coming-soon.json` stubs (status=planned) into the same artifact, so don't
+re-list plugin entries here — only the cross-cutting things. Every paperclip
+instance pointed at this repo renders the merged roadmap at
+`/instance/settings/roadmap` (accessible from the Roadmap icon in the
+account menu).
 
 ## Components currently here
 

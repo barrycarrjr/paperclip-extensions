@@ -1,0 +1,485 @@
+{
+  "$comment": "Cross-portfolio roadmap of ideas — skills, agents, routines, features, plugins, anything. The release pipeline ships dist-pcplugins/roadmap.json as a release asset; every paperclip instance pointed at this repo fetches it and renders a /roadmap page. Plugin entries from coming-soon.json are auto-injected as roadmap items (type=plugin, status=planned), and built plugins are auto-injected as type=plugin/status=shipped — don't list those here, just curate the rest. Field cheatsheet: id (kebab-case, unique across the roadmap), type (skill|agent|routine|feature|plugin|other), title (short), description (1-2 sentences), status (idea|planned|in-progress|shipped|wont-do), addedAt (YYYY-MM-DD), optional linkedPluginId (cross-link to a plugin in the Plugin Manager), optional notes (markdown).",
+  "items": [
+    {
+      "id": "skill-personal-weekly-briefing",
+      "type": "skill",
+      "title": "Personal Weekly Briefing",
+      "description": "Sunday-evening Chief of Staff briefing covering goals check-in, upcoming family dates, household items, health follow-ups, and the approval queue. Mirrors the CEO morning briefing but for personal life.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-personal-goals-checkin",
+      "type": "skill",
+      "title": "Personal Goals Check-in",
+      "description": "Weekly Chief of Staff review of stated personal goals — surfaces drift as a structured check-in, not a nag.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-home-maintenance-scheduler",
+      "type": "skill",
+      "title": "Home Maintenance Scheduler",
+      "description": "Seasonal home-maintenance checklist tied to time of year. Surfaces items (HVAC filter, gutters, etc.) before they become urgent.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-vendor-coordination",
+      "type": "skill",
+      "title": "Vendor Coordination",
+      "description": "Follow up with household vendors via phone-tools — request callbacks, chase outstanding quotes, confirm appointment times.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-bill-reminder",
+      "type": "skill",
+      "title": "Bill Reminder",
+      "description": "Scans email for upcoming bills, subscriptions, and renewals; surfaces them in the personal approval queue before the due date.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-contract-expiry-tracker",
+      "type": "skill",
+      "title": "Contract Expiry Tracker",
+      "description": "Weekly email and document scan for contracts expiring in the next 90 days across personal and business contexts.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-portfolio-health-check",
+      "type": "skill",
+      "title": "Portfolio Health Check",
+      "description": "Monday-morning cross-company rollup of key metrics, flagged agent issues, budget consumption, and pending approvals — delivered as a single Chairman briefing.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-churn-risk-alerter",
+      "type": "skill",
+      "title": "Churn Risk Alerter",
+      "description": "Combines RevenueCat subscriber data with Help Scout conversation signals to surface at-risk subscribers before they cancel.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-cto-sprint-review",
+      "type": "skill",
+      "title": "CTO Sprint Review",
+      "description": "Weekly CTO Agent skill: pull merged GitHub PRs, Rollbar error trends, and open bugs — formatted as a sprint review.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-social-content-calendar",
+      "type": "skill",
+      "title": "Social Content Calendar",
+      "description": "Friday CMO Agent skill: plan and schedule the coming week's social posts using social-poster.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-lead-reengagement",
+      "type": "skill",
+      "title": "Lead Re-engagement",
+      "description": "Email sequence skill for warming cold leads via email-tools with a configurable cadence.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-quote-follow-up-tracker",
+      "type": "skill",
+      "title": "Quote Follow-up Tracker",
+      "description": "Tracks outstanding quotes and auto-triggers a phone-tools follow-up call after N days of no response.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-phone-collections-call",
+      "type": "skill",
+      "title": "Phone Collections Call",
+      "description": "AI outbound call for overdue invoices — polite first-touch before escalating. Uses phone-tools.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "skill-personal-travel-planner",
+      "type": "skill",
+      "title": "Personal Travel Planner",
+      "description": "Chief of Staff skill: takes a destination and dates, produces a structured itinerary with a logistics checklist, and queues it for approval before booking.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-household-manager",
+      "type": "agent",
+      "title": "Household Manager Agent",
+      "description": "Owns the household: vendor log, appliance warranties, maintenance calendar, smart-home status. Reports to Chief of Staff and frees them from household minutiae.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-travel",
+      "type": "agent",
+      "title": "Travel Agent",
+      "description": "Personal travel planning: flights, hotels, loyalty points, itineraries. Reports to Chief of Staff.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-personal-finance",
+      "type": "agent",
+      "title": "Personal Finance Agent",
+      "description": "Household budget, personal accounts, anomaly alerting. Strictly personal side, zero business crossover. Reports to Chief of Staff.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-health-wellness",
+      "type": "agent",
+      "title": "Health & Wellness Agent",
+      "description": "Appointment calendar, prescription renewals, provider contacts, health-goal tracking. Reports to Chief of Staff.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-sales",
+      "type": "agent",
+      "title": "Sales Agent (per company)",
+      "description": "Per-company role managing inbound lead pipeline, qualification, and follow-up cadences via phone-tools and email-tools. Reports to COO or CEO depending on the company.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-customer-success",
+      "type": "agent",
+      "title": "Customer Success Agent",
+      "description": "Proactive customer check-ins, churn prevention, and expansion-revenue identification using Help Scout + phone-tools + RevenueCat. Reports to COO.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-hr-people-ops",
+      "type": "agent",
+      "title": "HR / People Ops Agent",
+      "description": "Portfolio-wide hiring workflows, onboarding/offboarding, contractor agreements, and performance-review scheduling. Reports to COO.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-legal-compliance",
+      "type": "agent",
+      "title": "Legal & Compliance Agent",
+      "description": "Portfolio-wide contract tracking, regulatory filing deadlines, and entity maintenance calendar. Reports to CEO / Chairman.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-it-infrastructure",
+      "type": "agent",
+      "title": "IT / Infrastructure Agent",
+      "description": "Owns server uptime, SSL cert expiry, backup status, and Paperclip instance health — the stack that runs everything else. Reports to CTO.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-procurement",
+      "type": "agent",
+      "title": "Procurement Agent",
+      "description": "Vendor relationships, purchase orders, contract renewals, and cost benchmarking. Reduces ad-hoc vendor work landing on COO. Reports to COO or CFO.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-data-analyst",
+      "type": "agent",
+      "title": "Data Analyst Agent",
+      "description": "Cross-company analytics: pulls metrics from Stripe, RevenueCat, Google Analytics, and Help Scout, then builds weekly/monthly trend reports. Reports to CFO or COO.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-executive-assistant",
+      "type": "agent",
+      "title": "Executive Assistant Agent (per company CEO)",
+      "description": "Per-company role handling calendar gating, meeting prep, and travel coordination for each portfolio-company CEO. One EA per company.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "agent-security",
+      "type": "agent",
+      "title": "Security Agent",
+      "description": "Monitors code-scanner results, Rollbar security events, and dependency vulnerabilities; handles security triage. Reports to CTO.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-cross-company-builder-writes",
+      "type": "feature",
+      "title": "Cross-company Builder writes (with approval gate)",
+      "description": "**Highest-leverage single item on the platform list.** Today HQ portfolio-root agents get cross-company read but writes are hard-blocked at server/src/routes/authz.ts:62. Extend the bypass to writes — gated by approval — so Builder can execute Steward's cross-company proposals end-to-end without manual hand-off. Steward stays read-only/proposer; Builder remains the executor. Replaces the current @mention delegation workaround.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-personal-email-triage",
+      "type": "routine",
+      "title": "Personal email triage (daily 6am)",
+      "description": "Run the email-triage skill against the personal inbox before the day starts.",
+      "status": "shipped",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-chief-of-staff-morning-briefing",
+      "type": "routine",
+      "title": "Chief of Staff morning briefing (daily 7am)",
+      "description": "Personal-side morning briefing to complement the CEO morning briefing — calendar, approvals, personal items.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-chief-of-staff-weekly-review",
+      "type": "routine",
+      "title": "Chief of Staff weekly review (Sunday 6pm)",
+      "description": "Personal goals, household status, family dates, upcoming health and legal items.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-portfolio-ceo-briefing",
+      "type": "routine",
+      "title": "Portfolio CEO briefing (Monday 7am)",
+      "description": "Cross-company rollup for the Chairman: all company health metrics, agent flags, and pending approvals.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-monthly-personal-finance-review",
+      "type": "routine",
+      "title": "Monthly personal finance review (1st of month)",
+      "description": "Personal Finance Agent (once hired) pulls account snapshots, flags anomalies, and surfaces them for review.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-contract-expiry-sweep",
+      "type": "routine",
+      "title": "Contract expiry sweep (weekly Monday)",
+      "description": "Scan email and documents for contracts expiring in the next 90 days. Schedule layer for the contract-expiry-tracker skill.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-quarterly-health-appointment-check",
+      "type": "routine",
+      "title": "Quarterly health appointment check (Mar/Jun/Sep/Dec)",
+      "description": "Chief of Staff surfaces preventive-care reminders — annual physical, dental, eye exam, etc.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-monthly-subscription-audit",
+      "type": "routine",
+      "title": "Monthly subscription audit (1st of month)",
+      "description": "Roll up RevenueCat + Stripe: churn summary, MRR delta, at-risk customers.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-weekly-social-content-plan",
+      "type": "routine",
+      "title": "Weekly social content plan (Friday 4pm)",
+      "description": "CMO Agent drafts next week's social calendar, queued for review.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-helpscout-support-report",
+      "type": "routine",
+      "title": "Help Scout support report",
+      "description": "Schedule the support-day-report skill per company at the appropriate cadence — daily for high-volume companies, weekly for lower-volume ones. Single routine; schedule is configured per company.",
+      "status": "shipped",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-daily-pbx-call-report",
+      "type": "routine",
+      "title": "Daily PBX call report",
+      "description": "Schedule the pbx-daily-call-report skill per company using 3CX.",
+      "status": "shipped",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "routine-hourly-rollbar-scraper",
+      "type": "routine",
+      "title": "Rollbar scraper (hourly)",
+      "description": "Hourly Rollbar scraper that files GitHub tickets automatically.",
+      "status": "shipped",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-cross-company-dashboard",
+      "type": "feature",
+      "title": "Chairman / cross-company dashboard",
+      "description": "Single screen showing all portfolio companies side-by-side: key metrics, agent statuses, flagged issues, budget consumption. The command center for the Chairman role.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-approval-bundling",
+      "type": "feature",
+      "title": "Approval bundling",
+      "description": "Group related approval requests into a single bundle so the operator reviews everything in one session instead of being pinged individually.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-mobile-push-notifications",
+      "type": "feature",
+      "title": "Mobile push notifications",
+      "description": "Push critical escalations to the operator's phone without requiring the app to be open. Essential for the army-of-agents model to work without the operator babysitting the UI.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-voice-morning-briefing",
+      "type": "feature",
+      "title": "Voice morning briefing delivery",
+      "description": "phone-tools call that reads the morning briefing aloud so the operator can absorb it hands-free while driving or working out.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-cross-company-issue-linking",
+      "type": "feature",
+      "title": "Cross-company issue linking",
+      "description": "Link issues across companies with first-class blocker support — e.g., an issue in Company A blocking an issue in Company B. Currently requires workarounds.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-slack-to-issue-bridge",
+      "type": "feature",
+      "title": "Slack-to-issue bridge",
+      "description": "Emoji-react on a Slack message to auto-create a Paperclip issue routed to the right agent. Reduces friction for capturing work items.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-email-to-issue-bridge",
+      "type": "feature",
+      "title": "Email-to-issue bridge",
+      "description": "Forward an email to a special address to auto-create a Paperclip issue routed to the right agent.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-agent-performance-dashboard",
+      "type": "feature",
+      "title": "Agent performance dashboard",
+      "description": "Per-agent visibility: heartbeat counts, task completion rate, average resolution time, budget burn. Helps identify which agents are overloaded or underperforming.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-routine-cadence-calendar",
+      "type": "feature",
+      "title": "Routine cadence calendar",
+      "description": "Visual calendar of all scheduled routines across all companies so the operator can see what's automated and when.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-budget-consumption-alerts",
+      "type": "feature",
+      "title": "Budget consumption alerts",
+      "description": "Real-time alerts when an agent or company approaches 80% and 100% of its AI budget cap.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-issue-gantt-view",
+      "type": "feature",
+      "title": "Issue timeline / Gantt view",
+      "description": "Visual timeline of issues across companies showing dependencies. Useful for project planning and M&A workflows.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-document-diff-viewer",
+      "type": "feature",
+      "title": "Document diff viewer",
+      "description": "Side-by-side diff when an agent updates a plan document so the operator can see exactly what changed between revisions.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-home-assistant-panel",
+      "type": "feature",
+      "title": "Home Assistant panel in Paperclip UI",
+      "description": "Embedded smart-home controls (lights, thermostat, cameras, locks) in the Paperclip sidebar. Depends on the home-assistant-tools plugin.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-personal-goals-tracker-ui",
+      "type": "feature",
+      "title": "Personal goals tracker UI",
+      "description": "Dedicated section for personal-life goals with progress visualization, separate from the business issue board.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-two-factor-approval",
+      "type": "feature",
+      "title": "Two-factor approval for high-value actions",
+      "description": "High-value approvals above a configurable dollar threshold require dual confirmation before the agent proceeds.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-chairman-review-stage",
+      "type": "feature",
+      "title": "Execution policy: Chairman review stage",
+      "description": "A pipeline stage type that routes any high-stakes action to the Chairman directly for sign-off before the agent continues.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-shared-skills-library",
+      "type": "feature",
+      "title": "Shared skills library (portfolio-level install)",
+      "description": "Install a skill once at the portfolio level and make it available to all company agents without per-company reinstallation.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-board-simulation-approval-flow",
+      "type": "feature",
+      "title": "Board simulation approval flow",
+      "description": "Multi-agent approval: major decisions require sign-off from CEO + CFO + Chairman (or a configurable quorum) before the agent proceeds.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-portfolio-health-scorecard",
+      "type": "feature",
+      "title": "Portfolio health scorecard",
+      "description": "Auto-generated monthly scorecard per company with customizable KPIs, delivered to the Chairman.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-company-onboarding-playbook",
+      "type": "feature",
+      "title": "Company onboarding playbook",
+      "description": "When a new portfolio company is added, an automated playbook hires the standard agent suite (CEO/CFO/COO/CMO/CTO), installs standard plugins, and creates baseline routines.",
+      "status": "idea",
+      "addedAt": "2026-05-11"
+    }
+  ]
+}
