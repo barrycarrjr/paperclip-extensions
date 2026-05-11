@@ -1000,37 +1000,6 @@ const plugin = definePlugin({
       }
     });
 
-    // Records a triage decision in the DB so the message is filtered from future list-messages calls.
-    ctx.actions.register("email.record-triage", async (params) => {
-      const companyId = typeof params.companyId === "string" ? params.companyId : null;
-      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
-      const uid = typeof params.uid === "number" ? params.uid : null;
-      const uidValidity = typeof params.uid_validity === "number" ? params.uid_validity : null;
-      const folder = typeof params.folder === "string" ? params.folder : null;
-      const action = typeof params.action === "string" ? params.action : null;
-      if (!companyId || !mailboxKey || uid === null || uidValidity === null || !folder || !action) {
-        throw new Error("companyId, mailbox, uid, uid_validity, folder, and action are required");
-      }
-      const config = (await ctx.config.get()) as InstanceConfig;
-      const cfg = findConfigMailbox(config, mailboxKey);
-      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
-      assertCompanyAccess(ctx, {
-        tool: "email.record-triage",
-        resourceLabel: `Mailbox "${mailboxKey}"`,
-        resourceKey: mailboxKey,
-        allowedCompanies: cfg.allowedCompanies,
-        companyId,
-      });
-      await ctx.db.execute(
-        `INSERT INTO plugin_email_tools_7cbee3fdf3.email_triaged
-           (company_id, mailbox_key, folder, uid, uid_validity, action)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (mailbox_key, uid_validity, uid) DO NOTHING`,
-        [companyId, mailboxKey, folder, uid, uidValidity, action],
-      );
-      return { ok: true };
-    });
-
     // Returns all sender rules for a mailbox.
     ctx.data.register("email.list-rules", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
