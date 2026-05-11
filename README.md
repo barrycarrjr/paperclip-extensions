@@ -104,10 +104,38 @@ CI:
 1. Builds every plugin under `plugins/` (esbuild)
 2. Packs each into a `.pcplugin` zip
 3. Generates an `index.json` listing all packed plugins with their metadata
-4. Creates a GitHub release with the `.pcplugin` files + `index.json` attached
+4. Merges any `coming-soon.json` placeholder entries into `index.json` with
+   `comingSoon: true` so plugin *ideas* surface in the Plugin Manager
+5. Creates a GitHub release with the `.pcplugin` files + `index.json` attached
 
 The Plugin Library UI in any paperclip instance pointed at this repo
 auto-picks up the new release on next page load (cached for 60s server-side).
+
+### Surfacing plugin ideas (Coming Soon)
+
+To advertise a plugin you haven't built yet, add an entry to
+[`coming-soon.json`](./coming-soon.json) at the repo root:
+
+```json
+{
+  "plugins": [
+    {
+      "id": "quickbooks-tools",
+      "displayName": "QuickBooks Tools",
+      "description": "Pull P&L, balance sheet, AR/AP aging from QuickBooks Online; categorize and post journal entries."
+    }
+  ]
+}
+```
+
+Required: `id`, `displayName`, `description`. Optional: `version`,
+`categories`, `author`, `apiVersion`, `capabilities`. The next release tag
+publishes these as placeholder entries — the Plugin Manager shows them with
+a **Coming soon** badge and the install endpoint returns 400 if anything
+tries to install one. When a stub becomes a real plugin (a `plugins/<id>/`
+folder with the same id ships), the built plugin takes precedence and the
+stub is silently skipped — but it's still good practice to delete the stub
+from `coming-soon.json` in the same commit.
 
 ## Components currently here
 

@@ -153,6 +153,43 @@ const index = {
     sizeBytes: r.sizeBytes,
   })),
 };
+
+// Merge in `coming-soon.json` placeholder entries. These are plugin ideas
+// without a packed .pcplugin asset — the host UI shows them with a "Coming
+// soon" badge and the install endpoint rejects them server-side.
+const comingSoonPath = path.join(REPO_ROOT, "coming-soon.json");
+if (existsSync(comingSoonPath)) {
+  const comingSoonRaw = await readFile(comingSoonPath, "utf-8");
+  const comingSoonData = JSON.parse(comingSoonRaw);
+  const stubs = Array.isArray(comingSoonData.plugins) ? comingSoonData.plugins : [];
+  const builtIds = new Set(results.map((r) => r.id));
+  let appended = 0;
+  for (const stub of stubs) {
+    if (!stub?.id) {
+      console.warn("Skipping coming-soon entry without an id:", stub);
+      continue;
+    }
+    // If the same id already shipped as a real plugin, skip the stub —
+    // the built entry is authoritative.
+    if (builtIds.has(stub.id)) continue;
+    index.plugins.push({
+      id: stub.id,
+      version: stub.version ?? "0.0.0",
+      displayName: stub.displayName ?? stub.id,
+      description: stub.description ?? "",
+      categories: stub.categories ?? [],
+      author: stub.author ?? null,
+      apiVersion: stub.apiVersion ?? 1,
+      capabilities: stub.capabilities ?? [],
+      comingSoon: true,
+    });
+    appended++;
+  }
+  if (appended > 0) {
+    console.log(`Merged ${appended} coming-soon placeholder(s) from coming-soon.json`);
+  }
+}
+
 await writeFile(
   path.join(OUTPUT_DIR, "index.json"),
   JSON.stringify(index, null, 2) + "\n",

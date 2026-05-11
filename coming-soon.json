@@ -1,0 +1,101 @@
+{
+  "$comment": "Plugin ideas that aren't built yet. The release pipeline merges these into dist-pcplugins/index.json with comingSoon: true. The Paperclip Plugin Manager renders them with a 'Coming soon' badge and the install endpoint rejects them server-side. Add an entry below to surface a new idea in the host UI — required fields are `id`, `displayName`, and `description`. Everything else is optional. When a stub becomes a real plugin (a `plugins/<id>/` folder ships with the same id), remove its entry here — the built plugin takes precedence either way.",
+  "plugins": [
+    {
+      "id": "home-assistant-tools",
+      "displayName": "Home Assistant",
+      "description": "First-class smart-home control — lights, locks, thermostat, cameras, sensors — exposed as agent tools. Currently reachable via a skill, but no MCP tools.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "sms-tools",
+      "displayName": "SMS Tools",
+      "description": "Two-way SMS/MMS via 3CX, Twilio, or Vonage. Distinct from phone-tools (voice) — for quick confirmations, reminders, and customer follow-ups.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "calendar-tools",
+      "displayName": "Calendar Tools",
+      "description": "Google Calendar as a focused MCP plugin with richer tools — free/busy checks, bulk reschedule, attendee management. More powerful for agents than the broad google-workspace plugin.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "quickbooks-tools",
+      "displayName": "QuickBooks Tools",
+      "description": "QuickBooks Online: invoices, P&L pulls, AP aging, reconciliation triggers. Closes the loop for CFO Agent on any company running QBO.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "docusign-tools",
+      "displayName": "DocuSign Tools",
+      "description": "E-signature request and status tracking — vendor contracts, real-estate docs, corporate agreements. Pairs naturally with docgen-tools.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "linkedin-tools",
+      "displayName": "LinkedIn Tools",
+      "description": "Outreach, connection pipeline, profile lookups. Feeds M&A Agent and CEO Agent for deal sourcing and business development.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "hubspot-tools",
+      "displayName": "HubSpot CRM",
+      "description": "Full CRM operations — contacts, deals, pipelines, sequences. Closes the gap between marketing (CMO) and sales tracking.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "zoom-tools",
+      "displayName": "Zoom Tools",
+      "description": "Schedule meetings, retrieve recordings, pull transcripts. CEO and COO use this for meeting prep and follow-up.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "banking-tools",
+      "displayName": "Banking Tools",
+      "description": "Read-only bank and card transaction feeds via Plaid or direct bank APIs. Enables personal finance monitoring and business cash-flow alerts.",
+      "categories": ["connector"]
+    },
+    {
+      "id": "airtable-tools",
+      "displayName": "Airtable Tools",
+      "description": "Flexible structured-database access for custom workflows that don't fit issue tracking.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "notion-tools",
+      "displayName": "Notion Tools",
+      "description": "Read and write Notion pages and databases. Useful when team wikis or docs live in Notion.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "whatsapp-tools",
+      "displayName": "WhatsApp Tools",
+      "description": "WhatsApp Business API for customer-facing communication where customers prefer WhatsApp over email.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "shopify-tools",
+      "displayName": "Shopify Tools",
+      "description": "Ecom operations for Shopify storefronts — orders, inventory, customers, fulfillment. Closes the revenue/inventory gap stripe-tools and revenuecat-tools don't cover.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "amazon-tools",
+      "displayName": "Amazon Seller Tools",
+      "description": "Amazon Seller / Vendor Central operations — orders, inventory, listings, FBA. Closes the revenue/inventory gap stripe-tools and revenuecat-tools don't cover.",
+      "categories": ["automation", "connector"]
+    },
+    {
+      "id": "weather-tools",
+      "displayName": "Weather Tools",
+      "description": "Weather data for scheduling outdoor home projects, travel planning, and flagging weather-sensitive business decisions.",
+      "categories": ["connector"]
+    },
+    {
+      "id": "docgen-tools",
+      "displayName": "Document Generator",
+      "description": "PDF/Word document generation from templates — contracts, proposals, reports. Pairs naturally with docusign-tools.",
+      "categories": ["automation"]
+    }
+  ]
+}
