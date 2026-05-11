@@ -335,6 +335,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
   },
   instanceConfigSchema: {
     type: "object",
+    additionalProperties: false,
     propertyOrder: ["allowSend", "pollIntervalMinutes", "mailboxes"],
     properties: {
       allowSend: {
