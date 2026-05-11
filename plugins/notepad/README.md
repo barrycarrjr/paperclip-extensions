@@ -125,6 +125,8 @@ to allow-list a company. The migration runs automatically on first install.
 
 ## Recent changes
 
+- **v0.1.4** — Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
+
 - **v0.1.3** — AI cleanup now **expands** notes into structured issues (Description / Steps to reproduce / Acceptance criteria) instead of tightening them. The convert modal result now shows an "AI expanded" or "Raw text — AI unavailable" badge so you can confirm whether the LLM was actually invoked. Button label changes to "Expanding with AI…" during the AI path. Checkbox label updated to match new behaviour.
 
 - **v0.1.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

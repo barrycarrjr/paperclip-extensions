@@ -20,6 +20,8 @@ No mutation tools. There's nothing this plugin can write to.
 
 ## Recent changes
 
+- **v0.2.5** — Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
+
 - **v0.2.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.2.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

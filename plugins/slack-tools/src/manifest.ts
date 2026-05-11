@@ -196,6 +196,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   },
   instanceConfigSchema: {
     type: "object",
+    additionalProperties: false,
     propertyOrder: [
       "allowMutations",
       "allowReadHistory",

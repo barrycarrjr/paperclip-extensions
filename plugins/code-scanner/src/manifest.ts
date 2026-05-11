@@ -145,6 +145,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   },
   instanceConfigSchema: {
     type: "object",
+    additionalProperties: false,
     propertyOrder: ["repos", "todoAgeMonths", "gitleaksBinary", "knipBinary"],
     properties: {
       repos: {

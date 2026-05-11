@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-google-workspace",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Paperclip plugin exposing Google Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account, multi-account, per-company isolation. Includes an in-Paperclip setup wizard so accounts can be added end-to-end without the CLI.",
   "type": "module",
   "private": true,

@@ -154,6 +154,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   },
   instanceConfigSchema: {
     type: "object",
+    additionalProperties: false,
     propertyOrder: ["allowMutations", "defaultAccount", "accounts"],
     properties: {
       allowMutations: {

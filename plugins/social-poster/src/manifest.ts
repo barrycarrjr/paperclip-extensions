@@ -140,6 +140,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   },
   instanceConfigSchema: {
     type: "object",
+    additionalProperties: false,
     properties: {
       facebookPages: {
         type: "array",

@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.4.5** — Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
+
 - **v0.4.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.4.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
