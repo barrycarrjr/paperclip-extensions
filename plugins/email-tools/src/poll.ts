@@ -1,5 +1,6 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import {
+  fetchHeaders,
   fetchParsedMessage,
   getUidValidity,
   openConnection,
@@ -13,6 +14,7 @@ import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 const STATE_NAMESPACE = "imap";
 const LAST_POLL_KEY = "last-poll-at";
+const TRIAGE_FOLDER = "_paperclip/triage";
 
 interface MailboxCursor {
   uidValidity: number;
@@ -86,6 +88,7 @@ export async function runPoll(ctx: PluginContext, config: InstanceConfig): Promi
 
   let totalFetched = 0;
   let totalErrors = 0;
+  let totalRulesLearned = 0;
   for (const mailbox of mailboxes) {
     try {
       const fetched = await pollOne(ctx, mailbox);
@@ -101,6 +104,15 @@ export async function runPoll(ctx: PluginContext, config: InstanceConfig): Promi
         message: String((err as Error).message),
       });
     }
+    try {
+      const learned = await learnFromTriageFolder(ctx, mailbox);
+      totalRulesLearned += learned;
+    } catch (err) {
+      ctx.logger.error("email-tools triage-learn error", {
+        mailbox: mailbox.key,
+        message: (err as Error).message,
+      });
+    }
   }
   await ctx.state.set(
     { scopeKind: "instance", namespace: STATE_NAMESPACE, stateKey: LAST_POLL_KEY },
@@ -110,6 +122,113 @@ export async function runPoll(ctx: PluginContext, config: InstanceConfig): Promi
     mailboxesChecked: String(mailboxes.length),
     totalFetched: String(totalFetched),
     totalErrors: String(totalErrors),
+    rulesLearned: String(totalRulesLearned),
+  });
+}
+
+// Scans the per-mailbox triage folder (`_paperclip/triage`) for messages
+// that appeared since the last scan, extracts the From address of each,
+// and INSERTs an auto-triage rule. This lets the operator train rules
+// from any IMAP client (Outlook / Mail.app / mobile) just by dragging
+// messages into the triage folder.
+function extractEmailFromHeader(from: string): string | null {
+  const angled = from.match(/<([^>]+)>/);
+  const raw = angled ? angled[1]! : from;
+  const trimmed = raw.trim().toLowerCase();
+  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/i.test(trimmed) ? trimmed : null;
+}
+
+export async function learnFromTriageFolder(
+  ctx: PluginContext,
+  mailbox: ConfigMailbox,
+): Promise<number> {
+  const key = mailbox.key as string;
+  if (!mailbox.ingestCompanyId) return 0; // need a company to scope rules to
+  return withMailboxLock(`${key}:triage-learn`, async () => {
+    const rt = await buildMailboxRuntime(ctx, mailbox, key);
+    const client = await openConnection(rt);
+    try {
+      // Probe folder existence — Gmail auto-creates labels on first move,
+      // but if no one's moved anything yet the folder won't exist. Use
+      // mailboxOpen-style search via getUidValidity; catch & return 0.
+      let uidValidity: number;
+      try {
+        uidValidity = await getUidValidity(client, TRIAGE_FOLDER);
+      } catch {
+        return 0;
+      }
+
+      const cursorKey = `${key}:triage-cursor`;
+      const cursor = (await ctx.state.get({
+        scopeKind: "instance",
+        namespace: STATE_NAMESPACE,
+        stateKey: cursorKey,
+      })) as MailboxCursor | undefined;
+
+      // First run or UIDVALIDITY change → seed cursor at current max UID and
+      // skip historical messages (no bulk-rule from years of pre-existing
+      // triage history).
+      if (!cursor || cursor.uidValidity !== uidValidity) {
+        const allUids = await searchMessages(client, { folder: TRIAGE_FOLDER });
+        const maxUid = allUids.length > 0 ? Math.max(...allUids) : 0;
+        await ctx.state.set(
+          { scopeKind: "instance", namespace: STATE_NAMESPACE, stateKey: cursorKey },
+          { uidValidity, uid: maxUid },
+        );
+        return 0;
+      }
+
+      const newUids = await searchMessages(client, {
+        folder: TRIAGE_FOLDER,
+        uidGt: cursor.uid,
+      });
+      if (newUids.length === 0) return 0;
+
+      const headers = await fetchHeaders(client, TRIAGE_FOLDER, newUids);
+      const senders = new Set<string>();
+      for (const h of headers) {
+        const addr = extractEmailFromHeader(h.from);
+        if (addr) senders.add(addr);
+      }
+
+      let inserted = 0;
+      for (const sender of senders) {
+        try {
+          const result = await ctx.db.execute(
+            `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
+               (company_id, mailbox_key, sender_pattern, rule_type)
+             VALUES ($1, $2, $3, 'auto-triage')
+             ON CONFLICT (company_id, mailbox_key, sender_pattern) DO NOTHING`,
+            [mailbox.ingestCompanyId, key, sender],
+          );
+          if (result.rowCount > 0) inserted += 1;
+        } catch (err) {
+          ctx.logger.warn("email-tools triage-learn rule insert failed", {
+            mailbox: key,
+            sender,
+            error: (err as Error).message,
+          });
+        }
+      }
+
+      const maxNewUid = Math.max(cursor.uid, ...newUids);
+      await ctx.state.set(
+        { scopeKind: "instance", namespace: STATE_NAMESPACE, stateKey: cursorKey },
+        { uidValidity, uid: maxNewUid },
+      );
+
+      if (inserted > 0) {
+        ctx.logger.info("email-tools learned auto-triage rules from triage folder", {
+          mailbox: key,
+          newMessages: newUids.length,
+          newSenders: senders.size,
+          rulesInserted: inserted,
+        });
+      }
+      return inserted;
+    } finally {
+      await safeLogout(client);
+    }
   });
 }
 
