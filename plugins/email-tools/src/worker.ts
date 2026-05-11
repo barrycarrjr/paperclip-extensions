@@ -20,7 +20,7 @@ import {
   setSeenFlag,
   type ParsedMessage,
 } from "./imap.js";
-import { runPoll, buildMailboxRuntime } from "./poll.js";
+import { runPoll, buildMailboxRuntime, applyAutoTriageRuleToInbox } from "./poll.js";
 import { IdleManager } from "./idle.js";
 import { buildThread } from "./threading.js";
 import { testMailbox } from "./test-mailbox.js";
@@ -1098,7 +1098,23 @@ const plugin = definePlugin({
          DO UPDATE SET rule_type = $4, updated_at = now()`,
         [companyId, mailboxKey, senderPattern, ruleType],
       );
-      return { ok: true };
+
+      // Auto-triage rules also do a one-shot sweep of unread INBOX so backlog
+      // mail from the same sender gets cleaned up immediately (otherwise the
+      // rule only applies to new arrivals past the poll cursor).
+      let sweptCount = 0;
+      if (ruleType === "auto-triage") {
+        try {
+          sweptCount = await applyAutoTriageRuleToInbox(ctx, cfg, senderPattern);
+        } catch (err) {
+          ctx.logger.warn("email-tools: backlog sweep after set-rule failed", {
+            mailbox: mailboxKey,
+            pattern: senderPattern,
+            error: (err as Error).message,
+          });
+        }
+      }
+      return { ok: true, sweptCount };
     });
 
     // One-time import of sender rules from a Markdown rules doc body.

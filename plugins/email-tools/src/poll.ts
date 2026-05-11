@@ -233,6 +233,63 @@ export async function learnFromTriageFolder(
   });
 }
 
+// One-shot sweep: when an auto-triage rule is added (via UI or otherwise),
+// move any unread INBOX messages whose From matches the pattern. Without
+// this, freshly-added rules only apply to new arrivals — existing unread
+// mail past the poll cursor stays in INBOX.
+export async function applyAutoTriageRuleToInbox(
+  ctx: PluginContext,
+  mailbox: ConfigMailbox,
+  pattern: string,
+): Promise<number> {
+  const key = mailbox.key as string;
+  if (mailbox.disallowMove) return 0;
+  if (!key) return 0;
+
+  return withMailboxLock(`${key}:apply-rule`, async () => {
+    const rt = await buildMailboxRuntime(ctx, mailbox, key);
+    const client = await openConnection(rt);
+    try {
+      const folder = mailbox.pollFolder ?? "INBOX";
+      const unseenUids = await searchMessages(client, { folder, unseen: true });
+      if (unseenUids.length === 0) return 0;
+
+      const headers = await fetchHeaders(client, folder, unseenUids);
+      const patternLower = pattern.toLowerCase().trim();
+      const matchedUids: number[] = [];
+
+      for (const h of headers) {
+        const fromAddr = extractEmailFromHeader(h.from);
+        if (!fromAddr) continue;
+        if (patternLower.startsWith("@")) {
+          const at = fromAddr.indexOf("@");
+          if (at >= 0 && `@${fromAddr.slice(at + 1)}` === patternLower) {
+            matchedUids.push(h.uid);
+          }
+        } else if (fromAddr === patternLower) {
+          matchedUids.push(h.uid);
+        }
+      }
+
+      if (matchedUids.length === 0) return 0;
+
+      // Mark read first so the email-triage routine's unseen filter skips
+      // these on its next run, then move.
+      await setSeenFlag(client, folder, matchedUids, true);
+      await moveMessages(client, folder, matchedUids, TRIAGE_FOLDER);
+
+      ctx.logger.info("email-tools: applied auto-triage rule to existing INBOX", {
+        mailbox: key,
+        pattern,
+        matched: matchedUids.length,
+      });
+      return matchedUids.length;
+    } finally {
+      await safeLogout(client);
+    }
+  });
+}
+
 function senderMatchesAutoTriage(fromAddr: string, patterns: Set<string>): boolean {
   if (patterns.size === 0) return false;
   const lower = fromAddr.toLowerCase();

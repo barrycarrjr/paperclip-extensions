@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.13.0** — On-rule-creation backlog sweep. When `email.set-rule` is called with `ruleType=auto-triage`, the worker now also scans the mailbox's INBOX for unread messages whose From matches the pattern (exact email or `@domain`) and moves them to `_paperclip/triage`. Closes the gap between v0.12.0 (which only catches new arrivals) and the case where the rule is added after the matching mail already landed. Response now includes `sweptCount` so the UI can surface "moved N existing messages." Respects `disallowMove`. Best-effort: rule write succeeds even if the sweep fails.
+
 - **v0.12.0** — Real-time auto-triage on arrival. The `poll-mailboxes` job now applies `auto-triage` sender rules to incoming mail directly: when a new INBOX message's From address matches a rule, the message is marked read and moved to `_paperclip/triage` before any event/issue dispatch fires. This closes the "rule already exists, new email from that sender still landed in INBOX" gap — previously the operator had to wait for the next email-triage routine run. Respects `disallowMove`. Falls through to normal dispatch on move failure. Telemetry: `poll-auto-triaged` event with mailbox + count.
 
 - **v0.11.0** — New `email.mark-unread` bridge action (mirror of `email.mark-read`). Lets the Email view flip an already-read message back to unread so it reappears in the unread INBOX view — useful when a previous handoff / triage was a mistake.
