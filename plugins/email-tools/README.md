@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.6.0** — Adds UI bridge handlers for the new Paperclip Email view. New `ctx.data.register` handlers: `email.list-mailboxes` (returns mailboxes visible to a company), `email.list-messages` (IMAP search returning headers), `email.fetch-message` (full parsed body), `email.list-folders` (IMAP LIST). New `ctx.actions.register` handlers: `email.move-message` (marks read + moves, respects `disallowMove`), `email.mark-read`. These are called by the Email page in the main UI via the plugin bridge API (`POST /api/plugins/:pluginId/data/:key` and `actions/:key`) — no agent/run context required. A new `listFolders` helper was added to `imap.ts`.
+
 - **v0.5.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.5.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

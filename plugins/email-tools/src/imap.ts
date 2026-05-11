@@ -372,6 +372,14 @@ export async function findUidByMessageId(
   }
 }
 
+export async function listFolders(client: ImapFlow): Promise<string[]> {
+  const items = await client.list();
+  return items
+    .map((item) => item.path)
+    .filter(Boolean)
+    .sort();
+}
+
 export async function safeLogout(client: ImapFlow): Promise<void> {
   try {
     await client.logout();

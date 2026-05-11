@@ -11,6 +11,7 @@ import {
   fetchHeaders,
   fetchParsedMessage,
   getAttachment,
+  listFolders,
   moveMessages,
   openConnection,
   safeLogout,
@@ -735,6 +736,184 @@ const plugin = definePlugin({
         return { ok: false, checks: [{ name: "config", passed: false, message: `Mailbox "${mailboxKey}" not configured` }] };
       }
       return testMailbox(ctx, cfg, mailboxKey);
+    });
+
+    // ─── UI bridge: getData handlers (operator Email view) ───────────────
+
+    // Returns the mailboxes accessible to a given company — drives the
+    // left-pane mailbox picker in the Email view.
+    ctx.data.register("email.list-mailboxes", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const mailboxes = (config.mailboxes ?? [])
+        .filter((m) => {
+          if (!companyId) return false;
+          const allowed = m.allowedCompanies;
+          if (!allowed || allowed.length === 0) return false;
+          return allowed.includes("*") || allowed.includes(companyId);
+        })
+        .map((m) => ({
+          key: m.key ?? "",
+          name: m.name ?? m.key ?? "",
+          pollFolder: m.pollFolder ?? "INBOX",
+        }));
+      return { mailboxes };
+    });
+
+    // Returns message headers for a mailbox folder — drives the center pane.
+    ctx.data.register("email.list-messages", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.list-messages",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const unseen = params.unseen === true;
+      const limit = typeof params.limit === "number" ? Math.min(params.limit, 200) : 50;
+      const conn = await openConnection(rt);
+      try {
+        const uids = await searchMessages(conn, { folder, unseen: unseen || undefined });
+        const slicedUids = uids.slice(-limit);
+        const messages = await fetchHeaders(conn, folder, slicedUids);
+        return { messages };
+      } finally {
+        await safeLogout(conn);
+      }
+    });
+
+    // Returns the full parsed message body — drives the right pane.
+    ctx.data.register("email.fetch-message", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      if (!companyId || !mailboxKey || uid === null) throw new Error("companyId, mailbox, and uid are required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.fetch-message",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const conn = await openConnection(rt);
+      try {
+        const msg = await fetchParsedMessage(conn, folder, uid);
+        if (!msg) throw new Error(`Message UID ${uid} not found in "${folder}"`);
+        return msg;
+      } finally {
+        await safeLogout(conn);
+      }
+    });
+
+    // Returns the list of IMAP folders — drives the Move-to-folder picker.
+    ctx.data.register("email.list-folders", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.list-folders",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const conn = await openConnection(rt);
+      try {
+        const folders = await listFolders(conn);
+        return { folders };
+      } finally {
+        await safeLogout(conn);
+      }
+    });
+
+    // ─── UI bridge: performAction handlers (operator Email view) ─────────
+
+    // Moves a single message to a target folder and optionally marks it read.
+    ctx.actions.register("email.move-message", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      const targetFolder = typeof params.targetFolder === "string" ? params.targetFolder : null;
+      if (!companyId || !mailboxKey || uid === null || !targetFolder) {
+        throw new Error("companyId, mailbox, uid, and targetFolder are required");
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.move-message",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      if (cfg.disallowMove) {
+        throw new Error(`[EMOVE_DISALLOWED] Moving messages is disabled for mailbox "${mailboxKey}"`);
+      }
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const conn = await openConnection(rt);
+      try {
+        // Mark as read first — prevents the triage routine's unseen filter
+        // from double-processing the same message if it runs concurrently.
+        await setSeenFlag(conn, folder, [uid], true);
+        const result = await moveMessages(conn, folder, [uid], targetFolder);
+        return { ok: true, movedCount: result.movedCount };
+      } finally {
+        await safeLogout(conn);
+      }
+    });
+
+    // Marks one or more messages as read.
+    ctx.actions.register("email.mark-read", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const rawUid = params.uid;
+      if (!companyId || !mailboxKey || rawUid === null || rawUid === undefined) {
+        throw new Error("companyId, mailbox, and uid are required");
+      }
+      const uids = Array.isArray(rawUid)
+        ? (rawUid as unknown[]).filter((u): u is number => typeof u === "number")
+        : typeof rawUid === "number"
+          ? [rawUid]
+          : [];
+      if (uids.length === 0) throw new Error("uid must be a number or array of numbers");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.mark-read",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const conn = await openConnection(rt);
+      try {
+        await setSeenFlag(conn, folder, uids, true);
+        return { ok: true };
+      } finally {
+        await safeLogout(conn);
+      }
     });
 
     idleManager = new IdleManager(ctx);
