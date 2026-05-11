@@ -3,6 +3,7 @@ import {
   fetchHeaders,
   fetchParsedMessage,
   getUidValidity,
+  moveMessages,
   openConnection,
   safeLogout,
   searchMessages,
@@ -232,6 +233,15 @@ export async function learnFromTriageFolder(
   });
 }
 
+function senderMatchesAutoTriage(fromAddr: string, patterns: Set<string>): boolean {
+  if (patterns.size === 0) return false;
+  const lower = fromAddr.toLowerCase();
+  if (patterns.has(lower)) return true;
+  const at = lower.indexOf("@");
+  if (at >= 0 && patterns.has(`@${lower.slice(at + 1)}`)) return true;
+  return false;
+}
+
 export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promise<number> {
   const key = mailbox.key as string;
   return withMailboxLock(key, async () => {
@@ -244,6 +254,25 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
     const rt = await buildMailboxRuntime(ctx, mailbox, key);
     const client = await openConnection(rt);
     let fetched = 0;
+    let autoTriaged = 0;
+
+    // Load the auto-triage rule set for this mailbox once per poll tick.
+    // Best-effort: if the DB read fails (rare), fall through and skip
+    // auto-application — dispatch will run as before.
+    let autoTriageSet = new Set<string>();
+    try {
+      const rules = await ctx.db.query<{ sender_pattern: string }>(
+        `SELECT sender_pattern FROM plugin_email_tools_7cbee3fdf3.email_sender_rules
+         WHERE company_id = $1 AND mailbox_key = $2 AND rule_type = 'auto-triage'`,
+        [mailbox.ingestCompanyId, key],
+      );
+      autoTriageSet = new Set(rules.map((r) => r.sender_pattern.toLowerCase()));
+    } catch (err) {
+      ctx.logger.warn("email-tools poll: failed to load auto-triage rules; continuing without", {
+        mailbox: key,
+        message: (err as Error).message,
+      });
+    }
     try {
       const folder = mailbox.pollFolder ?? rt.pollFolder;
       const uidValidity = await getUidValidity(client, folder);
@@ -291,11 +320,40 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
       for (const uid of uids) {
         try {
           const parsed = await fetchParsedMessage(client, folder, uid);
-          if (parsed && passesFilter(parsed, mailbox)) {
-            await dispatchReceived(ctx, mailbox, parsed);
-            fetched += 1;
-            if (markAsRead) {
-              await setSeenFlag(client, folder, [uid], true);
+          if (parsed) {
+            // Check auto-triage rules first. If the sender is on the list,
+            // move the message straight to _paperclip/triage and skip both
+            // filter and dispatch — the operator has already classified
+            // this sender as auto-triage so it shouldn't bother them again.
+            const fromAddr = parsed.fromAddress;
+            if (
+              fromAddr &&
+              !mailbox.disallowMove &&
+              senderMatchesAutoTriage(fromAddr, autoTriageSet)
+            ) {
+              try {
+                await setSeenFlag(client, folder, [uid], true);
+                await moveMessages(client, folder, [uid], TRIAGE_FOLDER);
+                autoTriaged += 1;
+                if (uid > maxUid) maxUid = uid;
+                continue;
+              } catch (moveErr) {
+                ctx.logger.warn("email-tools poll: auto-triage move failed", {
+                  mailbox: key,
+                  uid,
+                  sender: fromAddr,
+                  message: (moveErr as Error).message,
+                });
+                // Fall through to normal dispatch on move failure.
+              }
+            }
+
+            if (passesFilter(parsed, mailbox)) {
+              await dispatchReceived(ctx, mailbox, parsed);
+              fetched += 1;
+              if (markAsRead) {
+                await setSeenFlag(client, folder, [uid], true);
+              }
             }
           }
         } catch (perMsg) {
@@ -317,6 +375,16 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
         { scopeKind: "instance", namespace: STATE_NAMESPACE, stateKey: cursorKey },
         { uidValidity, uid: maxUid },
       );
+      if (autoTriaged > 0) {
+        ctx.logger.info("email-tools poll: auto-triaged new mail by rule", {
+          mailbox: key,
+          autoTriaged,
+        });
+        await ctx.telemetry.track("poll-auto-triaged", {
+          mailbox: key,
+          count: String(autoTriaged),
+        });
+      }
       return fetched;
     } finally {
       await safeLogout(client);

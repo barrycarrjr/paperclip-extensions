@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.12.0** — Real-time auto-triage on arrival. The `poll-mailboxes` job now applies `auto-triage` sender rules to incoming mail directly: when a new INBOX message's From address matches a rule, the message is marked read and moved to `_paperclip/triage` before any event/issue dispatch fires. This closes the "rule already exists, new email from that sender still landed in INBOX" gap — previously the operator had to wait for the next email-triage routine run. Respects `disallowMove`. Falls through to normal dispatch on move failure. Telemetry: `poll-auto-triaged` event with mailbox + count.
+
 - **v0.11.0** — New `email.mark-unread` bridge action (mirror of `email.mark-read`). Lets the Email view flip an already-read message back to unread so it reappears in the unread INBOX view — useful when a previous handoff / triage was a mistake.
 
 - **v0.10.0** — Triage-folder watcher: the `poll-mailboxes` job now also scans each mailbox's `_paperclip/triage` folder for messages that appeared since the last scan and INSERTs auto-triage rules for the senders found. This means the operator can train rules from any IMAP client (Outlook, Mail.app, mobile) just by moving messages into the triage folder — Paperclip sees the move on its next poll and writes the rule automatically. Per-mailbox cursor stored in plugin state under `<mailboxKey>:triage-cursor`. First run / UIDVALIDITY change seeds the cursor at the current max UID so we don't bulk-rule from years of historical triage history. Rule scoped to `mailbox.ingestCompanyId` (consistent with existing dispatch behavior). Skipped if `ingestCompanyId` isn't set.
