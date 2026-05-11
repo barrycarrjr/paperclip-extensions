@@ -1056,11 +1056,15 @@ const plugin = definePlugin({
         companyId,
       });
 
+      // Process keep-always FIRST so it wins any cross-section conflicts —
+      // the safer interpretation when a pattern is contradictorily listed
+      // under both auto-triage and keep-always in the source doc.
       const sections: Array<{ header: string; ruleType: "auto-triage" | "keep-always" }> = [
-        { header: "## Auto-triage senders", ruleType: "auto-triage" },
         { header: "## Keep-always senders", ruleType: "keep-always" },
+        { header: "## Auto-triage senders", ruleType: "auto-triage" },
       ];
       let imported = 0;
+      let conflicts = 0;
       for (const { header, ruleType } of sections) {
         const start = docBody.indexOf(header);
         if (start === -1) continue;
@@ -1070,7 +1074,6 @@ const plugin = definePlugin({
         for (const rawLine of section.split("\n")) {
           const line = rawLine.replace(/^[-*+]\s+/, "").trim();
           if (!line || line.startsWith("<!--") || line.startsWith("#") || line.startsWith("`<")) continue;
-          // Pattern formats accepted: full email, @domain, subject:keyword
           const pattern = line.split("|")[0]!.trim();
           if (!pattern) continue;
           if (
@@ -1088,9 +1091,10 @@ const plugin = definePlugin({
             [companyId, mailboxKey, pattern, ruleType],
           );
           if (result.rowCount > 0) imported += 1;
+          else conflicts += 1;
         }
       }
-      return { ok: true, imported };
+      return { ok: true, imported, conflicts };
     });
 
     // Deletes a sender rule for a mailbox.
