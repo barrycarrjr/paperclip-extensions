@@ -782,26 +782,13 @@ const plugin = definePlugin({
       const limit = typeof params.limit === "number" ? Math.min(params.limit, 200) : 50;
       const conn = await openConnection(rt);
       try {
+        // No DB-side filtering: the Email view should mirror what's actually in
+        // INBOX (matching the user's Outlook/other client view). Messages
+        // disappear when they're moved (auto-triage / move-to-folder) or marked
+        // read (after reply / handoff) — the natural "taken care of" signals.
         const uidValidity = await getUidValidity(conn, folder);
         const uids = await searchMessages(conn, { folder, unseen: unseen || undefined });
-
-        // Filter out UIDs that have already been triaged in the DB.
-        let filteredUids = uids;
-        try {
-          const triagedRows = await ctx.db.query<{ uid: number }>(
-            `SELECT uid FROM plugin_email_tools_7cbee3fdf3.email_triaged
-             WHERE mailbox_key = $1 AND uid_validity = $2`,
-            [mailboxKey, uidValidity],
-          );
-          if (triagedRows.length > 0) {
-            const triagedSet = new Set(triagedRows.map((r) => r.uid));
-            filteredUids = uids.filter((u) => !triagedSet.has(u));
-          }
-        } catch {
-          // DB not yet migrated or other transient error — fall through with unfiltered list.
-        }
-
-        const slicedUids = filteredUids.slice(-limit);
+        const slicedUids = uids.slice(-limit);
         const messages = await fetchHeaders(conn, folder, slicedUids);
         return { messages, uidValidity };
       } finally {
