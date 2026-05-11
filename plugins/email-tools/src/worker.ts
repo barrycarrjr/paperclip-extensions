@@ -965,6 +965,41 @@ const plugin = definePlugin({
       }
     });
 
+    // Marks one or more messages as unread (clears the \Seen flag).
+    ctx.actions.register("email.mark-unread", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const rawUid = params.uid;
+      if (!companyId || !mailboxKey || rawUid === null || rawUid === undefined) {
+        throw new Error("companyId, mailbox, and uid are required");
+      }
+      const uids = Array.isArray(rawUid)
+        ? (rawUid as unknown[]).filter((u): u is number => typeof u === "number")
+        : typeof rawUid === "number"
+          ? [rawUid]
+          : [];
+      if (uids.length === 0) throw new Error("uid must be a number or array of numbers");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.mark-unread",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const conn = await openConnection(rt);
+      try {
+        await setSeenFlag(conn, folder, uids, false);
+        return { ok: true };
+      } finally {
+        await safeLogout(conn);
+      }
+    });
+
     // Records a triage decision in the DB so the message is filtered from future list-messages calls.
     ctx.actions.register("email.record-triage", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;

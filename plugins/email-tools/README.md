@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.11.0** — New `email.mark-unread` bridge action (mirror of `email.mark-read`). Lets the Email view flip an already-read message back to unread so it reappears in the unread INBOX view — useful when a previous handoff / triage was a mistake.
+
 - **v0.10.0** — Triage-folder watcher: the `poll-mailboxes` job now also scans each mailbox's `_paperclip/triage` folder for messages that appeared since the last scan and INSERTs auto-triage rules for the senders found. This means the operator can train rules from any IMAP client (Outlook, Mail.app, mobile) just by moving messages into the triage folder — Paperclip sees the move on its next poll and writes the rule automatically. Per-mailbox cursor stored in plugin state under `<mailboxKey>:triage-cursor`. First run / UIDVALIDITY change seeds the cursor at the current max UID so we don't bulk-rule from years of historical triage history. Rule scoped to `mailbox.ingestCompanyId` (consistent with existing dispatch behavior). Skipped if `ingestCompanyId` isn't set.
 
 - **v0.9.0** — New agent tool `email_list_rules` returns sender rules from the DB (`{ autoTriage: string[], keepAlways: string[] }`). The email-triage skill (paperclip-extensions/skills/email-triage/SKILL.md) is updated to call this tool instead of parsing Auto-triage / Keep-always sections from the Markdown rules-home doc. The Markdown's rule sections are now deprecated read-only history; the skill only writes the Review queue section going forward. UI views (Email, MorningBrief, UnifiedInbox, PortfolioBrief) already write rules via `email.set-rule` to the same DB so both halves of the loop stay consistent.
