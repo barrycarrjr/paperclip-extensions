@@ -380,6 +380,30 @@ export async function listFolders(client: ImapFlow): Promise<string[]> {
     .sort();
 }
 
+// Locates the mailbox's Trash folder. Prefers the IMAP SPECIAL-USE
+// `\Trash` attribute (Gmail, Office365, most modern providers expose
+// this), and falls back to a path-name heuristic for older servers.
+export async function findTrashFolder(client: ImapFlow): Promise<string | null> {
+  const items = await client.list();
+  for (const item of items) {
+    if ((item as { specialUse?: string }).specialUse === "\\Trash") {
+      return item.path;
+    }
+  }
+  const HEURISTICS = [
+    "Trash",
+    "[Gmail]/Trash",
+    "Deleted Items",
+    "Deleted Messages",
+    "INBOX.Trash",
+  ];
+  for (const candidate of HEURISTICS) {
+    const hit = items.find((it) => it.path === candidate);
+    if (hit) return hit.path;
+  }
+  return null;
+}
+
 export async function safeLogout(client: ImapFlow): Promise<void> {
   try {
     await client.logout();

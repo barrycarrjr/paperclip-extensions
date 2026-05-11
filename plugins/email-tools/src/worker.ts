@@ -10,6 +10,7 @@ import { assertCompanyAccess } from "./companyAccess.js";
 import {
   fetchHeaders,
   fetchParsedMessage,
+  findTrashFolder,
   getAttachment,
   getUidValidity,
   listFolders,
@@ -925,6 +926,48 @@ const plugin = definePlugin({
         await setSeenFlag(conn, folder, [uid], true);
         const result = await moveMessages(conn, folder, [uid], targetFolder);
         return { ok: true, movedCount: result.movedCount };
+      } finally {
+        await safeLogout(conn);
+      }
+    });
+
+    // Moves a message to the mailbox's Trash folder (soft-delete: recoverable
+    // until the mail provider's retention window empties Trash). Auto-detects
+    // the Trash folder via IMAP SPECIAL-USE `\Trash`, falling back to common
+    // path names. Returns the resolved trash folder so the UI can confirm.
+    ctx.actions.register("email.delete-message", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      if (!companyId || !mailboxKey || uid === null) {
+        throw new Error("companyId, mailbox, and uid are required");
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.delete-message",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      if (cfg.disallowMove) {
+        throw new Error(`[EMOVE_DISALLOWED] Moving messages is disabled for mailbox "${mailboxKey}"`);
+      }
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      const conn = await openConnection(rt);
+      try {
+        const trashFolder = await findTrashFolder(conn);
+        if (!trashFolder) {
+          throw new Error(
+            `[ETRASH_NOT_FOUND] could not find a Trash folder on this mailbox (no SPECIAL-USE \\Trash and no Trash / Deleted Items / [Gmail]/Trash). Configure one manually if your provider uses a different name.`,
+          );
+        }
+        await setSeenFlag(conn, folder, [uid], true);
+        const result = await moveMessages(conn, folder, [uid], trashFolder);
+        return { ok: true, movedCount: result.movedCount, trashFolder };
       } finally {
         await safeLogout(conn);
       }
