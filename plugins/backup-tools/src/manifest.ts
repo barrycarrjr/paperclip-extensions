@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "backup-tools";
-const PLUGIN_VERSION = "0.1.5";
+const PLUGIN_VERSION = "0.1.6";
 
 // ---------------------------------------------------------------------------
 // instanceConfigSchema sub-shapes
@@ -261,13 +261,21 @@ System backups for your Paperclip instance: encrypted snapshots fan out to one o
 
 ---
 
-## 1. Create the encryption passphrase secret
+## 1. Encryption key — auto-managed or user passphrase
 
-The plugin encrypts every archive client-side with AES-256-GCM, keyed off a passphrase you provide. The destination never sees plaintext.
+The plugin encrypts every archive client-side with AES-256-GCM before upload. Destinations never see plaintext.
+
+**Option A — Auto-key mode (recommended, no extra setup)**
+
+Leave "Backup passphrase (secret-ref)" blank. On the first backup the plugin generates a random 256-bit key, stores it in its own database, and uses it for all subsequent archives. Backups and same-instance restores just work with no passphrase input.
+
+If you ever need to restore on a *different* instance (e.g. after a full server loss where you start fresh), export the key first: open the **Restore** tab and click **Export instance key**. Store the exported hex string outside Paperclip — a password manager, a sealed envelope. Paste it as the passphrase when the restore wizard asks.
+
+**Option B — User-managed passphrase (cross-instance portability without an export step)**
 
 1. Go to your portfolio's **Secrets** page.
 2. Create a secret named **\`BACKUP_PASSPHRASE\`** with a strong passphrase (≥ 32 characters recommended).
-3. **Store the passphrase outside Paperclip too** — a password manager, a sealed envelope. If the secret is lost AND your instance is wiped, your archives are unrecoverable. There is no backdoor.
+3. **Store the passphrase outside Paperclip too.** If the secret is lost AND your instance is wiped, your archives are unrecoverable. There is no backdoor.
 4. Reference \`BACKUP_PASSPHRASE\` in this plugin's settings under "Backup passphrase (secret-ref)".
 
 ---
@@ -357,7 +365,7 @@ Now wait for the next scheduled run (you'll see \`schedule_state.next_run_after\
 
 Restore is **instance-admin only**. Open the **Restore** tab, follow the wizard:
 1. Pick destination + archive
-2. Enter passphrase (validated against the manifest envelope only — body remains encrypted on the destination until step 5)
+2. Enter passphrase — **optional in auto-key mode**. Leave blank if restoring to the same instance (the plugin loads the stored key automatically). For a cross-instance restore in auto-key mode, export the key first (Restore tab → Export instance key) and paste it here. For user-managed passphrase mode, enter the passphrase as normal.
 3. Preview (envelope-only in v0.1; full preview in v0.2)
 4. Type the literal phrase \`RESTORE THIS INSTANCE\` to confirm
 5. Apply — streams the decrypted archive into the privileged \`/api/system/snapshot/restore\` endpoint
@@ -620,6 +628,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
     },
+    {
+      routeKey: "instance-key.export",
+      method: "GET",
+      path: "/instance-key/export",
+      auth: "instance-admin" as never,
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
   ],
   ui: {
     slots: [
@@ -656,7 +672,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       "mutationsEnabled",
       "alertOnFailureToCompanyId",
     ],
-    required: ["allowedCompanies", "passphraseSecretRef", "destinations", "schedules"],
+    required: ["allowedCompanies", "destinations", "schedules"],
     properties: {
       allowedCompanies: {
         type: "array",
@@ -668,9 +684,9 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       passphraseSecretRef: {
         type: "string",
         format: "secret-ref",
-        title: "Backup passphrase (secret-ref)",
+        title: "Backup passphrase (secret-ref) — optional",
         description:
-          "Secret name (e.g. BACKUP_PASSPHRASE) holding the passphrase used to encrypt all archives. **WARNING: lose this and the archives are unrecoverable.** Store the passphrase outside Paperclip too — a password manager, a sealed envelope. Recommended ≥ 32 characters.",
+          "Leave blank to use auto-key mode: the plugin generates a random 256-bit key on first backup and stores it in its own database. Restores on the same instance work without any passphrase input. For cross-instance recovery in auto-key mode, export the key from the Restore tab first.\n\nSet this if you prefer to manage the key yourself. Secret name should be e.g. BACKUP_PASSPHRASE (≥ 32 characters recommended). **WARNING: lose a user-managed passphrase and the archives are unrecoverable.** Store it outside Paperclip — a password manager, a sealed envelope.",
       },
       destinations: {
         type: "array",

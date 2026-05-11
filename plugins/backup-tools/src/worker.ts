@@ -28,7 +28,7 @@ import { pipeline } from "node:stream/promises";
 import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { assertCompanyAccess, isCompanyAllowed } from "./companyAccess.js";
 import {
   CHUNK_SIZE_BYTES,
@@ -120,7 +120,43 @@ const TABLES = {
   destResults: (ns: string) => `${ns}.backup_destination_results`,
   scheduleState: (ns: string) => `${ns}.schedule_state`,
   restoreRuns: (ns: string) => `${ns}.restore_runs`,
+  instanceKeys: (ns: string) => `${ns}.instance_keys`,
 };
+
+// ─── Encryption key resolution ───────────────────────────────────────────────
+//
+// When passphraseSecretRef is set, the operator's secret is used as the KDF
+// input (user-managed passphrase mode). When it is absent, a random 256-bit
+// key is generated on first use and stored in the plugin DB (auto-key mode).
+// Either way, callers receive a plain string that flows into deriveKeys().
+
+const AUTO_KEY_ID = "instance-encryption-key-v1";
+
+async function resolveEncryptionPassphrase(ctx: PluginContext, cfg: InstanceConfig): Promise<string> {
+  if (cfg.passphraseSecretRef) {
+    const passphrase = await ctx.secrets.resolve(cfg.passphraseSecretRef);
+    if (!passphrase || passphrase.length < 8) {
+      throw new Error("[EBACKUP_NO_PASSPHRASE] passphrase resolved empty or too short");
+    }
+    return passphrase;
+  }
+  const ns = ctx.db.namespace;
+  const [existing] = await ctx.db.query<{ key_hex: string }>(
+    `SELECT key_hex FROM ${TABLES.instanceKeys(ns)} WHERE key_id = $1`,
+    [AUTO_KEY_ID],
+  );
+  if (existing) return existing.key_hex;
+  const keyHex = randomBytes(32).toString("hex");
+  await ctx.db.execute(
+    `INSERT INTO ${TABLES.instanceKeys(ns)} (key_id, key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [AUTO_KEY_ID, keyHex],
+  );
+  const [row] = await ctx.db.query<{ key_hex: string }>(
+    `SELECT key_hex FROM ${TABLES.instanceKeys(ns)} WHERE key_id = $1`,
+    [AUTO_KEY_ID],
+  );
+  return row?.key_hex ?? keyHex;
+}
 
 async function ensureSchedulesSeeded(ctx: PluginContext, schedules: ScheduleEntry[]) {
   const ns = ctx.db.namespace;
@@ -384,13 +420,7 @@ async function runBackup(
   triggeredBy: { actorId?: string; agentId?: string },
 ): Promise<{ backupId: string; status: "succeeded" | "failed" | "partial"; sizeBytes: number }> {
   const cfg = (await ctx.config.get()) as InstanceConfig;
-  if (!cfg.passphraseSecretRef) {
-    throw new Error("[EBACKUP_NO_PASSPHRASE] passphraseSecretRef not configured");
-  }
-  const passphrase = await ctx.secrets.resolve(cfg.passphraseSecretRef);
-  if (!passphrase || passphrase.length < 8) {
-    throw new Error("[EBACKUP_NO_PASSPHRASE] passphrase resolved empty or too short");
-  }
+  const passphrase = await resolveEncryptionPassphrase(ctx, cfg);
 
   const ns = ctx.db.namespace;
   const archiveUuid = generateArchiveUuid();
@@ -576,7 +606,7 @@ const plugin = definePlugin({
     const cfg = (await ctx.config.get()) as InstanceConfig;
 
     if (!cfg.passphraseSecretRef) {
-      ctx.logger.warn("backup-tools: no passphrase configured. Add a secret-ref under settings before enabling schedules.");
+      ctx.logger.info("backup-tools: no passphraseSecretRef set — auto-key mode active. A random instance key will be generated on first backup and stored in the plugin database.");
     }
     if ((cfg.destinations ?? []).length === 0) {
       ctx.logger.warn("backup-tools: no destinations configured.");
@@ -858,6 +888,21 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
       const due = new Date(row.next_run_after) <= new Date();
       return { status: 200, body: { ...row, due } };
     }
+    case "instance-key.export": {
+      const cfgNow = (await ctx.config.get()) as InstanceConfig;
+      if (cfgNow.passphraseSecretRef) {
+        return { status: 200, body: { mode: "passphrase", message: "This instance uses a user-managed passphrase. Export it from your password manager for cross-instance restores." } };
+      }
+      const ns4 = ctx.db.namespace;
+      const [keyRow] = await ctx.db.query<{ key_hex: string; created_at: string }>(
+        `SELECT key_hex, created_at FROM ${TABLES.instanceKeys(ns4)} WHERE key_id = $1`,
+        [AUTO_KEY_ID],
+      );
+      if (!keyRow) {
+        return { status: 404, body: { error: "Auto-key not yet generated — run one backup first." } };
+      }
+      return { status: 200, body: { mode: "auto-key", keyHex: keyRow.key_hex, createdAt: keyRow.created_at, note: "Store this key safely outside Paperclip. Paste it as the passphrase when restoring to a different instance." } };
+    }
     case "restore.preview":
     case "restore.apply": {
       const apply = routeKey === "restore.apply";
@@ -866,15 +911,16 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
         destinationId?: string; archiveKey?: string; passphrase?: string;
         conflictMode?: string; confirmPhrase?: string;
       };
-      if (!b.destinationId || !b.archiveKey || !b.passphrase) {
-        return { status: 400, body: { error: "destinationId, archiveKey, passphrase required" } };
+      if (!b.destinationId || !b.archiveKey) {
+        return { status: 400, body: { error: "destinationId and archiveKey required" } };
       }
       if (apply && b.confirmPhrase !== "RESTORE THIS INSTANCE") {
         return { status: 400, body: { error: "confirmPhrase must equal 'RESTORE THIS INSTANCE'" } };
       }
-      // Note: even though the plugin's settings allow a per-instance
-      // passphrase, the wizard accepts an out-of-band passphrase here
-      // for cross-instance imports (where the local secret may not match).
+      // Passphrase is optional: if omitted, the auto-key is loaded from the
+      // plugin DB. For cross-instance restores in auto-key mode, the caller
+      // must export the key first and pass it here explicitly.
+      const restorePassphrase = b.passphrase ?? await resolveEncryptionPassphrase(ctx, cfgNow);
       const adapter = await getAdapter(ctx, b.destinationId);
       const headBytes = await adapter.downloadHead(b.archiveKey);
       const { envelope, bytesConsumed } = decodeEnvelope(headBytes);
@@ -882,7 +928,7 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
       // Skip the envelope bytes already consumed.
       const skipped = await skipBytes(fullStream, bytesConsumed);
       const { sqlGzPath } = await decryptArchiveToTmpSql({
-        passphrase: b.passphrase,
+        passphrase: restorePassphrase,
         envelope,
         encryptedBodyStream: skipped,
       });

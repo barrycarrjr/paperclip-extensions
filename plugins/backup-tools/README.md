@@ -26,7 +26,7 @@ Encrypted system snapshots for your Paperclip instance, on a schedule (or on dem
 
 See the [setup page on the plugin's settings tab](`/instance/settings/plugins/backup-tools`) — that's the canonical doc, rendered from `manifest.ts`'s `setupInstructions`. Quick summary:
 
-1. **Create the passphrase secret.** Name it `BACKUP_PASSPHRASE`, ≥ 32 chars. Store outside Paperclip too. Lose it = lose all archives.
+1. **Encryption key** — leave "Backup passphrase" blank to use auto-key mode (recommended). The plugin generates a random 256-bit key on first backup and stores it in its own database. Same-instance restores need no passphrase. For cross-instance recovery, export the key from the Restore tab first. Alternatively, set `passphraseSecretRef` to a secret holding your own passphrase.
 2. **Configure ≥ 1 destination.** Choose: `local` (any directory on the host — simplest), `nas-smb` (a mounted SMB share path — same code as local), `s3` (AWS / R2 / B2 / Wasabi / MinIO / etc.), or `google-drive`.
 3. **Configure ≥ 1 schedule.** Pick a cadence (hourly/daily/weekly/monthly) and bind to one or more destination IDs. `keepLast` controls retention per destination.
 4. **Allow ≥ 1 company.** `allowedCompanies` controls which companies' agents can use the backup_* tools and see backup status. Restore is instance-admin-only regardless.
@@ -88,11 +88,20 @@ Create a bucket via the console at <http://localhost:9001>, generate an access k
 - Each body chunk is independently AES-256-GCM-encrypted with a per-chunk nonce + chunk-index AAD, so reordering or replay fails authentication.
 - Chunk size: 4 MiB. Overhead per chunk: 4 (length prefix) + 12 (nonce) + 16 (GCM tag) = 32 bytes.
 
+## Auto-key mode
+
+When `passphraseSecretRef` is not set, the plugin manages the encryption key itself:
+
+- On first backup a random 256-bit key is generated and stored in the `instance_keys` plugin table.
+- All archives (backup and restore) on the same instance use this key transparently — no passphrase input needed.
+- To restore on a **different** instance: `GET /api/plugins/backup-tools/instance-key/export` (instance-admin) returns `{ mode: "auto-key", keyHex: "...", createdAt: "..." }`. Paste the hex string as the passphrase in the restore wizard on the target instance.
+- Setting `passphraseSecretRef` at any point switches to user-managed mode for **new** backups. Archives created before the switch can still be decrypted by exporting the auto-key.
+
 ## Error codes
 
 | Code | Meaning |
 |---|---|
-| `EBACKUP_NO_PASSPHRASE` | passphraseSecretRef not configured or resolves empty |
+| `EBACKUP_NO_PASSPHRASE` | passphraseSecretRef is set but the secret resolves empty or too short |
 | `EBACKUP_NO_DESTINATIONS` | No enabled destinations to fan out to |
 | `EBACKUP_DEST_NOT_FOUND` | destinationId doesn't match any configured destination |
 | `EBACKUP_DEST_DISABLED` | destination is configured but `enabled: false` |
@@ -119,6 +128,7 @@ Create a bucket via the console at <http://localhost:9001>, generate an access k
 
 ## Recent changes
 
+- **v0.1.6** — Passphrase is now optional. When `passphraseSecretRef` is not set, the plugin auto-generates a random 256-bit instance key on first backup and stores it in its own database (auto-key mode). Same-instance restores work with no passphrase input. Cross-instance recovery: export the key via `GET /instance-key/export` (instance-admin) and paste the hex as the restore passphrase. Adds `migrations/0002_instance_keys.sql` and a new `instance-key.export` API route.
 - **v0.1.5** — First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.
 
 - **v0.1.4** — Local-disk destinations now actually work (`kind: local` and `kind: nas-smb`). Earlier versions deferred this to v0.2 pending a host `fs-write-allowlisted` capability, but the plugin worker has been writing the in-flight encrypted archive to `tmpdir()` all along — no new host capability was actually needed. The `LocalAdapter` writes archives directly to any operator-nominated absolute path, auto-creates the directory, uses `.partial` rename-on-success to avoid leaving half-written files, and rejects unsafe keys with path separators or `..`.
