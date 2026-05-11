@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "social-poster";
-const PLUGIN_VERSION = "0.3.3";
+const PLUGIN_VERSION = "0.3.4";
 
 const SETUP_INSTRUCTIONS = `# Setup — Social Poster
 

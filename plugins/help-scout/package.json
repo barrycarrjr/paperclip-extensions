@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-help-scout",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Paperclip plugin that exposes Help Scout customer-support operations (conversations, replies, notes, customer lookups, tagging, status changes, reports) as agent tools. Multi-account, per-account company isolation, mutations gated.",
   "type": "module",
   "private": true,

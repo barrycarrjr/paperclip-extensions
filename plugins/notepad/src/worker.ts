@@ -108,10 +108,16 @@ function extractJson(raw: string): { title: string; body: string } | null {
 
 function buildCleanupPrompt(noteTitle: string, noteBody: string): string {
   return [
-    "You are a note-cleanup assistant. The user pasted a freeform note.",
+    "You are an issue-writing assistant. The user typed a freeform note — possibly just a few words, possibly a rough description.",
+    "Your job is to expand and enrich it into a well-formed issue that a developer or team member could act on without guessing.",
     "Reply with ONE JSON object on a single line, no markdown, no commentary, no code fences:",
-    `{"title": "<concise issue title, <=80 chars>", "body": "<cleaned issue body in markdown>"}`,
-    "Preserve the user's intent and concrete facts. Tighten verbiage. If the note already reads as a clean ask, return it close to as-is — don't pad. If the note is too vague to extract an actionable ask, set title to a verbatim short form of the note and body to the note unchanged.",
+    `{"title": "<clear, actionable issue title, <=80 chars>", "body": "<expanded issue body in markdown>"}`,
+    "For the body:",
+    "- Infer reasonable context and intent from what was written",
+    "- Add structure where helpful — for example: ## Description, ## Steps to reproduce (if a bug), ## Acceptance criteria (if a feature/task)",
+    "- If the note is already detailed, preserve all facts and layer in any missing structure",
+    "- Keep the tone professional and actionable",
+    "- Do NOT invent specific technical details that weren't implied — expand on what's there, don't fabricate",
     "---",
     `NOTE TITLE: ${noteTitle || "(untitled)"}`,
     "NOTE BODY:",

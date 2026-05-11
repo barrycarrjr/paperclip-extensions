@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "stripe-tools";
-const PLUGIN_VERSION = "0.2.4";
+const PLUGIN_VERSION = "0.2.5";
 
 const SETUP_INSTRUCTIONS = `# Setup — Stripe Tools
 

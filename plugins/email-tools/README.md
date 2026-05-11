@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.15.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.15.0** — New `email.delete-message` bridge action: moves a message to the mailbox's Trash folder (Outlook-style soft-delete; recoverable until the provider's retention window empties Trash). Auto-detects the Trash folder via IMAP SPECIAL-USE `\Trash`, falling back to common path names (`Trash`, `[Gmail]/Trash`, `Deleted Items`, `Deleted Messages`, `INBOX.Trash`). Marks read before moving. Respects `disallowMove`. Helper `findTrashFolder` added to `imap.ts`.
 
 - **v0.14.0** — Cleanup: removed the dead `email.record-triage` bridge handler. It was an audit-style write to the legacy `email_triaged` table — back when the Email view used the DB to filter the message list. After we switched the view to mirror Outlook's unread INBOX directly (v0.7.0 era), nothing read or wrote the table anymore. The `email_triaged` table itself remains in the schema (plugin migrations can't DROP in Phase 1) but is now fully inert. Sender rules continue to live in `email_sender_rules` — that's the active table.

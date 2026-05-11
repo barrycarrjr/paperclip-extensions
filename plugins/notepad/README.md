@@ -125,6 +125,8 @@ to allow-list a company. The migration runs automatically on first install.
 
 ## Recent changes
 
+- **v0.1.3** — AI cleanup now **expands** notes into structured issues (Description / Steps to reproduce / Acceptance criteria) instead of tightening them. The convert modal result now shows an "AI expanded" or "Raw text — AI unavailable" badge so you can confirm whether the LLM was actually invoked. Button label changes to "Expanding with AI…" during the AI path. Checkbox label updated to match new behaviour.
+
 - **v0.1.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.1** — Patch bump. The Converted tab now works once the host plugin-database validator accepts plugin SELECTs that JOIN against `public.issues` (host-side fix landed alongside this release). No plugin-code change beyond the version bump.

@@ -299,7 +299,7 @@ function ConvertModal({ note, defaultUseCleanup, companyPrefix, onClose, onConve
               Cancel
             </Button>
             <Button onClick={submit} disabled={pending}>
-              {pending ? "Converting…" : "Convert"}
+              {pending ? (useCleanup ? "Expanding with AI…" : "Converting…") : "Convert"}
             </Button>
           </>
         )
@@ -316,12 +316,19 @@ function ConvertModal({ note, defaultUseCleanup, companyPrefix, onClose, onConve
               checked={useCleanup}
               onChange={(e) => setUseCleanup(e.target.checked)}
             />
-            Use AI cleanup (extracts title, tightens body via the company chat agent)
+            Use AI (expands note into a structured issue via the company chat agent)
           </label>
           {error && <div className="text-sm text-destructive">{error}</div>}
         </div>
       ) : (
         <div className="space-y-3">
+          <div className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+            result.cleanupUsed
+              ? "bg-green-500/15 text-green-700 dark:text-green-400"
+              : "bg-muted text-muted-foreground"
+          }`}>
+            {result.cleanupUsed ? "AI expanded" : "Raw text — AI unavailable"}
+          </div>
           {result.warning && (
             <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-700 dark:text-yellow-300">
               {result.warning}
