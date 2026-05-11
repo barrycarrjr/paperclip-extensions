@@ -966,6 +966,159 @@ const plugin = definePlugin({
       return { ok: true };
     });
 
+    // Returns all sender rules for a mailbox.
+    ctx.data.register("email.list-rules", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.list-rules",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rows = await ctx.db.query<{
+        sender_pattern: string;
+        rule_type: string;
+        created_at: string;
+        updated_at: string;
+      }>(
+        `SELECT sender_pattern, rule_type, created_at, updated_at
+         FROM plugin_email_tools_7cbee3fdf3.email_sender_rules
+         WHERE company_id = $1 AND mailbox_key = $2
+         ORDER BY rule_type, sender_pattern`,
+        [companyId, mailboxKey],
+      );
+      return {
+        rules: rows.map((r) => ({
+          senderPattern: r.sender_pattern,
+          ruleType: r.rule_type,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        })),
+      };
+    });
+
+    // Upserts a sender rule (auto-triage or keep-always) for a mailbox.
+    ctx.actions.register("email.set-rule", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const senderPattern = typeof params.senderPattern === "string" ? params.senderPattern.trim() : null;
+      const ruleType = typeof params.ruleType === "string" ? params.ruleType : null;
+      if (!companyId || !mailboxKey || !senderPattern || !ruleType) {
+        throw new Error("companyId, mailbox, senderPattern, and ruleType are required");
+      }
+      if (ruleType !== "auto-triage" && ruleType !== "keep-always") {
+        throw new Error(`ruleType must be 'auto-triage' or 'keep-always', got: ${ruleType}`);
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.set-rule",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      await ctx.db.execute(
+        `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
+           (company_id, mailbox_key, sender_pattern, rule_type)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (company_id, mailbox_key, sender_pattern)
+         DO UPDATE SET rule_type = $4, updated_at = now()`,
+        [companyId, mailboxKey, senderPattern, ruleType],
+      );
+      return { ok: true };
+    });
+
+    // One-time import of sender rules from a Markdown rules doc body.
+    // Returns counts so the UI can show "imported N rules, skipped M dupes".
+    ctx.actions.register("email.import-rules", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const docBody = typeof params.docBody === "string" ? params.docBody : null;
+      if (!companyId || !mailboxKey || docBody === null) {
+        throw new Error("companyId, mailbox, and docBody are required");
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.import-rules",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+
+      const sections: Array<{ header: string; ruleType: "auto-triage" | "keep-always" }> = [
+        { header: "## Auto-triage senders", ruleType: "auto-triage" },
+        { header: "## Keep-always senders", ruleType: "keep-always" },
+      ];
+      let imported = 0;
+      for (const { header, ruleType } of sections) {
+        const start = docBody.indexOf(header);
+        if (start === -1) continue;
+        const after = start + header.length;
+        const nextHeader = docBody.indexOf("\n## ", after);
+        const section = docBody.slice(after, nextHeader === -1 ? docBody.length : nextHeader);
+        for (const rawLine of section.split("\n")) {
+          const line = rawLine.replace(/^[-*+]\s+/, "").trim();
+          if (!line || line.startsWith("<!--") || line.startsWith("#") || line.startsWith("`<")) continue;
+          // Pattern formats accepted: full email, @domain, subject:keyword
+          const pattern = line.split("|")[0]!.trim();
+          if (!pattern) continue;
+          if (
+            !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(pattern) &&
+            !/^@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(pattern) &&
+            !/^subject:/i.test(pattern)
+          ) {
+            continue;
+          }
+          const result = await ctx.db.execute(
+            `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
+               (company_id, mailbox_key, sender_pattern, rule_type)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (company_id, mailbox_key, sender_pattern) DO NOTHING`,
+            [companyId, mailboxKey, pattern, ruleType],
+          );
+          if (result.rowCount > 0) imported += 1;
+        }
+      }
+      return { ok: true, imported };
+    });
+
+    // Deletes a sender rule for a mailbox.
+    ctx.actions.register("email.delete-rule", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const senderPattern = typeof params.senderPattern === "string" ? params.senderPattern.trim() : null;
+      if (!companyId || !mailboxKey || !senderPattern) {
+        throw new Error("companyId, mailbox, and senderPattern are required");
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.delete-rule",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      await ctx.db.execute(
+        `DELETE FROM plugin_email_tools_7cbee3fdf3.email_sender_rules
+         WHERE company_id = $1 AND mailbox_key = $2 AND sender_pattern = $3`,
+        [companyId, mailboxKey, senderPattern],
+      );
+      return { ok: true };
+    });
+
     // Sends a reply to a message via SMTP — bridge equivalent of the email_reply agent tool.
     ctx.actions.register("email.send-reply", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
