@@ -1,7 +1,10 @@
 # Paperclip Extensions
 
-Custom skills and plugins for a paperclip instance. Each subfolder is one skill
-or plugin that agents can invoke as a tool.
+Plugins, skills, agents, routines, and bundles for a paperclip instance.
+Plugins ship as `.pcplugin` archives; the other four are exposed in a single
+`templates-index.json` artifact that the Paperclip host fetches on every
+release and renders in **Instance Settings → Templates → Import from
+library**.
 
 ## Why this lives separately
 
@@ -19,24 +22,37 @@ weeks of real use, not upfront.
 ```
 paperclip-extensions/
 ├── README.md
+├── plugins/                   ← paperclip plugins (npm packages), one folder per plugin
+│   ├── email-tools/
+│   ├── help-scout/
+│   └── phone-tools/
 ├── skills/                    ← markdown skills, one folder per skill
-│   └── email-send/
-│       └── SKILL.md
-└── plugins/                   ← paperclip plugins (npm packages), one folder per plugin
-    ├── email-tools/
-    │   ├── package.json
-    │   ├── src/
-    │   └── README.md
-    ├── social-poster/
-    └── google-analytics/
+│   └── email-send/SKILL.md
+├── agents/                    ← agent-template definitions
+│   └── phone-assistant/AGENT.md
+├── routines/                  ← routine-template definitions (cron + variables)
+│   └── pbx-daily-call-report/ROUTINE.md
+└── bundles/                   ← recipes that group plugin + agent + skills + routines
+    └── phone-assistant/BUNDLE.md
 ```
 
-- **Skills** are markdown procedures an agent reads and follows. They use
-  whatever tools the agent's runtime makes available (plugin tools,
-  built-in tools, etc.).
 - **Plugins** are typed paperclip extensions built against
   `@paperclipai/plugin-sdk`. They register tools, settings, UI, etc. and
-  install into paperclip via `paperclipai plugin install <path>`.
+  install into paperclip via the Plugin Manager UI or `paperclipai plugin
+  install <path>`.
+- **Skills** are markdown procedures an agent reads and follows.
+- **Agents** are pre-configured agent role/permissions + a system-prompt
+  body. Importing an agent template creates a row that operators can edit
+  and deploy to one or many companies.
+- **Routines** are recurring-job templates — cron schedule, variables,
+  which skill to invoke. Importing a routine creates a draft you bind to
+  per-company secrets before deploying.
+- **Bundles** are one-click recipes (e.g., "Phone Assistant pack") that
+  expand into multiple skills + an agent + routines, all wired against a
+  required plugin. Built to take a company from zero to a fully-equipped
+  domain agent in under five minutes.
+
+See `AGENTS.md` for the lifecycle rules and frontmatter schemas.
 
 ## Registering a skill in paperclip
 

@@ -8,6 +8,7 @@
     "pack:all": "node scripts/pack-all.mjs"
   },
   "devDependencies": {
+    "js-yaml": "^4.1.0",
     "jszip": "^3.10.1"
   },
   "license": "MIT",

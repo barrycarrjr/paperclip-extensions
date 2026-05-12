@@ -18,8 +18,10 @@
 import { readdir, readFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import JSZip from "jszip";
+import yaml from "js-yaml";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -303,6 +305,164 @@ await writeFile(
   "utf-8",
 );
 
+// ---------------------------------------------------------------------------
+// Templates index: agents, routines, skills, and bundles
+//
+// Sibling to index.json / roadmap.json. Lets the Paperclip host fetch a
+// single JSON artifact and render the available templates library in
+// Instance Settings → Templates without round-tripping every markdown file.
+//
+// Each entry includes:
+//   - kind:        "agent" | "routine" | "skill" | "bundle"
+//   - name:        identifier (lower-kebab)
+//   - displayName: human-facing name from frontmatter (fallback: name)
+//   - description: one-line summary from frontmatter
+//   - frontmatter: parsed YAML object (shape depends on kind)
+//   - body:        the markdown body (used as system prompt for agents,
+//                  skill content for skills, descriptive for routines/bundles)
+//   - contentHash: sha256 of the raw file — used by the host to detect
+//                  upstream changes vs. the version that was imported
+//   - sourcePath:  relative path from the repo root, e.g.
+//                  "agents/phone-assistant/AGENT.md"
+//
+// The host's importer uses `kind` to decide which DB table to insert into
+// and which schema to validate against. Bundles are recipes that reference
+// other entries by `name` + `kind`; the host expands them when installed.
+// ---------------------------------------------------------------------------
+
+const TEMPLATE_KINDS = [
+  // Skills use Anthropic's lenient frontmatter convention (name + description,
+  // values may contain colons/quotes without YAML escaping). The other kinds
+  // require real YAML because they have nested structures.
+  { dir: "skills", file: "SKILL.md", kind: "skill", parser: "anthropic" },
+  { dir: "agents", file: "AGENT.md", kind: "agent", parser: "yaml" },
+  { dir: "routines", file: "ROUTINE.md", kind: "routine", parser: "yaml" },
+  { dir: "bundles", file: "BUNDLE.md", kind: "bundle", parser: "yaml" },
+];
+
+function splitFrontmatter(raw, sourcePath) {
+  if (!raw.startsWith("---\n")) {
+    throw new Error(`${sourcePath}: missing frontmatter (must start with '---\\n')`);
+  }
+  const end = raw.indexOf("\n---\n", 4);
+  if (end === -1) {
+    throw new Error(`${sourcePath}: unterminated frontmatter (missing closing '---')`);
+  }
+  return {
+    frontmatterBlock: raw.slice(4, end),
+    body: raw.slice(end + 5).replace(/^\s+/, ""),
+  };
+}
+
+/** Lenient parser for SKILL.md — extracts top-level `key: value` lines
+ *  without strict YAML escaping rules. Supports multi-line `|` block scalars. */
+function parseAnthropicFrontmatter(block) {
+  const result = {};
+  const lines = block.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const m = /^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$/.exec(line);
+    if (!m) {
+      i += 1;
+      continue;
+    }
+    const [, key, rest] = m;
+    if (rest === "|" || rest === "|-" || rest === ">") {
+      const blockLines = [];
+      i += 1;
+      while (i < lines.length && (lines[i].startsWith("  ") || lines[i] === "")) {
+        blockLines.push(lines[i].replace(/^ {2}/, ""));
+        i += 1;
+      }
+      result[key] = blockLines.join("\n").trim();
+    } else {
+      result[key] = rest;
+      i += 1;
+    }
+  }
+  return result;
+}
+
+function parseFrontmatter(raw, sourcePath, parserKind) {
+  const { frontmatterBlock, body } = splitFrontmatter(raw, sourcePath);
+  let frontmatter;
+  if (parserKind === "anthropic") {
+    frontmatter = parseAnthropicFrontmatter(frontmatterBlock);
+  } else {
+    try {
+      frontmatter = yaml.load(frontmatterBlock);
+    } catch (err) {
+      throw new Error(`${sourcePath}: YAML parse error — ${err.message}`);
+    }
+    if (frontmatter === null || typeof frontmatter !== "object") {
+      throw new Error(`${sourcePath}: frontmatter did not parse to an object`);
+    }
+  }
+  return { frontmatter, body };
+}
+
+async function collectTemplates() {
+  const entries = [];
+  for (const { dir, file, kind, parser } of TEMPLATE_KINDS) {
+    const abs = path.join(REPO_ROOT, dir);
+    if (!existsSync(abs)) continue;
+    const subdirs = await readdir(abs, { withFileTypes: true });
+    for (const sub of subdirs) {
+      if (!sub.isDirectory()) continue;
+      const mdPath = path.join(abs, sub.name, file);
+      if (!existsSync(mdPath)) continue;
+      const raw = await readFile(mdPath, "utf-8");
+      const { frontmatter, body } = parseFrontmatter(raw, `${dir}/${sub.name}/${file}`, parser);
+      if (!frontmatter.name) {
+        throw new Error(`${dir}/${sub.name}/${file}: frontmatter must include 'name'`);
+      }
+      if (frontmatter.name !== sub.name) {
+        console.warn(
+          `${dir}/${sub.name}/${file}: frontmatter name "${frontmatter.name}" does not match folder name "${sub.name}". Using folder name as canonical id.`,
+        );
+      }
+      const contentHash = "sha256:" + createHash("sha256").update(raw).digest("hex");
+      entries.push({
+        kind,
+        name: sub.name,
+        displayName: frontmatter.displayName ?? frontmatter.title ?? frontmatter.name,
+        description: frontmatter.description ?? "",
+        frontmatter,
+        body,
+        contentHash,
+        sourcePath: `${dir}/${sub.name}/${file}`,
+      });
+    }
+  }
+  return entries.sort((a, b) =>
+    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind),
+  );
+}
+
+const templateEntries = await collectTemplates();
+const counts = templateEntries.reduce(
+  (acc, t) => ({ ...acc, [t.kind]: (acc[t.kind] ?? 0) + 1 }),
+  {},
+);
+const templatesIndex = {
+  schemaVersion: 1,
+  generatedAt: new Date().toISOString(),
+  counts,
+  templates: templateEntries,
+};
+await writeFile(
+  path.join(OUTPUT_DIR, "templates-index.json"),
+  JSON.stringify(templatesIndex, null, 2) + "\n",
+  "utf-8",
+);
+
 console.log(`\nPacked ${results.length} plugin(s) to ${OUTPUT_DIR}/`);
 console.log(`Wrote ${path.join(OUTPUT_DIR, "index.json")}`);
 console.log(`Wrote ${path.join(OUTPUT_DIR, "roadmap.json")} (${roadmapItems.length} items)`);
+console.log(
+  `Wrote ${path.join(OUTPUT_DIR, "templates-index.json")} ` +
+    `(${templateEntries.length} templates: ${Object.entries(counts)
+      .map(([k, n]) => `${n} ${k}`)
+      .join(", ")})`,
+);

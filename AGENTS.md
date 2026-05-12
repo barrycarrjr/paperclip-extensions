@@ -4,7 +4,15 @@ Guidance for human and AI contributors working in this repository.
 
 ## 1. Purpose
 
-`paperclip-extensions` ships **plugins** (under `plugins/<plugin-id>/`) and **skills** (under `skills/<skill-id>/`) that run against [Paperclip](../paperclip/). Plugins are the typed integration layer (tools, events, scoped HTTP API, UI slots); skills are markdown procedures consumed by agents at runtime. This document covers the lifecycle rules — anything semantic about a specific plugin lives in that plugin's `README.md`.
+`paperclip-extensions` ships four kinds of artifacts that run against [Paperclip](../paperclip/):
+
+- **Plugins** (`plugins/<plugin-id>/`) — the typed integration layer (tools, events, scoped HTTP API, UI slots). Versioned, packed as `.pcplugin`.
+- **Skills** (`skills/<skill-id>/SKILL.md`) — markdown procedures consumed by agents at runtime. No version, no pack.
+- **Agents** (`agents/<agent-id>/AGENT.md`) — pre-configured agent role/permissions + system prompt body. Imported as agent templates.
+- **Routines** (`routines/<routine-id>/ROUTINE.md`) — recurring-job templates (cron + variables + which skill they invoke). Imported as routine templates.
+- **Bundles** (`bundles/<bundle-id>/BUNDLE.md`) — recipes that group a plugin + agent + skills + routines for one-click setup (e.g., "Phone Assistant pack").
+
+Plugins ship as `.pcplugin` archives; the other four (skills, agents, routines, bundles) are exposed via `templates-index.json` on every release and imported in-app from **Instance Settings → Templates → Import from library**. This document covers the lifecycle rules — anything semantic about a specific plugin lives in that plugin's `README.md`.
 
 ## 2. Read This First
 
@@ -27,11 +35,20 @@ plugins/                  # versioned plugins; each ships as its own .pcplugin
     tsconfig.json
     dist/                 # build output, gitignored
 skills/                   # markdown procedures, no version field, no .pcplugin
+  <skill-id>/SKILL.md     # YAML frontmatter (name, description) + body
+agents/                   # agent templates (role + permissions + system prompt)
+  <agent-id>/AGENT.md     # YAML frontmatter (full schema) + system-prompt body
+routines/                 # routine templates (cron + variables + target skill)
+  <routine-id>/ROUTINE.md # YAML frontmatter (triggers, variables) + description
+bundles/                  # recipes that group plugin + agent + skills + routines
+  <bundle-id>/BUNDLE.md   # YAML frontmatter (includes:, requiresPlugins:) + body
 plugin-plans/             # gitignored design notes (see git/info/exclude)
 dist-pcplugins/           # gitignored release artifacts
 .github/workflows/        # release.yml fires on `v*` tags
 scripts/                  # repo-wide helpers (build:all, pack:all, etc.)
 ```
+
+The release workflow emits `templates-index.json` alongside the `.pcplugin` archives — a single JSON artifact listing every skill/agent/routine/bundle with parsed frontmatter, body, and a SHA-256 content hash. The Paperclip host fetches it to populate the "Import from library" picker and detect when an imported template has an upstream update.
 
 ## 4. Plugin Lifecycle Rules
 
@@ -81,6 +98,53 @@ Releases are tag-driven via `.github/workflows/release.yml`. The workflow fires 
 **Don't:**
 - ❌ `pnpm pack:all` locally and call that "releasing" — `dist-pcplugins/` is gitignored, those files are local-only.
 - ❌ Per-plugin tag names like `phone-tools-v0.3.0` — workflow only matches `v*` and the convention here is repo-level monotonic.
+
+## 4a. Agent / Routine / Bundle template files
+
+These three kinds use **strict YAML** frontmatter (unlike skills, which use Anthropic's lenient name+description convention). If you can't write the value as a bare YAML scalar, quote it or use a `|` block scalar.
+
+### `agents/<id>/AGENT.md` frontmatter
+
+Required: `name`, `description`, `agentName`, `role`. Everything else has sensible defaults — see `packages/shared/src/validators/template.ts` `createAgentTemplateSchema` in the Paperclip repo for the full schema. Extension-only fields:
+
+- `requiresPlugins: string[]` — plugin IDs that should be installed before deploying. Surfaced as warnings in the import picker.
+- `suggestedSkills: string[]` — skills the agent is expected to use. Informational only.
+- `suggestedBundles: string[]` — bundles that include this agent. Informational.
+
+The markdown body is rendered as additional context in the agent template editor — operators read it to understand when to invoke and how the agent should behave. Some adapters can incorporate parts of the body into the system prompt.
+
+### `routines/<id>/ROUTINE.md` frontmatter
+
+Required: `name`, `description`, `routineTitle`, `triggers`. The trigger array follows the `routineTemplateTriggerInputSchema` zod shape — one entry per trigger, discriminated by `kind` (`schedule` | `webhook` | `api`). For `schedule` triggers, supply `cronExpression` and `timezone`. For `webhook`, optionally `signingMode` and `replayWindowSec`.
+
+The `variables` array is the same `RoutineVariable[]` shape Paperclip uses internally — each entry has `name`, `label`, `type` (text/select/number/boolean), `required`, `defaultValue`, and `options` for selects.
+
+Extension-only fields:
+
+- `requiresSkills: string[]` — the skills this routine ultimately invokes. The importer can hint to also import these.
+- `requiresPlugins: string[]` — plugins needed by the target skill.
+
+### `bundles/<id>/BUNDLE.md` frontmatter
+
+Required: `name`, `description`, `includes`. The `includes` object groups references by kind:
+
+```yaml
+includes:
+  agents: [phone-assistant]
+  routines: [pbx-daily-call-report]
+  skills:
+    - phone-lead-qualification
+    - phone-no-show-recovery
+```
+
+When the operator clicks Install on a bundle, the importer expands each reference, looks it up in the same `templates-index.json`, and creates one template row per item. Bundles are pure recipes — they don't generate template rows themselves.
+
+Optional fields:
+- `displayName: string` — human-facing name (defaults to `name`).
+- `icon: string` — lucide icon hint.
+- `category: string` — used for grouping in the picker (`phone`, `support`, etc.).
+- `requiresPlugins: string[]` — plugins the bundle depends on. Surfaced as warnings if missing.
+- `optionalPlugins: string[]` — plugins that enhance the bundle but aren't strictly required.
 
 ## 5. Common Operational Notes
 
