@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "code-scanner";
-const PLUGIN_VERSION = "0.2.6";
+const PLUGIN_VERSION = "0.2.7";
 
 const repoItemSchema = {
   type: "object",

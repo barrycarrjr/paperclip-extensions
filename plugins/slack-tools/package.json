@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-slack-tools",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Paperclip plugin that exposes Slack send/edit/lookup operations as agent tools. Multi-workspace, per-workspace company isolation, mutations gated. Anchor use case: deliver the daily CEO morning briefing as a Slack DM.",
   "type": "module",
   "private": true,

@@ -128,6 +128,8 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.8** — First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.
+
 - **v0.1.7** — First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.
 
 - **v0.1.6** — Passphrase is now optional. When `passphraseSecretRef` is not set, the plugin auto-generates a random 256-bit instance key on first backup and stores it in its own database (auto-key mode). Same-instance restores work with no passphrase input. Cross-instance recovery: export the key via `GET /instance-key/export` (instance-admin) and paste the hex as the restore passphrase. Adds `migrations/0002_instance_keys.sql` and a new `instance-key.export` API route.
