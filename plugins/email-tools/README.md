@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.15.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.15.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.15.0** — New `email.delete-message` bridge action: moves a message to the mailbox's Trash folder (Outlook-style soft-delete; recoverable until the provider's retention window empties Trash). Auto-detects the Trash folder via IMAP SPECIAL-USE `\Trash`, falling back to common path names (`Trash`, `[Gmail]/Trash`, `Deleted Items`, `Deleted Messages`, `INBOX.Trash`). Marks read before moving. Respects `disallowMove`. Helper `findTrashFolder` added to `imap.ts`.

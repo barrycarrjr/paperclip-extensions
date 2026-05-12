@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-revenuecat-tools",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Paperclip plugin that exposes RevenueCat subscriber/entitlement data as agent tools. Multi-project, per-project allowedCompanies, mutations gated.",
   "type": "module",
   "private": true,

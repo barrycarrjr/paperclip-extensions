@@ -6,6 +6,8 @@ Paperclip plugin that lets agents print plain-text content to any Windows printe
 
 ## Recent changes
 
+- **v0.1.6** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.5** — Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
 
 - **v0.1.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

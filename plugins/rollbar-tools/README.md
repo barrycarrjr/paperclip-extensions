@@ -9,6 +9,8 @@ impossible without an explicit operator opt-in.
 
 ## Recent changes
 
+- **v0.2.7** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.2.6** — Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
 
 - **v0.2.5** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
