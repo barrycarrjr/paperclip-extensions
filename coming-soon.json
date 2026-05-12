@@ -96,6 +96,12 @@
       "displayName": "Document Generator",
       "description": "PDF/Word document generation from templates — contracts, proposals, reports. Pairs naturally with docusign-tools.",
       "categories": ["automation"]
+    },
+    {
+      "id": "review-tools",
+      "displayName": "Review Tools",
+      "description": "Pull and reply to customer reviews across Google Business Profile, Facebook, Trustpilot, Apple App Store, Google Play, and more. Per-service on/off toggles so each company connects only what it uses. Read tools surface new reviews; submit tools post replies. Pairs with the Review Reply Agent for drafting, approval, and policy-driven auto-reply.",
+      "categories": ["automation", "connector"]
     }
   ]
 }
