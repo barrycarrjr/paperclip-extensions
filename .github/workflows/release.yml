@@ -44,12 +44,13 @@ jobs:
       - name: Pack every plugin into .pcplugin archives
         run: pnpm run pack:all
 
-      - name: Upload .pcplugin + index.json + roadmap.json to the GitHub release
+      - name: Upload .pcplugin + index.json + roadmap.json + templates-index.json to the GitHub release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist-pcplugins/*.pcplugin
             dist-pcplugins/index.json
             dist-pcplugins/roadmap.json
+            dist-pcplugins/templates-index.json
           generate_release_notes: true
           fail_on_unmatched_files: true
