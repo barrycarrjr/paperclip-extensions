@@ -449,6 +449,31 @@ const PHONE_SAFETY_PREAMBLE = `GENERAL CALL SAFETY (these rules ALWAYS apply, re
 `;
 
 /**
+ * Always-appended preamble teaching the AI to use the `add_to_dnc`
+ * function whenever the recipient opts out. Applies to every call,
+ * not just campaign calls — opt-out compliance is a baseline
+ * obligation regardless of why the call happened. The tool itself
+ * is also injected on every assistant (see model.tools below).
+ */
+const PHONE_DNC_PREAMBLE = `OPT-OUT IS NON-NEGOTIABLE.
+
+You have an \`add_to_dnc\` function. Invoke it IMMEDIATELY when the recipient says any of these (or close paraphrases):
+- "don't call again" / "stop calling" / "don't call me anymore"
+- "remove me from your list" / "take me off your list"
+- "I'm not interested, please don't call back"
+- Any unambiguous request to stop further contact
+
+After invoking the function, briefly acknowledge: "Of course — you won't hear from us again. Sorry to bother you, have a good day." Then end the call. Do NOT try to overcome the objection or pivot. The recipient has revoked consent and the call must terminate.
+
+Do NOT invoke add_to_dnc for:
+- Mild deflection ("I'm busy right now") — that's not opt-out; offer to call back another time
+- Existing-customer questions or service issues — those should be transferred to a human if you have transferCall
+
+---
+
+`;
+
+/**
  * Additional preamble appended ONLY when the assistant has a configured
  * transferTarget. Tells the AI when and how to invoke the transferCall
  * tool. Kept separate from the main safety preamble so assistants
@@ -495,22 +520,28 @@ function mapAssistantConfigToVapi(
       model: model || "gpt-4o",
     };
     if (cfg.systemPrompt) {
-      // Prepend the safety preamble to every skill-author-supplied system
-      // prompt. Done at engine level so individual skills can't accidentally
-      // omit it; also done on PATCH so existing assistants get the latest
-      // safety rules whenever they're updated.
+      // Prepend the safety preamble + the DNC preamble (always — opt-out
+      // is a baseline obligation) + the transfer preamble (when the
+      // assistant has a transferTarget) to every skill-author-supplied
+      // system prompt. Done at engine level so individual skills can't
+      // accidentally omit safety rules; also done on PATCH so existing
+      // assistants get the latest preambles when they're updated.
       const transferPreamble = cfg.transferTarget ? PHONE_TRANSFER_PREAMBLE : "";
       modelObj.messages = [
         {
           role: "system",
-          content: PHONE_SAFETY_PREAMBLE + transferPreamble + cfg.systemPrompt,
+          content:
+            PHONE_SAFETY_PREAMBLE + PHONE_DNC_PREAMBLE + transferPreamble + cfg.systemPrompt,
         },
       ];
     }
     // TODO: drop `endCallFunctionEnabled` (legacy flag, set on `body` below)
     // once the minimum supported Vapi API version is past the point that
     // accepts only the new `model.tools[{type:"endCall"}]` form.
-    const tools: Array<Record<string, unknown>> = [{ type: "endCall" }];
+    const tools: Array<Record<string, unknown>> = [
+      { type: "endCall" },
+      buildAddToDncTool(),
+    ];
     if (cfg.transferTarget) {
       tools.push(buildTransferCallTool(cfg.transferTarget, cfg.transferMessage));
     }
@@ -597,6 +628,40 @@ function mapAssistantConfigToVapi(
  * dials a DID Barry's 3CX answers, and 3CX's inbound rules route to
  * the right extension.
  */
+/**
+ * Build the Vapi `function`-type tool for `add_to_dnc`. When the AI
+ * invokes it mid-call, Vapi posts a `tool-calls` / `function-call`
+ * webhook to our `vapi` endpoint. The worker's onWebhook handler
+ * recognises tool === "add_to_dnc" and dispatches to addDncEntry —
+ * no Vapi response shape is required because the AI doesn't need a
+ * value back; the side effect (adding to DNC) is the whole point.
+ *
+ * Always injected on every assistant. Opt-out compliance shouldn't
+ * depend on the assistant being in "campaign mode" — confirmation
+ * calls, support calls, and one-off outbounds all need to honor
+ * "stop calling me" the same way.
+ */
+function buildAddToDncTool(): Record<string, unknown> {
+  return {
+    type: "function",
+    function: {
+      name: "add_to_dnc",
+      description:
+        "Add the current call's recipient to the do-not-call list so they are never dialed again. Invoke this whenever the recipient asks to be removed from your list, says 'don't call again', 'stop calling', 'remove me', or any unambiguous opt-out request.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description:
+              "Short summary of why the recipient asked to opt out. Free-form, e.g. 'not interested', 'wrong person', 'asked to be removed'.",
+          },
+        },
+      },
+    },
+  };
+}
+
 function buildTransferCallTool(
   destination: string,
   message: string | undefined,

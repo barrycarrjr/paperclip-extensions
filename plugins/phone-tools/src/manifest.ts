@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.4.1";
+const PLUGIN_VERSION = "0.5.0";
 
 const accountItemSchema = {
   type: "object",
@@ -320,7 +320,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "Phone (AI calls via 3CX + Vapi/DIY)",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX. Backs onto Vapi.ai (v0.5.0 will add a self-hosted DIY engine selectable from the same engine dropdown). v0.4.0 adds warm transfer: when an assistant has a transferTarget, the engine injects a transferCall tool so the AI can hand off to a human destination DID — 3CX answers and routes via its inbound rules, no cross-plugin coupling required. Multi-account, per-account allowedCompanies, mutations gated, optional call recording per account.",
+    "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX. Backs onto Vapi.ai (DIY engine future). v0.4.0 adds warm transfer: when an assistant has a transferTarget, the engine injects a transferCall tool so the AI can hand off to a human destination DID — 3CX answers and routes via its inbound rules. v0.5.0 adds outbound campaign mode: drop a CSV of leads into a campaign, answer a hard compliance preflight (TCPA / DNC / hours / opt-out language), click start, watch the per-minute runner work the list within budget. Multi-account, per-account allowedCompanies, mutations gated, optional call recording per account.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
@@ -668,6 +668,254 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         properties: {
           account: { type: "string", description: "Account identifier. Optional." },
         },
+      },
+    },
+
+    // ─── v0.5.0: Outbound campaigns ──────────────────────────────
+    {
+      name: "phone_campaign_create",
+      displayName: "Create outbound campaign",
+      description:
+        "Create a draft outbound campaign. Validates compliance preflight (audience, list source, hours, opening disclosure, opt-out language) and refuses to create if the assistant has no transferTarget configured. Returns campaignId in 'draft' status; call phone_campaign_start to begin dialing. Mutation, gated by allowMutations.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string", description: "Account identifier. Optional." },
+          assistantAgentId: {
+            type: "string",
+            description: "Paperclip assistant agent UUID that will conduct the calls. The runner resolves this to the engine-side vapiAssistantId. Must have transferTarget configured on its phone config.",
+          },
+          name: { type: "string", description: "Display name, e.g. 'Sample Pack 2026Q2'." },
+          purpose: {
+            type: "string",
+            description: "One-sentence purpose of the campaign. Spliced into the assistant's opening line. Be specific: 'introduce our quarterly print sample pack to local restaurant owners' beats 'sales calls'.",
+          },
+          preflight: {
+            type: "object",
+            description: "Full CompliancePreflight object — audience, list source, geographic scope, hours, disclosure, opt-out, acknowledgements. Refuses to create if any required field is missing or any rule fails.",
+          },
+          pacing: {
+            type: "object",
+            description: "Optional pacing override. Defaults: maxConcurrent=2, secondsBetweenDials=90, maxPerHour=30, maxPerDay=200.",
+          },
+          retry: {
+            type: "object",
+            description: "Optional retry policy override. Defaults: no-answer retried after 4h up to 2x, busy retried after 10m up to 3x.",
+          },
+          outcomeIssueProjectId: {
+            type: "string",
+            description: "Optional Paperclip project UUID where qualified-lead issues should land. Defaults to the assistant's transferIssueProjectId if not set.",
+          },
+        },
+        required: ["assistantAgentId", "name", "purpose", "preflight"],
+      },
+    },
+    {
+      name: "phone_campaign_update",
+      displayName: "Update outbound campaign",
+      description:
+        "Patch an existing campaign. Only allowed in 'draft' or 'paused' status — refuses to mutate a running campaign. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          campaignId: { type: "string" },
+          patch: {
+            type: "object",
+            description: "Partial Campaign — any of name, purpose, pacing, retry, preflight, outcomeIssueProjectId.",
+          },
+        },
+        required: ["campaignId", "patch"],
+      },
+    },
+    {
+      name: "phone_campaign_start",
+      displayName: "Start outbound campaign",
+      description:
+        "Move a draft or paused campaign to running status. Re-runs the full compliance preflight. The runner skill picks it up on its next tick. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: { campaignId: { type: "string" } },
+        required: ["campaignId"],
+      },
+    },
+    {
+      name: "phone_campaign_pause",
+      displayName: "Pause outbound campaign",
+      description:
+        "Pause a running campaign. In-flight calls finish on their own; no new dials. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: { campaignId: { type: "string" } },
+        required: ["campaignId"],
+      },
+    },
+    {
+      name: "phone_campaign_resume",
+      displayName: "Resume outbound campaign",
+      description: "Resume a paused campaign. Re-evaluates business hours before each lead. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: { campaignId: { type: "string" } },
+        required: ["campaignId"],
+      },
+    },
+    {
+      name: "phone_campaign_stop",
+      displayName: "Stop outbound campaign (terminal)",
+      description:
+        "Terminal stop. Pending leads are marked disqualified with reason 'campaign-stopped'. Cannot be resumed; create a new campaign if you want to revisit the list. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          campaignId: { type: "string" },
+          reason: { type: "string", description: "Optional human-readable reason persisted on the campaign." },
+        },
+        required: ["campaignId"],
+      },
+    },
+    {
+      name: "phone_campaign_status",
+      displayName: "Get campaign status + counters",
+      description:
+        "Snapshot: campaign config, today's counters, lifetime counters, lead-status breakdown. Read.",
+      parametersSchema: {
+        type: "object",
+        properties: { campaignId: { type: "string" } },
+        required: ["campaignId"],
+      },
+    },
+    {
+      name: "phone_campaign_list",
+      displayName: "List campaigns",
+      description: "List campaigns owned by the calling company, optionally filtered by status. Read.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["draft", "running", "paused", "stopped", "completed"] },
+        },
+      },
+    },
+    {
+      name: "phone_lead_list_append",
+      displayName: "Append leads to a campaign",
+      description:
+        "Append leads to an existing campaign's lead list. DNC-listed phones are skipped (returned in 'skipped' with reason='dnc'). Phones that fail E.164 normalization are skipped with reason='invalid-phone'. Idempotent on phoneE164: re-appending an existing lead is a no-op. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          campaignId: { type: "string" },
+          leads: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                phoneE164: { type: "string" },
+                name: { type: "string" },
+                businessName: { type: "string" },
+                websiteUrl: { type: "string" },
+                meta: { type: "object" },
+                timezoneHint: { type: "string", description: "IANA tz, e.g. 'America/New_York'." },
+              },
+              required: ["phoneE164"],
+            },
+          },
+        },
+        required: ["campaignId", "leads"],
+      },
+    },
+    {
+      name: "phone_lead_list_import_csv",
+      displayName: "Import leads from CSV",
+      description:
+        "Parse a CSV blob and append leads. CSV is utf-8; first row is the header. Caller specifies which header is the phone column (and optionally name / businessName / website / timezone). Phones are normalized to E.164. 10k row cap. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          campaignId: { type: "string" },
+          csvText: { type: "string", description: "Raw CSV content." },
+          mapping: {
+            type: "object",
+            properties: {
+              phone: { type: "string", description: "Column name holding the phone number. Required." },
+              name: { type: "string" },
+              businessName: { type: "string" },
+              website: { type: "string" },
+              timezone: { type: "string" },
+            },
+            required: ["phone"],
+          },
+        },
+        required: ["campaignId", "csvText", "mapping"],
+      },
+    },
+    {
+      name: "phone_lead_status",
+      displayName: "Get lead status in a campaign",
+      description: "Read a single lead's current state. Useful for spot-checking. Read.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          campaignId: { type: "string" },
+          phoneE164: { type: "string" },
+        },
+        required: ["campaignId", "phoneE164"],
+      },
+    },
+    {
+      name: "phone_dnc_add",
+      displayName: "Add a phone to the do-not-call list",
+      description:
+        "Idempotent. Used by the in-call AI when a prospect opts out, or by the operator manually. Once added, every campaign on the same account skips this number. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string", description: "Account identifier. Optional — falls back to defaultAccount." },
+          phoneE164: { type: "string" },
+          reason: { type: "string", description: "Free-form: 'opt-out' / 'operator-added' / 'regulatory'. For audit." },
+          campaignId: { type: "string", description: "Optional source campaign — set when the AI added this entry mid-call." },
+        },
+        required: ["phoneE164"],
+      },
+    },
+    {
+      name: "phone_dnc_check",
+      displayName: "Check if a phone is on the do-not-call list",
+      description: "Returns the DNC entry if present, else null. Read.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string" },
+          phoneE164: { type: "string" },
+        },
+        required: ["phoneE164"],
+      },
+    },
+    {
+      name: "phone_dnc_list",
+      displayName: "List the do-not-call entries on an account",
+      description: "Read.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string" },
+          since: { type: "string", description: "ISO 8601 timestamp; only entries added at or after." },
+          limit: { type: "number", default: 100 },
+        },
+      },
+    },
+    {
+      name: "phone_dnc_remove",
+      displayName: "Remove a phone from the do-not-call list (audit-logged)",
+      description:
+        "Remove an entry. Requires `note` as audit context (e.g. 'operator confirmed prospect changed mind'). Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string" },
+          phoneE164: { type: "string" },
+          note: { type: "string", description: "Required. Reason for removing the DNC entry. Stored in the plugin logger for audit." },
+        },
+        required: ["phoneE164", "note"],
       },
     },
   ],

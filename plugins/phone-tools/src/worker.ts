@@ -17,6 +17,30 @@ import { handleAssistantsApi } from "./api/assistants-routes.js";
 import { handleOperatorPhoneApi } from "./api/operator-phone-routes.js";
 import { recordSpend } from "./assistants/cost-cap.js";
 import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
+import {
+  addDncEntry,
+  bumpCounter,
+  checkDnc,
+  listCompanyCampaigns,
+  listLeads,
+  listLeadsByStatus,
+  readCampaign,
+  readCounters,
+  readDncList,
+  readLead,
+  removeDncEntry,
+  writeCampaign,
+  writeLead,
+} from "./campaigns/state.js";
+import { assertPreflight } from "./campaigns/preflight.js";
+import { normalizeToE164, parseCsv, rowToLead } from "./campaigns/csv.js";
+import {
+  DEFAULT_PACING,
+  DEFAULT_RETRY,
+  type Campaign,
+  type CampaignLead,
+  type CompliancePreflight,
+} from "./campaigns/types.js";
 import type {
   AssistantConfig,
   CallDirection,
@@ -453,6 +477,154 @@ async function postTransferBoardComment(
   } catch (err) {
     ctx.logger.warn("phone-tools: postTransferBoardComment unexpected error", {
       callId: args.callId,
+      err: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * On a call.ended or call.transferred event, fetch the call's
+ * metadata from the engine. If it carries paperclip_campaign_id +
+ * paperclip_lead_phone, locate the lead and update its status to
+ * match the call outcome. Best-effort: failures log but never throw.
+ *
+ * Outcome inference rules:
+ * - call.transferred  → lead.status = "transferred"
+ * - call.ended with endReason ∈ {"customer-did-not-answer", "no-answer", "silence-timed-out"} → "no-answer" (schedule retry if attempts < cap)
+ * - call.ended with endReason ∈ {"customer-busy", "twilio-busy"} → "busy" (schedule retry if attempts < cap)
+ * - call.ended otherwise → "called" (the AI completed the conversation; outcome classification happens later from transcript)
+ */
+async function updateCampaignLeadFromEvent(
+  ctx: PluginContext,
+  event: NormalizedPhoneEvent & { kind: "call.ended" | "call.transferred" },
+  engine: import("./engines/types.js").PhoneEngine,
+): Promise<void> {
+  try {
+    // Pull the call's metadata. The engine doesn't expose it on the
+    // event payload, so we re-fetch via getCallStatus which carries
+    // the engine's metadata. Cheap because it's the same endpoint
+    // we'd hit on a polling status check.
+    const status = await engine.getCallStatus(event.callId).catch(() => null);
+    if (!status) return;
+    const meta = (status as unknown as { metadata?: Record<string, unknown> }).metadata ?? {};
+    const campaignId = typeof meta.paperclip_campaign_id === "string" ? meta.paperclip_campaign_id : null;
+    const leadPhone = typeof meta.paperclip_lead_phone === "string" ? meta.paperclip_lead_phone : null;
+    if (!campaignId || !leadPhone) return;
+
+    const lead = await readLead(ctx, campaignId, leadPhone);
+    if (!lead) return;
+    const campaign = await readCampaign(ctx, campaignId);
+    if (!campaign) return;
+
+    let nextStatus: typeof lead.status = lead.status;
+    let nextAttemptAfter: string | undefined;
+
+    if (event.kind === "call.transferred") {
+      nextStatus = "transferred";
+      await bumpCounter(ctx, campaignId, "transferred");
+    } else {
+      // event.kind === "call.ended"
+      const endReason = (event.endReason ?? "").toLowerCase();
+      if (
+        endReason.includes("no-answer") ||
+        endReason.includes("did-not-answer") ||
+        endReason.includes("silence")
+      ) {
+        const policy = campaign.retry.onNoAnswer;
+        if (lead.attempts < policy.maxAttempts) {
+          nextStatus = "no-answer";
+          nextAttemptAfter = new Date(Date.now() + policy.afterSec * 1000).toISOString();
+        } else {
+          nextStatus = "no-answer";
+        }
+        await bumpCounter(ctx, campaignId, "noAnswer");
+      } else if (endReason.includes("busy")) {
+        const policy = campaign.retry.onBusy;
+        if (lead.attempts < policy.maxAttempts) {
+          nextStatus = "busy";
+          nextAttemptAfter = new Date(Date.now() + policy.afterSec * 1000).toISOString();
+        } else {
+          nextStatus = "busy";
+        }
+      } else if (endReason.includes("voicemail")) {
+        nextStatus = "voicemail";
+      } else {
+        nextStatus = "called";
+      }
+      if (event.costUsd) await bumpCounter(ctx, campaignId, "costUsd", event.costUsd);
+    }
+
+    await writeLead(ctx, {
+      ...lead,
+      status: nextStatus,
+      nextAttemptAfter,
+      lastAttemptAt: lead.lastAttemptAt ?? new Date().toISOString(),
+    });
+
+    ctx.logger.info("phone-tools: campaign lead updated", {
+      campaignId,
+      leadPhone,
+      from: lead.status,
+      to: nextStatus,
+      attempts: lead.attempts,
+      via: event.kind,
+    });
+  } catch (err) {
+    ctx.logger.warn("phone-tools: updateCampaignLeadFromEvent failed", {
+      callId: event.callId,
+      err: (err as Error).message,
+    });
+  }
+}
+
+/**
+ * The AI invoked the `add_to_dnc` in-call function. Add the call's
+ * destination to the account's DNC list. If the call is part of a
+ * campaign, also flip the lead's status to "dnc" so the runner
+ * never re-dials it.
+ */
+async function handleAddToDncFunctionCall(
+  ctx: PluginContext,
+  event: NormalizedPhoneEvent & { kind: "call.function_call" },
+  claimed: { accountKey: string; account: ConfigAccount; engine: import("./engines/types.js").PhoneEngine },
+): Promise<void> {
+  try {
+    const status = await claimed.engine.getCallStatus(event.callId).catch(() => null);
+    if (!status?.to) {
+      ctx.logger.warn("phone-tools: add_to_dnc invoked but call has no destination", {
+        callId: event.callId,
+      });
+      return;
+    }
+    const phone = status.to;
+    const meta = (status as unknown as { metadata?: Record<string, unknown> }).metadata ?? {};
+    const campaignId = typeof meta.paperclip_campaign_id === "string" ? meta.paperclip_campaign_id : undefined;
+    const params = (event.params ?? {}) as { reason?: string };
+    const reason = params.reason ?? "opt-out";
+
+    const result = await addDncEntry(ctx, claimed.accountKey, {
+      phoneE164: phone,
+      addedAt: new Date().toISOString(),
+      addedByCampaignId: campaignId,
+      reason,
+    });
+    ctx.logger.info("phone-tools: AI-invoked add_to_dnc", {
+      callId: event.callId,
+      accountKey: claimed.accountKey,
+      phone,
+      campaignId,
+      alreadyPresent: result.alreadyPresent,
+    });
+
+    if (campaignId) {
+      const lead = await readLead(ctx, campaignId, phone);
+      if (lead) {
+        await writeLead(ctx, { ...lead, status: "dnc" });
+      }
+    }
+  } catch (err) {
+    ctx.logger.warn("phone-tools: handleAddToDncFunctionCall failed", {
+      callId: event.callId,
       err: (err as Error).message,
     });
   }
@@ -1328,6 +1500,677 @@ const plugin = definePlugin({
       },
     );
 
+    // ─── v0.5.0: Campaigns + DNC ───────────────────────────────────────
+
+    /**
+     * Helper: read the assistant's PhoneConfig and confirm it has a
+     * transferTarget. Cold campaigns without a warm-transfer
+     * destination are noise — qualified leads have nowhere to go —
+     * so we refuse to create campaigns whose driving assistant lacks
+     * one. The runner re-validates on start.
+     */
+    async function assertAssistantHasTransfer(
+      agentId: string,
+      companyId: string,
+    ): Promise<void> {
+      const agent = await ctx.agents.get(agentId, companyId).catch(() => null);
+      if (!agent) {
+        throw new Error(`[ECAMPAIGN_INVALID_ASSISTANT] Assistant ${agentId} not found in company ${companyId}.`);
+      }
+      const { readPhoneConfig } = await import("./assistants/cost-cap.js");
+      const cfg = await readPhoneConfig(ctx, agentId);
+      if (!cfg?.transferTarget) {
+        throw new Error(
+          `[ECAMPAIGN_NO_TRANSFER] Assistant ${agentId} has no transferTarget on its phone config. Set one on the agent's Phone tab → Warm transfer → Configure before creating a campaign.`,
+        );
+      }
+    }
+
+    function generateCampaignId(): string {
+      // Short randomized id, sufficient for state-key uniqueness within
+      // an instance. crypto.randomUUID is available in Node 22+ (the
+      // runtime this plugin targets).
+      return `c_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    }
+
+    ctx.tools.register(
+      "phone_campaign_create",
+      {
+        displayName: "Create outbound campaign",
+        description: "Create a draft campaign. Validates preflight + assistant transferTarget.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            assistantAgentId: { type: "string" },
+            name: { type: "string" },
+            purpose: { type: "string" },
+            preflight: { type: "object" },
+            pacing: { type: "object" },
+            retry: { type: "object" },
+            outcomeIssueProjectId: { type: "string" },
+          },
+          required: ["assistantAgentId", "name", "purpose", "preflight"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_campaign_create");
+        if (gate) return gate;
+        const p = params as {
+          account?: string;
+          assistantAgentId?: string;
+          name?: string;
+          purpose?: string;
+          preflight?: CompliancePreflight;
+          pacing?: Campaign["pacing"];
+          retry?: Campaign["retry"];
+          outcomeIssueProjectId?: string;
+        };
+        if (!p.assistantAgentId) return { error: "[EINVALID_INPUT] `assistantAgentId` is required" };
+        if (!p.name) return { error: "[EINVALID_INPUT] `name` is required" };
+        if (!p.purpose) return { error: "[EINVALID_INPUT] `purpose` is required" };
+        if (!p.preflight) return { error: "[EINVALID_INPUT] `preflight` is required" };
+
+        const r = await resolveOrError(ctx, runCtx, "phone_campaign_create", p.account);
+        if (!r.ok) return { error: r.error };
+
+        try {
+          await assertAssistantHasTransfer(p.assistantAgentId, runCtx.companyId);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+
+        const campaign: Campaign = {
+          id: generateCampaignId(),
+          companyId: runCtx.companyId,
+          accountKey: r.resolved.accountKey,
+          assistantAgentId: p.assistantAgentId,
+          name: p.name,
+          purpose: p.purpose,
+          preflight: p.preflight,
+          pacing: { ...DEFAULT_PACING, ...(p.pacing ?? {}) },
+          retry: { ...DEFAULT_RETRY, ...(p.retry ?? {}) },
+          outcomeIssueProjectId: p.outcomeIssueProjectId,
+          status: "draft",
+          createdAt: new Date().toISOString(),
+          createdBy: runCtx.agentId,
+        };
+
+        // Validate preflight at creation time too (catches obvious
+        // misconfig early; start re-validates with the latest
+        // leadCount).
+        try {
+          assertPreflight(campaign.preflight, {
+            assistantHasTransferTarget: true,
+            // Empty leadCount at create time triggers ECAMPAIGN_EMPTY which
+            // is the wrong error here (creation is valid empty); skip the
+            // emptiness check by passing 1.
+            leadCount: 1,
+          });
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+
+        await writeCampaign(ctx, campaign);
+        await track(ctx, runCtx, "phone_campaign_create", r.resolved.accountKey, {
+          campaignId: campaign.id,
+        });
+        return {
+          content: `Created campaign ${campaign.id} ("${campaign.name}") in draft status.`,
+          data: { campaign },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_update",
+      {
+        displayName: "Update outbound campaign",
+        description: "Patch a draft or paused campaign.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" }, patch: { type: "object" } },
+          required: ["campaignId", "patch"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_campaign_update");
+        if (gate) return gate;
+        const p = params as { campaignId?: string; patch?: Partial<Campaign> };
+        if (!p.campaignId || !p.patch) {
+          return { error: "[EINVALID_INPUT] `campaignId` and `patch` required" };
+        }
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign) return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        if (campaign.companyId !== runCtx.companyId) {
+          return { error: "[ECAMPAIGN_NOT_FOUND]" };
+        }
+        if (campaign.status !== "draft" && campaign.status !== "paused") {
+          return {
+            error: `[ECAMPAIGN_BAD_STATE] Cannot patch a campaign in status '${campaign.status}'. Pause it first.`,
+          };
+        }
+        const merged: Campaign = { ...campaign, ...p.patch, id: campaign.id, companyId: campaign.companyId };
+        await writeCampaign(ctx, merged);
+        return { content: "Campaign updated.", data: { campaign: merged } };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_start",
+      {
+        displayName: "Start outbound campaign",
+        description: "Move draft/paused → running. Re-validates preflight.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" } },
+          required: ["campaignId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_campaign_start");
+        if (gate) return gate;
+        const p = params as { campaignId?: string };
+        if (!p.campaignId) return { error: "[EINVALID_INPUT] `campaignId` required" };
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        if (campaign.status !== "draft" && campaign.status !== "paused") {
+          return { error: `[ECAMPAIGN_BAD_STATE] Cannot start from status '${campaign.status}'.` };
+        }
+        try {
+          await assertAssistantHasTransfer(campaign.assistantAgentId, campaign.companyId);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+        const leadCount = (await listLeads(ctx, campaign.id)).length;
+        try {
+          assertPreflight(campaign.preflight, {
+            assistantHasTransferTarget: true,
+            leadCount,
+          });
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+        const next: Campaign = {
+          ...campaign,
+          status: "running",
+          startedAt: campaign.startedAt ?? new Date().toISOString(),
+          pausedAt: undefined,
+        };
+        await writeCampaign(ctx, next);
+        await track(ctx, runCtx, "phone_campaign_start", campaign.accountKey, {
+          campaignId: campaign.id,
+        });
+        return { content: `Campaign ${campaign.id} is now running.`, data: { campaign: next } };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_pause",
+      {
+        displayName: "Pause outbound campaign",
+        description: "Stop dialing; in-flight calls finish.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" } },
+          required: ["campaignId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_campaign_pause");
+        if (gate) return gate;
+        const p = params as { campaignId?: string };
+        if (!p.campaignId) return { error: "[EINVALID_INPUT] `campaignId` required" };
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        if (campaign.status !== "running") {
+          return { error: `[ECAMPAIGN_BAD_STATE] Cannot pause from status '${campaign.status}'.` };
+        }
+        const next: Campaign = { ...campaign, status: "paused", pausedAt: new Date().toISOString() };
+        await writeCampaign(ctx, next);
+        return { content: "Campaign paused.", data: { campaign: next } };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_resume",
+      {
+        displayName: "Resume outbound campaign",
+        description: "Resume a paused campaign.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" } },
+          required: ["campaignId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_campaign_resume");
+        if (gate) return gate;
+        const p = params as { campaignId?: string };
+        if (!p.campaignId) return { error: "[EINVALID_INPUT] `campaignId` required" };
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        if (campaign.status !== "paused") {
+          return { error: `[ECAMPAIGN_BAD_STATE] Cannot resume from status '${campaign.status}'.` };
+        }
+        const next: Campaign = { ...campaign, status: "running", pausedAt: undefined };
+        await writeCampaign(ctx, next);
+        return { content: "Campaign resumed.", data: { campaign: next } };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_stop",
+      {
+        displayName: "Stop outbound campaign (terminal)",
+        description: "Mark all pending leads disqualified; cannot resume.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" }, reason: { type: "string" } },
+          required: ["campaignId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_campaign_stop");
+        if (gate) return gate;
+        const p = params as { campaignId?: string; reason?: string };
+        if (!p.campaignId) return { error: "[EINVALID_INPUT] `campaignId` required" };
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        if (campaign.status === "stopped" || campaign.status === "completed") {
+          return { error: `[ECAMPAIGN_BAD_STATE] Already in status '${campaign.status}'.` };
+        }
+        const pending = await listLeads(ctx, campaign.id, { status: "pending" });
+        for (const lead of pending) {
+          await writeLead(ctx, {
+            ...lead,
+            status: "disqualified",
+            outcome: { summary: `campaign-stopped${p.reason ? `: ${p.reason}` : ""}`, transferred: false },
+          });
+        }
+        const next: Campaign = { ...campaign, status: "stopped", stoppedAt: new Date().toISOString() };
+        await writeCampaign(ctx, next);
+        return {
+          content: `Campaign ${campaign.id} stopped. ${pending.length} pending lead(s) marked disqualified.`,
+          data: { campaign: next, disqualifiedCount: pending.length },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_status",
+      {
+        displayName: "Get campaign status + counters",
+        description: "Snapshot of a campaign.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" } },
+          required: ["campaignId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { campaignId?: string };
+        if (!p.campaignId) return { error: "[EINVALID_INPUT] `campaignId` required" };
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        const today = await readCounters(ctx, campaign.id);
+        const leadsByStatus = await listLeadsByStatus(ctx, campaign.id);
+        return {
+          content: `Campaign ${campaign.id}: ${campaign.status}.`,
+          data: { campaign, counters: { today }, leadsByStatus },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_list",
+      {
+        displayName: "List campaigns",
+        description: "List campaigns owned by the calling company.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            status: {
+              type: "string",
+              enum: ["draft", "running", "paused", "stopped", "completed"],
+            },
+          },
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { status?: Campaign["status"] };
+        const all = await listCompanyCampaigns(ctx, runCtx.companyId);
+        const filtered = p.status ? all.filter((c) => c.status === p.status) : all;
+        return {
+          content: `${filtered.length} campaign(s).`,
+          data: { campaigns: filtered },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_lead_list_append",
+      {
+        displayName: "Append leads to a campaign",
+        description: "Append leads. Skips DNC + invalid phones.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            campaignId: { type: "string" },
+            leads: { type: "array" },
+          },
+          required: ["campaignId", "leads"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_lead_list_append");
+        if (gate) return gate;
+        const p = params as { campaignId?: string; leads?: Array<Partial<CampaignLead>> };
+        if (!p.campaignId || !Array.isArray(p.leads)) {
+          return { error: "[EINVALID_INPUT] `campaignId` and `leads[]` required" };
+        }
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        let added = 0;
+        const skipped: Array<{ phone: string; reason: string }> = [];
+        for (const raw of p.leads) {
+          const phone = normalizeToE164(String(raw.phoneE164 ?? ""));
+          if (!phone) {
+            skipped.push({ phone: String(raw.phoneE164 ?? ""), reason: "invalid-phone" });
+            continue;
+          }
+          const dnc = await checkDnc(ctx, campaign.accountKey, phone);
+          if (dnc) {
+            skipped.push({ phone, reason: "dnc" });
+            continue;
+          }
+          const existing = await readLead(ctx, campaign.id, phone);
+          if (existing) {
+            skipped.push({ phone, reason: "duplicate" });
+            continue;
+          }
+          await writeLead(ctx, {
+            campaignId: campaign.id,
+            phoneE164: phone,
+            name: raw.name,
+            businessName: raw.businessName,
+            websiteUrl: raw.websiteUrl,
+            meta: raw.meta,
+            timezoneHint: raw.timezoneHint,
+            status: "pending",
+            attempts: 0,
+            callIds: [],
+          });
+          added++;
+        }
+        return {
+          content: `Added ${added} lead(s); skipped ${skipped.length}.`,
+          data: { added, skipped, total: p.leads.length },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_lead_list_import_csv",
+      {
+        displayName: "Import leads from CSV",
+        description: "Parse CSV + append leads.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            campaignId: { type: "string" },
+            csvText: { type: "string" },
+            mapping: { type: "object" },
+          },
+          required: ["campaignId", "csvText", "mapping"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_lead_list_import_csv");
+        if (gate) return gate;
+        const p = params as {
+          campaignId?: string;
+          csvText?: string;
+          mapping?: { phone?: string; name?: string; businessName?: string; website?: string; timezone?: string };
+        };
+        if (!p.campaignId || !p.csvText || !p.mapping?.phone) {
+          return { error: "[EINVALID_INPUT] campaignId, csvText, mapping.phone required" };
+        }
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        const parsed = parseCsv(p.csvText);
+        if (parsed.rows.length === 0) {
+          return { error: "[ECSV_EMPTY] CSV has no data rows." };
+        }
+        if (parsed.rows.length > 10000) {
+          return { error: "[ECSV_TOO_LARGE] CSV has >10000 rows; split before importing." };
+        }
+        if (!parsed.headers.includes(p.mapping.phone)) {
+          return {
+            error: `[ECSV_BAD_MAPPING] CSV has no header named '${p.mapping.phone}'. Available: ${parsed.headers.join(", ")}.`,
+          };
+        }
+        let added = 0;
+        const skipped: Array<{ phone: string; reason: string }> = [];
+        for (const row of parsed.rows) {
+          const result = rowToLead(campaign.id, row, {
+            phone: p.mapping.phone,
+            name: p.mapping.name,
+            businessName: p.mapping.businessName,
+            website: p.mapping.website,
+            timezone: p.mapping.timezone,
+          });
+          if (!result.ok || !result.lead) {
+            skipped.push({ phone: row[p.mapping.phone] ?? "", reason: result.reason ?? "unknown" });
+            continue;
+          }
+          const dnc = await checkDnc(ctx, campaign.accountKey, result.lead.phoneE164);
+          if (dnc) {
+            skipped.push({ phone: result.lead.phoneE164, reason: "dnc" });
+            continue;
+          }
+          const existing = await readLead(ctx, campaign.id, result.lead.phoneE164);
+          if (existing) {
+            skipped.push({ phone: result.lead.phoneE164, reason: "duplicate" });
+            continue;
+          }
+          await writeLead(ctx, result.lead);
+          added++;
+        }
+        return {
+          content: `Imported ${added} lead(s) from CSV; skipped ${skipped.length}.`,
+          data: { added, skipped, total: parsed.rows.length },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_lead_status",
+      {
+        displayName: "Get lead status in a campaign",
+        description: "Read.",
+        parametersSchema: {
+          type: "object",
+          properties: { campaignId: { type: "string" }, phoneE164: { type: "string" } },
+          required: ["campaignId", "phoneE164"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { campaignId?: string; phoneE164?: string };
+        if (!p.campaignId || !p.phoneE164) {
+          return { error: "[EINVALID_INPUT] campaignId + phoneE164 required" };
+        }
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        const phone = normalizeToE164(p.phoneE164);
+        if (!phone) return { error: "[EINVALID_INPUT] phoneE164 not normalizable" };
+        const lead = await readLead(ctx, p.campaignId, phone);
+        if (!lead) return { error: `[ELEAD_NOT_FOUND] ${phone}` };
+        return { content: `Lead ${phone}: ${lead.status}.`, data: { lead } };
+      },
+    );
+
+    // ─── DNC tools ─────────────────────────────────────────────────────
+
+    ctx.tools.register(
+      "phone_dnc_add",
+      {
+        displayName: "Add a phone to the do-not-call list",
+        description: "Idempotent. Used by the in-call AI when prospect opts out.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            phoneE164: { type: "string" },
+            reason: { type: "string" },
+            campaignId: { type: "string" },
+          },
+          required: ["phoneE164"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_dnc_add");
+        if (gate) return gate;
+        const p = params as { account?: string; phoneE164?: string; reason?: string; campaignId?: string };
+        const phone = normalizeToE164(String(p.phoneE164 ?? ""));
+        if (!phone) return { error: "[EINVALID_INPUT] phoneE164 not normalizable" };
+        const r = await resolveOrError(ctx, runCtx, "phone_dnc_add", p.account);
+        if (!r.ok) return { error: r.error };
+        const result = await addDncEntry(ctx, r.resolved.accountKey, {
+          phoneE164: phone,
+          addedAt: new Date().toISOString(),
+          addedByCampaignId: p.campaignId,
+          reason: p.reason ?? (p.campaignId ? "opt-out" : "operator-added"),
+        });
+        ctx.logger.info("phone-tools: DNC entry added", {
+          accountKey: r.resolved.accountKey,
+          phoneE164: phone,
+          campaignId: p.campaignId,
+          alreadyPresent: result.alreadyPresent,
+        });
+        return {
+          content: result.alreadyPresent
+            ? `Already on DNC.`
+            : `Added ${phone} to DNC.`,
+          data: result,
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_dnc_check",
+      {
+        displayName: "Check if a phone is on the do-not-call list",
+        description: "Read.",
+        parametersSchema: {
+          type: "object",
+          properties: { account: { type: "string" }, phoneE164: { type: "string" } },
+          required: ["phoneE164"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { account?: string; phoneE164?: string };
+        const phone = normalizeToE164(String(p.phoneE164 ?? ""));
+        if (!phone) return { error: "[EINVALID_INPUT] phoneE164 not normalizable" };
+        const r = await resolveOrError(ctx, runCtx, "phone_dnc_check", p.account);
+        if (!r.ok) return { error: r.error };
+        const entry = await checkDnc(ctx, r.resolved.accountKey, phone);
+        return {
+          content: entry ? `${phone} is on DNC.` : `${phone} is NOT on DNC.`,
+          data: { inDnc: !!entry, entry },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_dnc_list",
+      {
+        displayName: "List DNC entries",
+        description: "Read.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            since: { type: "string" },
+            limit: { type: "number" },
+          },
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { account?: string; since?: string; limit?: number };
+        const r = await resolveOrError(ctx, runCtx, "phone_dnc_list", p.account);
+        if (!r.ok) return { error: r.error };
+        const list = await readDncList(ctx, r.resolved.accountKey);
+        let entries = list.entries;
+        if (p.since) {
+          entries = entries.filter((e) => e.addedAt >= p.since!);
+        }
+        const limit = Math.min(p.limit ?? 100, 1000);
+        return {
+          content: `${entries.length} DNC entry/ies on ${r.resolved.accountKey}.`,
+          data: { entries: entries.slice(0, limit), total: entries.length },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_dnc_remove",
+      {
+        displayName: "Remove a DNC entry (audit-logged)",
+        description: "Requires `note` for audit context. Mutation.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            phoneE164: { type: "string" },
+            note: { type: "string" },
+          },
+          required: ["phoneE164", "note"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_dnc_remove");
+        if (gate) return gate;
+        const p = params as { account?: string; phoneE164?: string; note?: string };
+        if (!p.note || p.note.trim().length === 0) {
+          return { error: "[EINVALID_INPUT] `note` is required for audit." };
+        }
+        const phone = normalizeToE164(String(p.phoneE164 ?? ""));
+        if (!phone) return { error: "[EINVALID_INPUT] phoneE164 not normalizable" };
+        const r = await resolveOrError(ctx, runCtx, "phone_dnc_remove", p.account);
+        if (!r.ok) return { error: r.error };
+        const result = await removeDncEntry(ctx, r.resolved.accountKey, phone);
+        ctx.logger.warn("phone-tools: DNC entry REMOVED (audit)", {
+          accountKey: r.resolved.accountKey,
+          phoneE164: phone,
+          note: p.note,
+          actor: runCtx.agentId,
+          companyId: runCtx.companyId,
+          removed: result.removed,
+        });
+        return {
+          content: result.removed ? `Removed ${phone} from DNC.` : `${phone} not on DNC; no-op.`,
+          data: result,
+        };
+      },
+    );
+
     ctx.logger.info("phone-tools: tool registration complete");
   },
 
@@ -1468,6 +2311,23 @@ const plugin = definePlugin({
         endReason: event.endReason,
         runCtxForTelemetry: null,
       });
+    }
+
+    // Campaign lead bookkeeping: when call.ended / call.transferred
+    // fires for a call placed by the runner, look up the lead via
+    // metadata.campaignId + metadata.leadPhone and update its status.
+    // Skipped if no campaign metadata — keeps non-campaign calls
+    // cheap (just one extra cache-friendly read per terminal event).
+    if (event.kind === "call.ended" || event.kind === "call.transferred") {
+      void updateCampaignLeadFromEvent(webhookCtx, event, claimed.engine);
+    }
+
+    // In-call function tools dispatch — the AI invoked add_to_dnc
+    // (or transferCall, but Vapi handles transferCall internally so
+    // we don't need to do anything for that). For add_to_dnc we
+    // append to the account's DNC list.
+    if (event.kind === "call.function_call" && event.tool === "add_to_dnc") {
+      void handleAddToDncFunctionCall(webhookCtx, event, claimed);
     }
 
     // A transfer is also a terminal state for the AI leg — the SIP
