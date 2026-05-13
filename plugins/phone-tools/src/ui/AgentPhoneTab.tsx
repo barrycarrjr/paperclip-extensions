@@ -6,6 +6,7 @@ import {
 } from "@paperclipai/plugin-sdk/ui";
 import { PlaceCallModal } from "./PlaceCallModal.js";
 import { TestCallModal } from "./TestCallModal.js";
+import { WarmTransferModal } from "./WarmTransferModal.js";
 
 interface PhoneConfig {
   voice?: string;
@@ -14,6 +15,9 @@ interface PhoneConfig {
   enabled?: boolean;
   vapiAssistantId?: string;
   account?: string;
+  transferTarget?: string;
+  transferMessage?: string;
+  transferIssueProjectId?: string;
 }
 
 interface CostWindow {
@@ -72,6 +76,7 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
 
   const [placeCallOpen, setPlaceCallOpen] = useState(false);
   const [testCallOpen, setTestCallOpen] = useState(false);
+  const [warmTransferOpen, setWarmTransferOpen] = useState(false);
   const [activeCallId, setActiveCallId] = useState<string | null>(null);
 
   if (status.loading) {
@@ -156,6 +161,16 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
         </div>
       )}
 
+      {config && (
+        <WarmTransferPanel
+          assistantName={assistantName}
+          transferTarget={config.transferTarget}
+          transferMessage={config.transferMessage}
+          transferIssueProjectId={config.transferIssueProjectId}
+          onConfigure={() => setWarmTransferOpen(true)}
+        />
+      )}
+
       <RecentCallsList agentId={agentId} companyId={host.companyId ?? ""} />
 
       {placeCallOpen && (
@@ -191,9 +206,99 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
           onClose={() => setActiveCallId(null)}
         />
       )}
+      {warmTransferOpen && config && (
+        <WarmTransferModal
+          assistantName={assistantName}
+          agentId={agentId}
+          companyId={host.companyId ?? ""}
+          voice={config.voice ?? ""}
+          callerIdNumberId={config.callerIdNumberId ?? ""}
+          currentTransferTarget={config.transferTarget}
+          currentTransferMessage={config.transferMessage}
+          currentTransferIssueProjectId={config.transferIssueProjectId}
+          onClose={() => setWarmTransferOpen(false)}
+          onSaved={() => {
+            setWarmTransferOpen(false);
+            // Re-fetch the agent-phone-status data so the panel reflects
+            // the saved config without requiring a tab refresh.
+            status.refresh?.();
+          }}
+        />
+      )}
     </div>
   );
 }
+
+interface WarmTransferPanelProps {
+  assistantName: string;
+  transferTarget: string | undefined;
+  transferMessage: string | undefined;
+  transferIssueProjectId: string | undefined;
+  onConfigure: () => void;
+}
+
+function WarmTransferPanel({
+  assistantName,
+  transferTarget,
+  transferMessage,
+  transferIssueProjectId,
+  onConfigure,
+}: WarmTransferPanelProps) {
+  const enabled = !!transferTarget;
+  return (
+    <div style={{ display: "grid", gap: 8, padding: 16, border: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <strong style={{ fontSize: 13 }}>Warm transfer</strong>
+          <span
+            style={{
+              marginLeft: 8,
+              fontSize: 11,
+              padding: "2px 8px",
+              border: "1px solid var(--border)",
+              color: enabled ? "var(--foreground)" : "var(--muted-foreground)",
+            }}
+          >
+            {enabled ? "enabled" : "disabled"}
+          </span>
+        </div>
+        <button type="button" onClick={onConfigure} style={smallSecondaryButton}>
+          {enabled ? "Edit" : "Configure"}
+        </button>
+      </div>
+
+      {enabled ? (
+        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", rowGap: 4, fontSize: 12 }}>
+          <span style={{ color: "var(--muted-foreground)" }}>Destination</span>
+          <span style={{ fontFamily: "monospace" }}>{transferTarget}</span>
+          <span style={{ color: "var(--muted-foreground)" }}>Spoken handoff line</span>
+          <span>{transferMessage || "(default)"}</span>
+          <span style={{ color: "var(--muted-foreground)" }}>Auto-file issues to project</span>
+          <span style={{ fontFamily: "monospace", fontSize: 11 }}>
+            {transferIssueProjectId || "—"}
+          </span>
+        </div>
+      ) : (
+        <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: 0 }}>
+          When enabled, {assistantName} can hand a call off to a human by saying e.g.{" "}
+          <em>"transfer me to a person"</em>. Vapi places the bridge leg to the configured
+          destination DID and 3CX routes it via your inbound rules. Click <em>Configure</em> to set
+          a destination.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const smallSecondaryButton: React.CSSProperties = {
+  appearance: "none",
+  border: "1px solid var(--border)",
+  background: "transparent",
+  color: "inherit",
+  padding: "4px 10px",
+  fontSize: 12,
+  cursor: "pointer",
+};
 
 function RecentCallsList({ agentId, companyId }: { agentId: string; companyId: string }) {
   const calls = usePluginData<{ calls: Array<Record<string, unknown>> }>(
