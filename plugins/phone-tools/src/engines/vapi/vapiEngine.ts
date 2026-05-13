@@ -448,6 +448,33 @@ const PHONE_SAFETY_PREAMBLE = `GENERAL CALL SAFETY (these rules ALWAYS apply, re
 
 `;
 
+/**
+ * Additional preamble appended ONLY when the assistant has a configured
+ * transferTarget. Tells the AI when and how to invoke the transferCall
+ * tool. Kept separate from the main safety preamble so assistants
+ * without a transfer destination don't get instructions for a tool
+ * that doesn't exist.
+ */
+const PHONE_TRANSFER_PREAMBLE = `WARM TRANSFER TO HUMAN.
+
+You have a \`transferCall\` function available. Invoke it ONLY when:
+- The caller explicitly asks to speak to a human, manager, agent, or "a real person"
+- The caller has a problem you genuinely can't help with (e.g. account-specific action, complaint requiring authority)
+- The caller becomes upset or hostile and de-escalation isn't working
+- The skill-specific instructions below tell you to transfer at a specific point
+
+Before invoking the function, say one short line to the caller — e.g. "Of course, let me transfer you to a person who can help — one moment please." Then invoke transferCall. Do NOT promise specific people by name; you don't know who will answer. After invoking, do not keep speaking — the engine will bridge the line.
+
+Do NOT transfer for:
+- Questions you can answer from the skill instructions
+- Casual chit-chat
+- The first sign of mild frustration (try once to help; transfer only if it persists)
+- Voicemail / answering machines (leave a message and hang up instead)
+
+---
+
+`;
+
 function mapAssistantConfigToVapi(
   cfg: AssistantConfig,
   partial = false,
@@ -472,17 +499,22 @@ function mapAssistantConfigToVapi(
       // prompt. Done at engine level so individual skills can't accidentally
       // omit it; also done on PATCH so existing assistants get the latest
       // safety rules whenever they're updated.
+      const transferPreamble = cfg.transferTarget ? PHONE_TRANSFER_PREAMBLE : "";
       modelObj.messages = [
         {
           role: "system",
-          content: PHONE_SAFETY_PREAMBLE + cfg.systemPrompt,
+          content: PHONE_SAFETY_PREAMBLE + transferPreamble + cfg.systemPrompt,
         },
       ];
     }
     // TODO: drop `endCallFunctionEnabled` (legacy flag, set on `body` below)
     // once the minimum supported Vapi API version is past the point that
     // accepts only the new `model.tools[{type:"endCall"}]` form.
-    modelObj.tools = [{ type: "endCall" }];
+    const tools: Array<Record<string, unknown>> = [{ type: "endCall" }];
+    if (cfg.transferTarget) {
+      tools.push(buildTransferCallTool(cfg.transferTarget, cfg.transferMessage));
+    }
+    modelObj.tools = tools;
     body.model = modelObj;
   }
 
@@ -548,6 +580,41 @@ function mapAssistantConfigToVapi(
   return body;
 }
 
+/**
+ * Build the Vapi `transferCall` tool definition with one destination.
+ *
+ * Vapi's transferCall tool, when invoked by the model, makes the engine
+ * dial the destination and bridge the legs via SIP REFER. The
+ * `message` is spoken to the caller right before the bridge — set it
+ * to something polite and short or the caller hears the AI cut off
+ * abruptly when control hands over.
+ *
+ * Destination shape: we use `{ type: "number", number: <E.164> }` so
+ * Vapi places a normal outbound leg. If Barry's setup also wants to
+ * transfer via SIP URI (e.g. directly to ext 200 on the PBX without
+ * round-tripping through PSTN), we can layer a `{ type: "sip", sipUri }`
+ * branch onto this helper later. The number form works for both: it
+ * dials a DID Barry's 3CX answers, and 3CX's inbound rules route to
+ * the right extension.
+ */
+function buildTransferCallTool(
+  destination: string,
+  message: string | undefined,
+): Record<string, unknown> {
+  return {
+    type: "transferCall",
+    destinations: [
+      {
+        type: "number",
+        number: destination,
+        message:
+          message ??
+          "One moment, I'm transferring you to a person who can help.",
+      },
+    ],
+  };
+}
+
 function pickHeader(
   headers: Record<string, string>,
   name: string,
@@ -574,7 +641,40 @@ interface VapiWebhookEnvelope {
     durationSeconds?: number;
     artifact?: VapiCall["artifact"];
     functionCall?: { name?: string; parameters?: unknown };
+    destination?: { type?: string; number?: string; sipUri?: string };
   };
+}
+
+/**
+ * Vapi's documented `endedReason` values that indicate the AI invoked
+ * the transferCall tool and the engine handed the leg off to a human.
+ * The reason strings have churned across Vapi API versions so we match
+ * conservatively: any reason containing "forward" or "transfer" counts.
+ */
+function isTransferEndReason(reason: string | undefined): boolean {
+  if (!reason) return false;
+  const r = reason.toLowerCase();
+  return r.includes("forward") || r.includes("transfer");
+}
+
+/**
+ * Extract the line the AI said just before invoking transferCall —
+ * that's typically the most useful "why was I being transferred?"
+ * context for the human picking up. Falls back to a generic note if
+ * we can't see a recent assistant turn.
+ *
+ * Looks at the last assistant turn in the artifact.messages stream.
+ */
+function extractTransferReason(call: VapiCall): string | null {
+  const messages = call.artifact?.messages ?? [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const r = String(m?.role ?? "").toLowerCase();
+    if ((r === "bot" || r === "assistant") && m?.message) {
+      return m.message;
+    }
+  }
+  return null;
 }
 
 function parseVapiWebhookBody(body: unknown): NormalizedPhoneEvent | null {
@@ -632,21 +732,66 @@ function parseVapiWebhookBody(body: unknown): NormalizedPhoneEvent | null {
     }
 
     case "end-of-call-report": {
+      const endReason = msg.endedReason ?? call.endedReason ?? "unknown";
+      const endedAt = call.endedAt ?? new Date().toISOString();
+      const durationSec =
+        msg.durationSeconds ??
+        (call.startedAt && call.endedAt
+          ? Math.round(
+              (new Date(call.endedAt).getTime() -
+                new Date(call.startedAt).getTime()) /
+                1000,
+            )
+          : 0);
+      const costUsd = msg.cost ?? call.cost ?? call.costBreakdown?.total;
+      // When the AI invoked transferCall, Vapi reports the call as
+      // ended with a transfer-flavored reason. Surface this as a
+      // distinct `call.transferred` event so skills can post the
+      // transcript-to-context comment on the human's board, separate
+      // from regular call-ended bookkeeping. Both events fire — the
+      // worker dedupes terminal-state recording downstream.
+      if (isTransferEndReason(endReason)) {
+        return {
+          kind: "call.transferred",
+          callId: call.id,
+          destination:
+            msg.destination?.number ??
+            msg.destination?.sipUri ??
+            "(unknown)",
+          reason: extractTransferReason(call) ?? null,
+          endedAt,
+          durationSec,
+          costUsd,
+        };
+      }
       return {
         kind: "call.ended",
         callId: call.id,
-        endedAt: call.endedAt ?? new Date().toISOString(),
-        durationSec:
-          msg.durationSeconds ??
-          (call.startedAt && call.endedAt
-            ? Math.round(
-                (new Date(call.endedAt).getTime() -
-                  new Date(call.startedAt).getTime()) /
-                  1000,
-              )
-            : 0),
-        endReason: msg.endedReason ?? call.endedReason ?? "unknown",
-        costUsd: msg.cost ?? call.cost ?? call.costBreakdown?.total,
+        endedAt,
+        durationSec,
+        endReason,
+        costUsd,
+      };
+    }
+
+    case "transfer-destination-request":
+    case "tool-calls": {
+      // Vapi posts these mid-call when the model invokes transferCall.
+      // We don't need to respond with anything (the destinations are
+      // baked into the tool config), but we surface them as a
+      // function_call event so any subscribed skill can react in
+      // real time (e.g. log to a board issue before the leg drops).
+      const fnName =
+        msg.functionCall?.name ??
+        (msg.type === "transfer-destination-request" ? "transferCall" : null);
+      if (!fnName) return null;
+      return {
+        kind: "call.function_call",
+        callId: call.id,
+        tool: fnName,
+        params:
+          msg.functionCall?.parameters ??
+          (msg.destination ? { destination: msg.destination } : {}),
       };
     }
 

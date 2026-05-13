@@ -318,6 +318,174 @@ async function recordTerminalCallIfNew(
   return { recorded: true };
 }
 
+/**
+ * Best-effort board issue creation when an AI call is warm-transferred
+ * to a human. The human picking up the SIP leg sees the transcript-so-
+ * far + the AI's stated reason as a regular Paperclip issue in their
+ * workflow.
+ *
+ * "Best-effort" — every step is wrapped: if the call→agent mapping
+ * isn't there, or the assistant's phone config doesn't specify a
+ * project, or the transcript fetch fails, we log and move on. The
+ * transfer itself already happened on the SIP side; this is enrichment.
+ *
+ * Skills that want different routing (e.g. "transfers from the sales
+ * AI go to the sales project; transfers from the support AI go to the
+ * support project") can subscribe to plugin.phone-tools.call.transferred
+ * directly and ignore this auto-issue path entirely.
+ */
+async function postTransferBoardComment(
+  ctx: PluginContext,
+  args: {
+    accountKey: string;
+    callId: string;
+    destination: string;
+    reason: string | null;
+    endedAt: string;
+    durationSec: number;
+    companyIds: string[];
+    engine: import("./engines/types.js").PhoneEngine;
+  },
+): Promise<void> {
+  try {
+    // 1. Map the call back to the originating assistant agent. The
+    //    mapping is written by assistants-routes when the call is
+    //    placed via the AgentPhoneTab — calls placed by skills via
+    //    phone_call_make don't currently write this, so we skip
+    //    gracefully when the mapping is missing.
+    const mappingValue = await ctx.state.get({
+      scopeKind: "instance",
+      stateKey: `call-agent:${args.callId}`,
+    });
+    const agentId =
+      typeof mappingValue === "string" && mappingValue.length > 0
+        ? mappingValue
+        : null;
+    if (!agentId) {
+      ctx.logger.info(
+        "phone-tools: call.transferred — no call-agent mapping; skipping auto-issue (event still emitted for skills to handle)",
+        { callId: args.callId },
+      );
+      return;
+    }
+
+    // 2. Read the assistant's phone config — needs transferIssueProjectId.
+    const { readPhoneConfig } = await import("./assistants/cost-cap.js");
+    const config = await readPhoneConfig(ctx, agentId);
+    const projectId = config?.transferIssueProjectId;
+    if (!projectId) {
+      ctx.logger.info(
+        "phone-tools: call.transferred — assistant has no transferIssueProjectId; skipping auto-issue",
+        { callId: args.callId, agentId },
+      );
+      return;
+    }
+
+    // 3. Fetch the transcript so the human picking up has context.
+    //    Vapi exposes structured turns under artifact.messages.
+    let transcript = "";
+    try {
+      const t = await args.engine.getCallTranscript(args.callId, "plain");
+      transcript = t.transcript ?? "";
+    } catch (err) {
+      ctx.logger.warn(
+        "phone-tools: call.transferred — transcript fetch failed; posting issue without it",
+        { callId: args.callId, err: (err as Error).message },
+      );
+    }
+
+    // 4. Resolve the assistant's display name so the issue title reads
+    //    like a sentence. Falls back to the agentId if the lookup fails.
+    let assistantName = agentId;
+    try {
+      for (const companyId of args.companyIds) {
+        const agent = await ctx.agents.get(agentId, companyId).catch(() => null);
+        if (agent?.name) {
+          assistantName = agent.name;
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const title = `📞 ${assistantName} transferred a call to a human`;
+    const description = buildTransferIssueDescription({
+      destination: args.destination,
+      reason: args.reason,
+      durationSec: args.durationSec,
+      endedAt: args.endedAt,
+      transcript,
+      callId: args.callId,
+    });
+
+    // 5. File the issue on the first company we have access to. For
+    //    multi-company fan-out the event itself already fires per
+    //    company; we only create one issue (whichever company owns the
+    //    assistant's project). companyIds is the account's
+    //    allowedCompanies — typically a single LLC per phone account
+    //    anyway, so this is almost always single-element.
+    for (const companyId of args.companyIds) {
+      try {
+        await ctx.issues.create({
+          companyId,
+          projectId,
+          title,
+          description,
+          assigneeAgentId: config.transferIssueAssigneeAgentId,
+          priority: "high",
+          originKind: "plugin:phone-tools",
+          originId: `transfer:${args.callId}`,
+        });
+        ctx.logger.info("phone-tools: warm-transfer issue created", {
+          callId: args.callId,
+          projectId,
+          companyId,
+        });
+        return; // one issue per call regardless of how many companies the account allows
+      } catch (err) {
+        ctx.logger.warn(
+          "phone-tools: warm-transfer issue creation failed for company; trying next",
+          { callId: args.callId, companyId, err: (err as Error).message },
+        );
+      }
+    }
+  } catch (err) {
+    ctx.logger.warn("phone-tools: postTransferBoardComment unexpected error", {
+      callId: args.callId,
+      err: (err as Error).message,
+    });
+  }
+}
+
+function buildTransferIssueDescription(args: {
+  destination: string;
+  reason: string | null;
+  durationSec: number;
+  endedAt: string;
+  transcript: string;
+  callId: string;
+}): string {
+  const TRANSCRIPT_MAX = 12_000;
+  const transcript = args.transcript
+    ? args.transcript.length > TRANSCRIPT_MAX
+      ? args.transcript.slice(0, TRANSCRIPT_MAX) + "\n\n_…transcript truncated…_"
+      : args.transcript
+    : "_(transcript unavailable)_";
+
+  const header = [
+    `**Bridged to:** \`${args.destination}\``,
+    args.reason ? `**AI's parting line:** ${args.reason}` : null,
+    `**AI talked for:** ${args.durationSec}s before handoff`,
+    `**Handoff at:** ${args.endedAt}`,
+    `**Call ID:** \`${args.callId}\``,
+  ]
+    .filter(Boolean)
+    .join("  \n");
+
+  return `${header}\n\n---\n\n## Transcript so far\n\n${transcript}`;
+}
+
 // ─── Idempotency for outbound calls ────────────────────────────────────
 
 async function findIdempotentCall(
@@ -957,6 +1125,8 @@ const plugin = definePlugin({
             model: { type: "string" },
             tools: { type: "array", items: { type: "string" } },
             voicemailMessage: { type: "string" },
+            transferTarget: { type: "string" },
+            transferMessage: { type: "string" },
             idempotencyKey: { type: "string" },
           },
           required: ["name", "systemPrompt"],
@@ -975,6 +1145,8 @@ const plugin = definePlugin({
           model?: string;
           tools?: string[];
           voicemailMessage?: string;
+          transferTarget?: string;
+          transferMessage?: string;
           idempotencyKey?: string;
         };
         if (!p.name) return { error: "[EINVALID_INPUT] `name` is required" };
@@ -1014,6 +1186,8 @@ const plugin = definePlugin({
             model: p.model,
             tools: p.tools,
             voicemailMessage: p.voicemailMessage,
+            transferTarget: p.transferTarget,
+            transferMessage: p.transferMessage,
           });
           await track(ctx, runCtx, "phone_assistant_create", r.resolved.accountKey, {
             assistantId: created.id,
@@ -1045,6 +1219,8 @@ const plugin = definePlugin({
             model: { type: "string" },
             tools: { type: "array", items: { type: "string" } },
             voicemailMessage: { type: "string" },
+            transferTarget: { type: "string" },
+            transferMessage: { type: "string" },
           },
           required: ["assistantId"],
         },
@@ -1063,6 +1239,8 @@ const plugin = definePlugin({
           model?: string;
           tools?: string[];
           voicemailMessage?: string;
+          transferTarget?: string;
+          transferMessage?: string;
         };
         if (!p.assistantId)
           return { error: "[EINVALID_INPUT] `assistantId` is required" };
@@ -1088,6 +1266,8 @@ const plugin = definePlugin({
           if (p.model !== undefined) patch.model = p.model;
           if (p.tools !== undefined) patch.tools = p.tools;
           if (p.voicemailMessage !== undefined) patch.voicemailMessage = p.voicemailMessage;
+          if (p.transferTarget !== undefined) patch.transferTarget = p.transferTarget;
+          if (p.transferMessage !== undefined) patch.transferMessage = p.transferMessage;
           const updated = await r.resolved.engine.updateAssistant(p.assistantId, patch);
           await track(ctx, runCtx, "phone_assistant_update", r.resolved.accountKey, {
             assistantId: p.assistantId,
@@ -1287,6 +1467,43 @@ const plugin = definePlugin({
         costUsd: event.costUsd ?? null,
         endReason: event.endReason,
         runCtxForTelemetry: null,
+      });
+    }
+
+    // A transfer is also a terminal state for the AI leg — the SIP
+    // bridge happens engine-side and the AI is no longer driving the
+    // conversation. Run the same bookkeeping AND post a board comment
+    // so the human picking up has the transcript-so-far + the AI's
+    // stated handoff line.
+    if (event.kind === "call.transferred") {
+      untrackOutbound(event.callId);
+      await recordTerminalCallIfNew(webhookCtx, {
+        callId: event.callId,
+        accountKey: claimed.accountKey,
+        engineKind: claimed.engine.engineKind,
+        companyIds: companyTargets,
+        status: "ended",
+        direction: null,
+        from: null,
+        to: null,
+        startedAt: null,
+        endedAt: event.endedAt,
+        durationSec: event.durationSec,
+        costUsd: event.costUsd ?? null,
+        endReason: `transferred:${event.destination}`,
+        runCtxForTelemetry: null,
+      });
+      // Fire-and-forget — failing to post the board comment shouldn't
+      // block telemetry or the rest of the dispatch.
+      void postTransferBoardComment(webhookCtx, {
+        accountKey: claimed.accountKey,
+        callId: event.callId,
+        destination: event.destination,
+        reason: event.reason,
+        endedAt: event.endedAt,
+        durationSec: event.durationSec,
+        companyIds: companyTargets,
+        engine: claimed.engine,
       });
     }
   },

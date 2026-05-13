@@ -92,6 +92,35 @@ export interface PhoneConfig {
   account?: string;
   wizardAnswers?: Record<string, unknown>;
   guardrails?: Record<string, unknown>;
+  /**
+   * Warm-transfer destination — E.164 number the engine dials when the
+   * in-call AI invokes its transferCall function. Typically a 3CX DID
+   * that routes via inbound rules to the intended human extension or
+   * queue. Leave undefined to disable warm transfer for this assistant.
+   */
+  transferTarget?: string;
+  /**
+   * Spoken line played to the caller right before the SIP bridge.
+   * Defaults to "One moment, I'm transferring you to a person who can
+   * help." Override for skill-specific tone or to surface the
+   * destination ("transferring you to our service department").
+   */
+  transferMessage?: string;
+  /**
+   * When set, a Paperclip issue is auto-created in this project on
+   * `call.transferred` with the transcript-so-far and the AI's stated
+   * handoff reason. The human picking up the SIP leg has the full
+   * context already filed in their normal workflow. Leave undefined
+   * to skip the auto-issue (skills subscribed to call.transferred can
+   * still file their own).
+   */
+  transferIssueProjectId?: string;
+  /**
+   * Optional assignee for the auto-created transfer issue. Use to
+   * notify the same human the leg was bridged to (e.g. Barry's agent
+   * UUID for transfers that ring his extension).
+   */
+  transferIssueAssigneeAgentId?: string;
 }
 
 function configStateKey(agentId: string): string {

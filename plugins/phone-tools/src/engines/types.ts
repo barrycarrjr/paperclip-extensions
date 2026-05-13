@@ -42,6 +42,33 @@ export interface AssistantConfig {
    * level so the AI is at least aware when it's hit a machine.
    */
   voicemailMessage?: string;
+  /**
+   * Warm-transfer destination. When set, the engine injects a
+   * `transferCall` in-call tool the AI may invoke to hand the caller
+   * off to a human. The destination is an E.164 number the engine can
+   * dial — typically a 3CX DID that routes to the intended extension
+   * or queue via 3CX's inbound rules.
+   *
+   * Example: `+12154636348` for "Sales DID at Carr Rock that rings
+   * Barry's extension". 3CX answers, applies its inbound rule, and the
+   * SIP leg lands on the right human. No 3cx-tools call required —
+   * Vapi handles the SIP REFER itself.
+   *
+   * Leave undefined to disable warm transfer (the AI cannot escalate
+   * to a human and must handle the conversation entirely or end the
+   * call). Pair with `transferMessage` to override the default spoken
+   * "transferring you now" line.
+   */
+  transferTarget?: string;
+  /**
+   * Spoken line played to the caller when the AI invokes the transfer
+   * tool, just before the SIP leg is bridged. Defaults to "One moment,
+   * I'm transferring you to a person who can help." Set this when the
+   * default doesn't fit the skill's tone (sales vs support vs medical
+   * etc.) or when you want to surface the destination ("transferring
+   * you to our service department").
+   */
+  transferMessage?: string;
 }
 
 export interface StartCallInput {
@@ -197,6 +224,21 @@ export type NormalizedPhoneEvent =
       callId: string;
       tool: string;
       params: unknown;
+    }
+  | {
+      kind: "call.transferred";
+      callId: string;
+      /** E.164 destination the engine bridged the call to. */
+      destination: string;
+      /**
+       * Free-form reason captured from the engine's end-of-call report
+       * or the AI's tool-call params, when present. Useful for the
+       * human picking up to know what to say first.
+       */
+      reason: string | null;
+      endedAt: string;
+      durationSec: number;
+      costUsd?: number;
     };
 
 // ─── The interface every engine implements ─────────────────────────────

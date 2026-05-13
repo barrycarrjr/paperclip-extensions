@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.3.7";
+const PLUGIN_VERSION = "0.4.0";
 
 const accountItemSchema = {
   type: "object",
@@ -320,7 +320,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "Phone (AI calls via 3CX + Vapi/DIY)",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX. v0.1.0 backs onto Vapi.ai; v0.2.0 will add a self-hosted DIY engine (jambonz + OpenAI Realtime) selectable from the same engine dropdown. Multi-account, per-account allowedCompanies, mutations gated, optional call recording per account.",
+    "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX. Backs onto Vapi.ai (v0.5.0 will add a self-hosted DIY engine selectable from the same engine dropdown). v0.4.0 adds warm transfer: when an assistant has a transferTarget, the engine injects a transferCall tool so the AI can hand off to a human destination DID — 3CX answers and routes via its inbound rules, no cross-plugin coupling required. Multi-account, per-account allowedCompanies, mutations gated, optional call recording per account.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
@@ -598,6 +598,16 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
             description:
               "Optional pre-recorded voicemail message. When set, the engine plays this and ends the call automatically when voicemail is detected. Leave empty for AI-handled voicemail (preserves dynamic content per call). Voicemail detection is always on regardless.",
           },
+          transferTarget: {
+            type: "string",
+            description:
+              "Optional E.164 destination for warm transfer to a human. When set, the engine gives the assistant a `transferCall` tool it may invoke when the caller asks for a person, has a problem the AI can't solve, or becomes hostile. The engine dials this number, plays the configured transfer message to the caller, then SIP-REFERs the leg. Typically this is a 3CX DID that the PBX routes to the intended extension or queue via its inbound rules (e.g. '+12154636348' for 'Sales DID that rings Barry'). Leave empty to disable warm transfer for this assistant.",
+          },
+          transferMessage: {
+            type: "string",
+            description:
+              "Optional spoken line played to the caller just before the SIP leg is bridged to the transfer destination. Defaults to 'One moment, I'm transferring you to a person who can help.' Override when the default tone doesn't fit (e.g. for medical, legal, or hostile-caller contexts) or when you want to surface the destination ('transferring you to our service department').",
+          },
           idempotencyKey: {
             type: "string",
             description: "Optional. Subsequent calls with the same key short-circuit to the existing assistant.",
@@ -622,6 +632,15 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           model: { type: "string" },
           tools: { type: "array", items: { type: "string" } },
           voicemailMessage: { type: "string" },
+          transferTarget: {
+            type: "string",
+            description:
+              "E.164 destination for warm transfer to a human. Set to a non-empty value to enable transfer (gives the assistant a `transferCall` tool); set to empty string to disable.",
+          },
+          transferMessage: {
+            type: "string",
+            description: "Spoken line played to the caller right before the SIP leg is bridged.",
+          },
         },
         required: ["assistantId"],
       },

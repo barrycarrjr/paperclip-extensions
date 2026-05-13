@@ -4,6 +4,8 @@ Paperclip plugin that lets agents and operators place AI-driven phone calls thro
 
 ## Recent changes
 
+- **v0.4.0** — **Warm transfer to a human.** When an assistant has a `transferTarget` (E.164) set on its phone config, the engine injects Vapi's `transferCall` tool into the assistant — the AI can hand the leg off to a configured destination when the caller asks for a person, hits a problem the AI can't resolve, or escalates. Vapi handles the SIP REFER directly (no `3cx-tools` coupling needed); 3CX answers the destination DID via its normal inbound rules and routes to the human extension. New `call.transferred` event normalizes the handoff with destination, duration, AI's parting line, and cost. The webhook handler also runs terminal-state bookkeeping (concurrency slot release + cost telemetry, deduped against polling) and best-effort posts a Paperclip board issue under `transferIssueProjectId` containing the transcript-so-far so the human picking up sees full context. New per-assistant config fields: `transferTarget`, `transferMessage`, `transferIssueProjectId`, `transferIssueAssigneeAgentId` (set via the `phone_assistant_create`/`_update` tools or the `assistants.phone-config.set` API). A new transfer preamble is auto-appended to the safety preamble whenever `transferTarget` is set, telling the AI when to use the tool and when NOT to (don't transfer on first sign of mild frustration, don't transfer voicemail). Skills wanting custom routing can subscribe to `plugin.phone-tools.call.transferred` and file their own issues; the built-in auto-issue is opt-in via the project-id field.
+
 - **v0.3.7** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.3.6** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -49,9 +51,9 @@ Paperclip plugin that lets agents and operators place AI-driven phone calls thro
 
 | Version | What lands |
 |---|---|
-| v0.4.0 | Inbound routes UI on the Phone tab (DID → Assistant mapping, business hours, voicemail-drop fallback). Assistant phone capability for executive-role agents (currently Phone tab is only meaningful for `role: "assistant"`). |
+| v0.4.1 | AgentPhoneTab UI for `transferTarget` (today the field is API-only — set via `POST /api/plugins/phone-tools/api/assistants/:agentId/phone-config` with `{ transferTarget, transferMessage, transferIssueProjectId }`). Inbound routes UI on the Phone tab (DID → Assistant mapping, business hours, voicemail-drop fallback). |
 | v0.5.0 | DIY engine — Jambonz + Deepgram (STT) + Claude/GPT (LLM) + ElevenLabs (TTS, with Qwen-local fallback). Same `PhoneEngine` interface so it slots in without touching skills or wizards. Same engine dropdown on the account config. |
-| Later | DTMF mid-call, warm transfer to a human extension, voicemail-drop, mid-call function tools, deeper 3CX Call Control API integration |
+| Later | DTMF mid-call, voicemail-drop, mid-call function tools, deeper 3CX Call Control API integration, cross-plugin transfer (`phone-tools` → `pbx_transfer_call` on a 3CX-known callId for human-initiated mid-call handoffs) |
 
 ## Tools
 

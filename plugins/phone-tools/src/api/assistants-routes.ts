@@ -70,6 +70,23 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+/**
+ * Three-state read for optional config fields where the operator may
+ * want to clear (empty string) vs. leave-untouched (field absent).
+ *
+ * - `undefined` — field not present in the request body; preserve any
+ *   existing stored value (don't overwrite).
+ * - `""`         — field present and empty; the operator is explicitly
+ *   clearing the stored value.
+ * - `"..."`      — field present with a non-empty value to store.
+ *
+ * `asString` collapses the first two into `undefined`, which is fine
+ * for required fields but wrong for clearable optional ones.
+ */
+function asOptionalRawString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 function asWizardAnswers(value: unknown): AssistantWizardAnswers | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
@@ -221,6 +238,19 @@ async function setPhoneConfig(
   const wizardAnswers = asWizardAnswers(body.wizardAnswers);
   const firstMessage = asString(body.firstMessage);
   const systemPromptOverride = asString(body.systemPrompt);
+  // Warm-transfer destination (E.164) — when set, the engine injects a
+  // transferCall tool and the AI can hand the leg off to a human.
+  // Stored as part of the assistant's phone config so it's editable
+  // per-assistant without touching plugin-level settings.
+  //
+  // Read each transfer field as a *raw* optional string: distinguishing
+  // "field absent" (preserve existing) from "field present but empty"
+  // (clear existing) lets the UI clear a destination without resetting
+  // every other field on the config.
+  const transferTargetRaw = asOptionalRawString(body.transferTarget);
+  const transferMessageRaw = asOptionalRawString(body.transferMessage);
+  const transferIssueProjectIdRaw = asOptionalRawString(body.transferIssueProjectId);
+  const transferIssueAssigneeAgentIdRaw = asOptionalRawString(body.transferIssueAssigneeAgentId);
 
   if (!voice || !callerIdNumberId) {
     return badRequest("voice and callerIdNumberId are required.");
@@ -264,11 +294,29 @@ async function setPhoneConfig(
   const assistantName = `${agent.name} (${agentId.slice(0, 8)})`;
   let vapiAssistantId = existing?.vapiAssistantId ?? null;
 
+  // Resolve the effective transferTarget that will be sent to the
+  // engine on this save. If the request body explicitly sent the field,
+  // use what it sent (empty string clears). If it omitted the field,
+  // preserve whatever was previously stored. We do this BEFORE building
+  // the AssistantConfig so the engine projection picks up the right
+  // transferCall tool injection on the very first save.
+  const existingForTransfer = await readPhoneConfig(ctx, agentId);
+  const effectiveTransferTarget =
+    transferTargetRaw !== undefined
+      ? transferTargetRaw.trim() || undefined
+      : existingForTransfer?.transferTarget;
+  const effectiveTransferMessage =
+    transferMessageRaw !== undefined
+      ? transferMessageRaw.trim() || undefined
+      : existingForTransfer?.transferMessage;
+
   const assistantConfig: AssistantConfig = {
     name: assistantName,
     systemPrompt,
     firstMessage: finalFirstMessage,
     voice: qualifiedVoice,
+    transferTarget: effectiveTransferTarget,
+    transferMessage: effectiveTransferMessage,
   };
 
   try {
@@ -294,6 +342,18 @@ async function setPhoneConfig(
     systemPrompt,
     account: resolved.accountKey,
     wizardAnswers: wizardAnswers ? (wizardAnswers as unknown as Record<string, unknown>) : existing?.wizardAnswers,
+    // Warm-transfer fields. Three-state semantics: field absent in
+    // request → preserve; empty string → clear; non-empty → store.
+    transferTarget: effectiveTransferTarget,
+    transferMessage: effectiveTransferMessage,
+    transferIssueProjectId:
+      transferIssueProjectIdRaw !== undefined
+        ? transferIssueProjectIdRaw.trim() || undefined
+        : existing?.transferIssueProjectId,
+    transferIssueAssigneeAgentId:
+      transferIssueAssigneeAgentIdRaw !== undefined
+        ? transferIssueAssigneeAgentIdRaw.trim() || undefined
+        : existing?.transferIssueAssigneeAgentId,
   };
   await writePhoneConfig(ctx, agentId, next);
   return ok({ config: next });
