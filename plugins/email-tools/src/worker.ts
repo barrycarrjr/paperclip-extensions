@@ -21,7 +21,12 @@ import {
   setSeenFlag,
   type ParsedMessage,
 } from "./imap.js";
-import { runPoll, buildMailboxRuntime, applyAutoTriageRuleToInbox } from "./poll.js";
+import {
+  runPoll,
+  buildMailboxRuntime,
+  applyAutoTriageRuleToInbox,
+  applyMuteRuleToInbox,
+} from "./poll.js";
 import { IdleManager } from "./idle.js";
 import { buildThread } from "./threading.js";
 import { testMailbox } from "./test-mailbox.js";
@@ -758,9 +763,10 @@ const plugin = definePlugin({
         );
         const autoTriage = rows.filter((r) => r.rule_type === "auto-triage").map((r) => r.sender_pattern);
         const keepAlways = rows.filter((r) => r.rule_type === "keep-always").map((r) => r.sender_pattern);
+        const mute = rows.filter((r) => r.rule_type === "mute").map((r) => r.sender_pattern);
         return {
-          content: `auto-triage: ${autoTriage.length} sender(s), keep-always: ${keepAlways.length} sender(s)`,
-          data: { autoTriage, keepAlways },
+          content: `auto-triage: ${autoTriage.length} sender(s), keep-always: ${keepAlways.length} sender(s), mute: ${mute.length} sender(s)`,
+          data: { autoTriage, keepAlways, mute },
         };
       },
     );
@@ -1080,7 +1086,7 @@ const plugin = definePlugin({
       };
     });
 
-    // Upserts a sender rule (auto-triage or keep-always) for a mailbox.
+    // Upserts a sender rule (auto-triage, keep-always, or mute) for a mailbox.
     ctx.actions.register("email.set-rule", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
       const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
@@ -1089,8 +1095,10 @@ const plugin = definePlugin({
       if (!companyId || !mailboxKey || !senderPattern || !ruleType) {
         throw new Error("companyId, mailbox, senderPattern, and ruleType are required");
       }
-      if (ruleType !== "auto-triage" && ruleType !== "keep-always") {
-        throw new Error(`ruleType must be 'auto-triage' or 'keep-always', got: ${ruleType}`);
+      if (ruleType !== "auto-triage" && ruleType !== "keep-always" && ruleType !== "mute") {
+        throw new Error(
+          `ruleType must be 'auto-triage', 'keep-always', or 'mute', got: ${ruleType}`,
+        );
       }
       const config = (await ctx.config.get()) as InstanceConfig;
       const cfg = findConfigMailbox(config, mailboxKey);
@@ -1111,15 +1119,27 @@ const plugin = definePlugin({
         [companyId, mailboxKey, senderPattern, ruleType],
       );
 
-      // Auto-triage rules also do a one-shot sweep of unread INBOX so backlog
-      // mail from the same sender gets cleaned up immediately (otherwise the
-      // rule only applies to new arrivals past the poll cursor).
+      // Auto-triage and mute rules do a one-shot sweep of unread INBOX so
+      // backlog mail from the same sender gets cleaned up immediately
+      // (otherwise the rule only applies to new arrivals past the poll
+      // cursor). Auto-triage moves the mail to _paperclip/triage; mute just
+      // marks it read in-place.
       let sweptCount = 0;
       if (ruleType === "auto-triage") {
         try {
           sweptCount = await applyAutoTriageRuleToInbox(ctx, cfg, senderPattern);
         } catch (err) {
           ctx.logger.warn("email-tools: backlog sweep after set-rule failed", {
+            mailbox: mailboxKey,
+            pattern: senderPattern,
+            error: (err as Error).message,
+          });
+        }
+      } else if (ruleType === "mute") {
+        try {
+          sweptCount = await applyMuteRuleToInbox(ctx, cfg, senderPattern);
+        } catch (err) {
+          ctx.logger.warn("email-tools: backlog mute sweep after set-rule failed", {
             mailbox: mailboxKey,
             pattern: senderPattern,
             error: (err as Error).message,

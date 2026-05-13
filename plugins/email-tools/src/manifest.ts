@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.15.3";
+const PLUGIN_VERSION = "0.16.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -547,7 +547,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
       name: "email_list_rules",
       displayName: "List Email Triage Rules",
       description:
-        "Return the operator's sender rules (auto-triage and keep-always) for a mailbox. The triage routine should call this at the start of every run to load rules from the DB — do NOT read the Markdown rules-home document. Returns { autoTriage: string[], keepAlways: string[] }. Patterns are full email, @domain, or subject:keyword (case-insensitive substring match).",
+        "Return the operator's sender rules (auto-triage, keep-always, and mute) for a mailbox. The triage routine should call this at the start of every run to load rules from the DB — do NOT read the Markdown rules-home document. Returns { autoTriage: string[], keepAlways: string[], mute: string[] }. Muted senders are treated like keep-always for the triage agent (skip the message entirely); the difference is that the poll loop marks muted senders' new arrivals as read on receipt. Patterns are full email, @domain, or subject:keyword (case-insensitive substring match).",
       parametersSchema: {
         type: "object",
         properties: {

@@ -290,6 +290,58 @@ export async function applyAutoTriageRuleToInbox(
   });
 }
 
+// One-shot sweep: when a mute rule is added, mark any unread INBOX messages
+// whose From matches the pattern as seen. No move — muted senders stay in
+// INBOX, just silenced.
+export async function applyMuteRuleToInbox(
+  ctx: PluginContext,
+  mailbox: ConfigMailbox,
+  pattern: string,
+): Promise<number> {
+  const key = mailbox.key as string;
+  if (!key) return 0;
+
+  return withMailboxLock(`${key}:apply-rule`, async () => {
+    const rt = await buildMailboxRuntime(ctx, mailbox, key);
+    const client = await openConnection(rt);
+    try {
+      const folder = mailbox.pollFolder ?? "INBOX";
+      const unseenUids = await searchMessages(client, { folder, unseen: true });
+      if (unseenUids.length === 0) return 0;
+
+      const headers = await fetchHeaders(client, folder, unseenUids);
+      const patternLower = pattern.toLowerCase().trim();
+      const matchedUids: number[] = [];
+
+      for (const h of headers) {
+        const fromAddr = extractEmailFromHeader(h.from);
+        if (!fromAddr) continue;
+        if (patternLower.startsWith("@")) {
+          const at = fromAddr.indexOf("@");
+          if (at >= 0 && `@${fromAddr.slice(at + 1)}` === patternLower) {
+            matchedUids.push(h.uid);
+          }
+        } else if (fromAddr === patternLower) {
+          matchedUids.push(h.uid);
+        }
+      }
+
+      if (matchedUids.length === 0) return 0;
+
+      await setSeenFlag(client, folder, matchedUids, true);
+
+      ctx.logger.info("email-tools: applied mute rule to existing INBOX", {
+        mailbox: key,
+        pattern,
+        matched: matchedUids.length,
+      });
+      return matchedUids.length;
+    } finally {
+      await safeLogout(client);
+    }
+  });
+}
+
 function senderMatchesAutoTriage(fromAddr: string, patterns: Set<string>): boolean {
   if (patterns.size === 0) return false;
   const lower = fromAddr.toLowerCase();
@@ -312,20 +364,27 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
     const client = await openConnection(rt);
     let fetched = 0;
     let autoTriaged = 0;
+    let muted = 0;
 
-    // Load the auto-triage rule set for this mailbox once per poll tick.
-    // Best-effort: if the DB read fails (rare), fall through and skip
+    // Load auto-triage and mute rule sets for this mailbox once per poll
+    // tick. Best-effort: if the DB read fails (rare), fall through and skip
     // auto-application — dispatch will run as before.
     let autoTriageSet = new Set<string>();
+    let muteSet = new Set<string>();
     try {
-      const rules = await ctx.db.query<{ sender_pattern: string }>(
-        `SELECT sender_pattern FROM plugin_email_tools_7cbee3fdf3.email_sender_rules
-         WHERE company_id = $1 AND mailbox_key = $2 AND rule_type = 'auto-triage'`,
+      const rules = await ctx.db.query<{ sender_pattern: string; rule_type: string }>(
+        `SELECT sender_pattern, rule_type FROM plugin_email_tools_7cbee3fdf3.email_sender_rules
+         WHERE company_id = $1 AND mailbox_key = $2 AND rule_type IN ('auto-triage', 'mute')`,
         [mailbox.ingestCompanyId, key],
       );
-      autoTriageSet = new Set(rules.map((r) => r.sender_pattern.toLowerCase()));
+      autoTriageSet = new Set(
+        rules.filter((r) => r.rule_type === "auto-triage").map((r) => r.sender_pattern.toLowerCase()),
+      );
+      muteSet = new Set(
+        rules.filter((r) => r.rule_type === "mute").map((r) => r.sender_pattern.toLowerCase()),
+      );
     } catch (err) {
-      ctx.logger.warn("email-tools poll: failed to load auto-triage rules; continuing without", {
+      ctx.logger.warn("email-tools poll: failed to load sender rules; continuing without", {
         mailbox: key,
         message: (err as Error).message,
       });
@@ -405,6 +464,27 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
               }
             }
 
+            // Check mute rules. If the sender is muted, mark the message as
+            // read in-place and skip both filter and dispatch — muted senders
+            // stay in INBOX but never bump the unread count or trigger the
+            // triage agent.
+            if (fromAddr && senderMatchesAutoTriage(fromAddr, muteSet)) {
+              try {
+                await setSeenFlag(client, folder, [uid], true);
+                muted += 1;
+                if (uid > maxUid) maxUid = uid;
+                continue;
+              } catch (muteErr) {
+                ctx.logger.warn("email-tools poll: mute mark-seen failed", {
+                  mailbox: key,
+                  uid,
+                  sender: fromAddr,
+                  message: (muteErr as Error).message,
+                });
+                // Fall through to normal dispatch on failure.
+              }
+            }
+
             if (passesFilter(parsed, mailbox)) {
               await dispatchReceived(ctx, mailbox, parsed);
               fetched += 1;
@@ -440,6 +520,16 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
         await ctx.telemetry.track("poll-auto-triaged", {
           mailbox: key,
           count: String(autoTriaged),
+        });
+      }
+      if (muted > 0) {
+        ctx.logger.info("email-tools poll: muted new mail by rule", {
+          mailbox: key,
+          muted,
+        });
+        await ctx.telemetry.track("poll-muted", {
+          mailbox: key,
+          count: String(muted),
         });
       }
       return fetched;

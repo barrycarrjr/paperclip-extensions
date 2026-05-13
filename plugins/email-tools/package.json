@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-email-tools",
-  "version": "0.15.3",
+  "version": "0.16.0",
   "description": "Paperclip plugin that exposes email send/receive as agent tools. Multi-mailbox SMTP via nodemailer + IMAP via imapflow with IDLE push, polling fallback, and per-mailbox dispatch.",
   "type": "module",
   "private": true,

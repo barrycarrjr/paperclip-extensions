@@ -102,10 +102,11 @@ parameter. The response is:
 
 ```json
 { "autoTriage": ["@noisy.com", "marketing@bigco.com", ...],
-  "keepAlways": ["boss@company.com", "@important.tld", ...] }
+  "keepAlways": ["boss@company.com", "@important.tld", ...],
+  "mute":       ["newsletter@chatty.com", "@toonoisy.tld", ...] }
 ```
 
-Use these two lists for the matching in Step 4. The `parentIssueId` of
+Use these three lists for the matching in Step 4. The `parentIssueId` of
 the routine still points at the rules-home issue — that's where the
 Review queue lives (Step 5). Resolve it the same way:
 
@@ -121,7 +122,7 @@ an issue holding the email-triage-rules document."
 
 If the document doesn't exist (HTTP 404 on first fetch in Step 5),
 create it with just a Review-queue section — there's no need to seed
-Auto-triage / Keep-always sections anymore (rules are in the DB).
+Auto-triage / Keep-always / Mute sections anymore (rules are in the DB).
 
 ### 2. Determine since-cutoff
 
@@ -163,8 +164,13 @@ a. Call `email-tools:email_fetch` to get headers + body. **If
    review queue. The search already filtered for unseen, but this
    double-check protects against the operator triaging in real time.
 
-b. **Match against Keep-always first** — if any rule matches, skip this
-   message entirely. Do not act, do not mention in review queue.
+b. **Match against Keep-always and Mute first** — if either list matches,
+   skip this message entirely. Do not act, do not mention in review
+   queue. (Mute behaves the same as Keep-always from the agent's
+   perspective; the only difference is that the email-tools poll loop
+   pre-marks muted senders' new arrivals as read on receipt. By the time
+   the triage agent sees a muted message, it's already marked read and
+   `unreadOnly=true` will normally have skipped it in Step 3.)
 
 c. **Match against Auto-triage** — if any rule matches:
    - Call `email-tools:email_move` with `targetFolder = <triageLabel>`.
@@ -204,7 +210,7 @@ plugin DB (see Step 1) and must not be written from this skill.
 - For each entry in the review queue this run, **merge** with the existing
   Review queue section: if the same sender is already there, increment
   the count; otherwise add a new line.
-- **Never modify** the Auto-triage or Keep-always sections of the
+- **Never modify** the Auto-triage / Keep-always / Mute sections of the
   document if they exist — they are deprecated legacy state. The
   operator's per-sender classifications live in the DB and are reflected
   back in the UI's icon styling, not in this Markdown.
