@@ -132,6 +132,8 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- **v0.5.9** — **Comprehensive Setup tab walkthrough.** The in-Paperclip Setup tab on `/instance/settings/plugins/phone-tools` previously stopped at the v0.1.0 Vapi onboarding + 3CX SIP trunk steps — nothing about warm transfer, campaigns, federal DNC, audit export, predictive pacing, or portfolio rollup. Rewritten as 11 sections (A–K) with a TOC table at the top showing time-to-complete and required-vs-optional for each: A. Vapi quickstart · B. Branded caller-ID via 3CX trunk · C. Build an assistant · D. Configure warm transfer · E. Run your first campaign (with the v0.5.4 ✨ Auto-detect callout and the strict-state opener/opt-out rules) · F. DNC compliance (per-account + federal) · G. Audit log export (CSV + agent-tool paths + retention note) · H. Predict cost + run time · I. Multi-LLC portfolio rollup · J. Troubleshooting (every `[E*]` code categorized by setup/campaign/compliance/DNC/call-time/CSV) · K. What's planned next. Pure docs-in-manifest change — no behavioral change, no new tools. Setup tab now stays in sync with the README's Quick Start.
+
 - **v0.5.8** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.5.7** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

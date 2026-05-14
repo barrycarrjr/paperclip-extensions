@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.5.8";
+const PLUGIN_VERSION = "0.5.9";
 
 const accountItemSchema = {
   type: "object",
@@ -128,78 +128,92 @@ const accountItemSchema = {
   },
 } as const;
 
-const SETUP_INSTRUCTIONS = `# Setup — outbound calls via Vapi
+const SETUP_INSTRUCTIONS = `# Setup walkthrough — phone-tools
 
-Get the plugin placing outbound AI-driven phone calls. v0.1.0 ships outbound only; inbound and the DIY (self-hosted) engine come in subsequent versions. Reckon on **about 15–20 minutes** for first-time setup.
+Takes a freshly installed plugin all the way to running revenue-generating AI phone campaigns. **Plan ~30 minutes total** if you do every section; the bare minimum to make a test call is **Section A** alone (~10 min).
 
-There are two ways to run outbound:
+The setup splits into eleven sections — read them in order or jump to whichever applies:
 
-1. **Quickstart (5 minutes)** — uses Vapi's provisioned number. Calls work immediately, but recipients see a "Spam Likely" / "Unknown" caller-ID label because the originating number is fresh and pooled across Vapi customers. Fine for smoke testing and internal demos. **Not** appropriate for production calls to real customers.
-2. **Production via 3CX SIP trunk (additional ~10 minutes + 3CX admin access)** — outbound calls leave through one of your own DIDs. Recipients see your branded caller-ID, no spam tag. Required for any real customer-facing use.
-
-Do **Quickstart** first to verify the loop works end-to-end, then layer on the 3CX trunk before going live.
+| Section | What it covers | Required? | Time |
+|---|---|---|---|
+| **[A](#a-vapi-account--first-call-quickstart)** — Vapi account + first call | Sign up for Vapi, create API key + free phone number, wire to the plugin, place a test call | ✅ Required | ~10 min |
+| **[B](#b-branded-caller-id-3cx-sip-trunk)** — Branded caller-ID (3CX SIP trunk) | Replace Vapi's pooled "Spam Likely" number with your own DID via a 3CX SIP trunk | ⚠️ Required for cold-call campaigns | ~15 min |
+| **[C](#c-build-an-assistant)** — Build an AI assistant | 8-step wizard for the AI persona that drives calls (voice / caller-ID / daily cap) | ✅ Required | ~5 min |
+| **[D](#d-configure-warm-transfer)** — Warm transfer to a human | AI hands the call off to a human DID when the prospect asks for a person | 🔶 Strongly recommended | ~3 min |
+| **[E](#e-run-your-first-outbound-campaign)** — Run your first outbound campaign | Drop a CSV of leads, answer the compliance preflight, hit Start | ✅ Required for campaigns | ~10 min |
+| **[F](#f-dnc-compliance)** — DNC compliance | Per-account DNC (always on) + optional Federal DNC cross-check | 🔶 Federal DNC strongly recommended | ~5 min |
+| **[G](#g-export-the-audit-log)** — Export the audit log | Every dial decision is logged; CSV download for compliance evidence | 🔶 For regulated workflows | ~1 min |
+| **[H](#h-predict-campaign-cost--run-time)** — Predict cost + run time | "How long will this campaign take? What will it cost?" | Optional | ~1 min |
+| **[I](#i-multi-llc-portfolio-rollup)** — Multi-LLC portfolio rollup | Cross-company campaign dashboard at HQ | For multi-LLC operators | ~1 min |
+| **[J](#j-troubleshooting)** — Troubleshooting | Every \`[E*]\` error code with cause + fix | Reference | — |
+| **[K](#k-whats-planned-next)** — What's planned next | v0.6.x roadmap | Reference | — |
 
 ---
 
-## Quickstart — outbound via Vapi's provisioned number
+# A. Vapi account + first call (Quickstart)
 
-### 1. Vapi account
+This section gets a working AI phone call placed via Vapi's pooled number. Recipients will see "Spam Likely" / "Unknown" caller-ID until you complete Section B — that's fine for smoke testing but **not appropriate for real customer calls**. Do this section first to verify the loop works end-to-end, then layer Section B before going live.
 
-Sign up at [https://dashboard.vapi.ai](https://dashboard.vapi.ai) if you don't already have an account.
+### A1. Vapi account
 
-### 2. Create a Vapi Private API Key
+Sign up at [https://dashboard.vapi.ai](https://dashboard.vapi.ai) if you don't already have one. Free tier is fine for setup.
+
+### A2. Create a Vapi Private API Key
 
 In the Vapi dashboard:
 
 - Go to **Org → API Keys**
 - Click **Create new key**
-- Choose **Private API Key** (NOT the public/web key — those can't initiate calls)
+- Choose **Private API Key** — **NOT** the public/web key (those can't initiate calls)
 - Copy the key
 
-### 3. Provision a Vapi phone number (Quickstart only)
+### A3. Provision a Vapi phone number (Quickstart only)
 
 Still in Vapi dashboard:
 
 - Go to **Phone Numbers → Add Phone Number**
-- Choose **Vapi Phone Number** (the free one Vapi provides). Skip "BYO SIP Trunk" for now — that's the production path covered below.
-- After it's created, **copy the phone-number's ID** (a UUID, NOT the E.164 number itself). You'll need it as \`defaultNumberId\` on the plugin settings page.
+- Choose **Vapi Phone Number** (the free one). Skip "BYO SIP Trunk" — that's Section B
+- After it's created, **copy the phone-number's ID** (a UUID — NOT the E.164 number itself). You'll paste it as \`defaultNumberId\` in step A5
 
-### 4. Create a Paperclip secret holding the Vapi API key
+### A4. Create a Paperclip secret holding the Vapi API key
 
-In Paperclip, switch to the company that should own this phone account (typically the LLC the calls are made on behalf of). Then:
+In Paperclip, switch to the company that should own this phone account (typically the LLC the calls are made on behalf of):
 
 - Go to **Secrets → Add**
-- Name it something like \`vapi-api-key\`
-- Paste the Vapi Private API Key from step 2 as the value
+- Name it \`vapi-api-key\`
+- Paste the Vapi Private API Key from step A2 as the value
 - Save, then **copy the secret's UUID** — you'll paste it into the plugin settings next
 
-### 5. Configure the plugin (this page, **Configuration** tab)
+### A5. Configure the plugin
 
-Click the **Configuration** tab above. You'll see an empty **Phone accounts** list. Click **+ Add item** and fill in:
+Open the plugin's **Configuration** tab. You'll see an empty **Phone accounts** list. Click **+ Add item** and fill in:
 
 | Field | Value |
 |---|---|
 | **Identifier** | \`main\` |
 | **Display name** | (whatever you want, e.g. "Acme Corp — main") |
 | **Engine** | \`vapi\` |
-| **Engine API key** | paste the secret UUID from step 4 |
+| **Engine API key** | paste the secret UUID from step A4 |
 | **Webhook signing secret** | leave blank for outbound-only Quickstart |
-| **Default phone-number ID** | the UUID from step 3 |
-| **Default assistant ID** | leave blank (agents pass inline assistant configs to \`phone_call_make\`) |
-| **Enable call recording** | leave off |
+| **Default phone-number ID** | the UUID from step A3 |
+| **Default assistant ID** | leave blank for now — you'll set this in Section C |
+| **Enable call recording** | leave off (consent law; revisit later) |
 | **Max concurrent outbound calls** | \`3\` (default) |
+| **Federal DNC list URL** | leave blank — Section F covers this |
 | **Allowed companies** | tick the company you want to use this account |
 
-Then at the top:
+Then at the top of the Configuration tab:
 
 - **Default account key:** \`main\`
 - **Allow place-call / hangup / assistant mutations:** **enable** when you're ready to actually place calls
 
 Save.
 
-### 6. Smoke-test
+### A6. Smoke-test
 
-From a logged-in shell session, run:
+Section C builds the first assistant — once that's done, the easiest smoke test is the **📲 Test on my phone** button on the agent's Phone tab.
+
+If you'd rather smoke-test before building an assistant, the plugin ships a shell script that uses a built-in demo persona:
 
 \`\`\`bash
 cd <paperclip-extensions>/plugins/phone-tools
@@ -211,117 +225,460 @@ TO='+1XXXXXXXXXX' \\
 ./scripts/smoke-outbound.sh
 \`\`\`
 
-The script does a 30-second test call with a built-in demo assistant, polls until the call ends, and prints the transcript. Costs about ¥0.10 (~$0.07) per call.
+~30-second test call. Costs about \\$0.07.
 
-If the call rings out and the AI speaks its first line — the loop is working.
+✅ If the call rings out and the AI speaks its first line — Section A is done.
 
 ---
 
-## Production — outbound via 3CX SIP trunk (BYO carrier)
+# B. Branded caller-ID (3CX SIP trunk)
 
-This is what makes calls show your **branded caller-ID** instead of "Spam Likely". Do this before placing calls to real customers. There are four steps: create a SIP trunk credential in Vapi, attach a DID to it, create the matching trunk in 3CX, and add an outbound rule. All four are required — missing step 10 is the most common reason calls fail silently.
+This is what replaces Vapi's pooled "Spam Likely" number with **your own DID**, so recipients see a branded number from your area code. **Hard prerequisite for any cold-call campaign** — pooled-number reputation tanks after 50 dials.
 
-### 7. Create a SIP trunk credential in Vapi
+**Prerequisites:** 3CX **Pro** or **Enterprise** license (Standard/Free doesn't support custom SIP trunks).
+
+There are four sub-steps. Skipping any one breaks the loop silently.
+
+### B1. Create a SIP trunk credential in Vapi
 
 In the Vapi dashboard:
 
 - Go to **Settings → Integrations**
-- Scroll down to the **Phone Number Providers** section and click **SIP Trunk**
+- Scroll to **Phone Number Providers** → click **SIP Trunk**
 - Click **Add New SIP Trunk**
 - Fill in:
   - **Name**: anything recognizable, e.g. \`3CX (main)\`
   - **Gateway #1 → IP Address / Domain**: your 3CX server's public FQDN or IP, e.g. \`pbx.example.com\`
-  - **Port**: \`5060\` (leave default unless your 3CX is configured for TLS on 5061)
+  - **Port**: \`5060\` (or \`5061\` if your 3CX is on TLS)
   - **Netmask**: \`32\`
   - **Outbound Protocol**: \`UDP\`
   - ☑ **Allow inbound calls**, ☑ **Allow outbound calls**
-  - Leave **Authentication** (Username / Password) blank — use IP-based auth (see note)
-  - Leave **Use SIP Registration** unchecked (see note)
+  - Leave **Authentication** (Username / Password) blank — IP-based auth is recommended
+  - Leave **Use SIP Registration** unchecked
 - Click **Save SIP Trunk**
 
-> **IP-based vs. registration auth**: For the recommended IP-based path, leave credentials blank and unchecked. Vapi sends SIP traffic to 3CX by source IP and 3CX accepts it based on the IP you whitelist in step 9. If you prefer Vapi to register like a softphone, check **Use SIP Registration** and enter the SIP username/password of the 3CX extension you create for Vapi — but then step 9 is different (create an extension, not a trunk).
+> **IP-based vs. registration auth.** IP-based is recommended: leave creds blank and unchecked. Vapi sends SIP traffic by source IP and 3CX accepts based on the IP allowlist you set in B3. If you'd rather Vapi register like a softphone, check **Use SIP Registration** and supply the SIP creds of a 3CX extension you create for Vapi — then B3 becomes "create an extension" instead of "create a trunk".
 
-### 8. Attach your DID to the SIP trunk credential
+### B2. Attach your DID to the SIP trunk credential
 
 Still in the Vapi dashboard:
 
 - Go to **Phone Numbers → Create Phone Number**
 - Choose **BYO SIP Trunk Number**
 - Fill in:
-  - **Phone Number**: the E.164 DID you want as caller-ID, e.g. \`+15551234567\`
-  - **SIP Trunk Credential**: pick the trunk you saved in step 7 from the dropdown
+  - **Phone Number**: the E.164 DID you want as caller-ID, e.g. \`+12155551234\`
+  - **SIP Trunk Credential**: pick the trunk you saved in B1
   - **Label**: optional human-readable name
 - Click **Import SIP Phone Number**
 
-> If the **SIP Trunk Credential** dropdown shows "No SIP trunks available", the trunk from step 7 wasn't saved yet — go back and save it first.
+> If the **SIP Trunk Credential** dropdown shows "No SIP trunks available", the trunk from B1 wasn't actually saved — go back and save.
 
-**Copy the phone-number UUID** from the resulting entry (shown in the URL when you click into it). You'll paste it as \`defaultNumberId\` in step 11.
+**Copy the phone-number UUID** from the resulting entry (shown in the URL when you click into it). You'll paste it as \`defaultNumberId\` in B5.
 
-### 9. Create the Vapi SIP trunk in 3CX
-
-(Requires 3CX **Pro** or **Enterprise** — Standard/Free doesn't support custom SIP trunks.)
+### B3. Create the Vapi SIP trunk in 3CX
 
 In the 3CX Admin Console:
 
 - Go to **Voice & Chat** in the left nav
-- Click **+ Add Trunk** at the top of the page — NOT **+ Add Gateway** (different thing, right next to it)
+- Click **+ Add Trunk** at the top — NOT **+ Add Gateway** (different thing)
 - Choose **Generic SIP Trunk**
 - Fill in:
   - **Trunk Name**: \`Vapi\`
-  - **Registrar/Server/Gateway hostname or IP**: leave blank for IP-based auth, or \`sip.vapi.ai\` if using SIP registration
-  - **Authentication**: for IP-based auth, add Vapi's SIP origination IP ranges to the allowed IPs list (check [Vapi's current IP list](https://docs.vapi.ai/sip) — they change); for registration-based, enter the username/password
-  - Codec: **G.711 µ-law (PCMU)** as primary
+  - **Registrar/Server/Gateway hostname or IP**: leave blank for IP-based auth (or \`sip.vapi.ai\` for registration-based)
+  - **Authentication**: IP-based → add Vapi's SIP origination IP ranges to the allowed IPs list ([Vapi's published IPs](https://docs.vapi.ai/sip) — they change). Registration-based → enter the username/password
+  - **Codec**: G.711 µ-law (PCMU) as primary
 - Save
 
 > If 3CX is behind NAT, enable **STUN** in the trunk's advanced settings.
 
-### 10. Add an outbound rule in 3CX
+### B4. Add an outbound rule in 3CX
 
-**This step is required.** Without it, calls from Vapi hit 3CX but immediately fail — 3CX logs "no outbound rule found for the number" and drops the call.
+**This step is required.** Without it, calls from Vapi hit 3CX and immediately fail — 3CX logs "no outbound rule found for the number" and drops the call.
 
 In the 3CX Admin Console:
 
-- Go to **Outbound Rules** in the left nav
-- Click **+ Add**
+- Go to **Outbound Rules** → **+ Add**
 - Fill in:
   - **Rule Name**: \`Vapi outbound\`
-  - **Calls from**: select the Vapi trunk you created in step 9
+  - **Calls from**: select the Vapi trunk you created in B3
   - **Route 1**: your Flowroute (or other PSTN) trunk that owns the DID you want as caller-ID
-  - **Caller ID**: set to the E.164 DID from step 8, e.g. \`+15551234567\`
+  - **Caller ID**: set to the E.164 DID from B2, e.g. \`+12155551234\`
 - Save
 
-Outbound calls from Vapi now route through your PSTN trunk and arrive at the recipient with your branded caller-ID.
+### B5. Update \`defaultNumberId\` and re-smoke
 
-### 11. Update \`defaultNumberId\` and re-smoke
-
-Back on this plugin's **Configuration** tab:
+Back on the plugin's **Configuration** tab:
 
 - Edit the \`main\` account
-- Change **Default phone-number ID** to the UUID from step 8 (the BYO-SIP number)
+- Change **Default phone-number ID** to the UUID from **B2** (the BYO-SIP number)
 - Save
 
-Run the smoke script again. Calls now leave through your 3CX trunk and arrive at the recipient with your branded caller-ID.
+Run the smoke test again — the recipient should now see your branded DID instead of "Spam Likely".
+
+> **Fresh BYO-trunk numbers also start with no caller-ID reputation.** The label clears with use over a few days/weeks. To skip the wait, register the number with a branded-caller-ID service like **First Orion / Numeracle / Hiya Connect** (\\$10–50/month/number).
 
 ---
 
-## Troubleshooting
+# C. Build an assistant
 
-- **\`[EVAPI_AUTH]\` errors** — the API key in the secret is wrong, or the secret-ref UUID is wrong, or the secret was rotated and the plugin is caching an old value. Toggle **Allow mutations** off then on to force a fresh secret read.
-- **\`[ECOMPANY_NOT_ALLOWED]\`** — the calling company isn't ticked in the account's **Allowed companies** list. Configuration tab → edit account → fix.
-- **\`[ECONCURRENCY_LIMIT]\`** — you've hit \`maxConcurrentCalls\`. Either bump the cap or wait for in-flight calls to finish.
-- **Call rings but AI doesn't speak** — check the Vapi dashboard's Calls panel for the specific call. Common cause: a voice provider error (e.g. "voice not found"). Drop \`voice\` from the assistant config so Vapi uses its defaults.
-- **Recipients still see "Spam Likely" after step 11** — fresh BYO trunk numbers also start with no reputation. The label clears with use over a few days/weeks. To skip the wait, register the number with a branded-caller-ID service like First Orion, Numeracle, or Hiya Connect (~$10–50/month per number).
+The AI persona that drives calls. Each assistant is a Paperclip agent with \`role: "assistant"\` plus a phone config (voice, caller-ID, daily cost cap).
 
-## What's not in v0.1.0
+### C1. Open the Assistants page
 
-| Capability | Status |
+In Paperclip's company sidebar, click **🤖 Assistants**.
+
+> **Don't see the sidebar entry?** Your company isn't in any phone account's \`allowedCompanies\` list. Fix on the plugin Configuration tab → edit the account → tick this company.
+
+### C2. Run the 8-step wizard
+
+Click **+ New assistant** and walk the wizard:
+
+| Step | What you'll be asked |
 |---|---|
-| Inbound calls (someone calls *you*, AI answers) | Code shipped, not yet smoke-tested. First-class in **v0.2.0**. Requires \`webhookSecretRef\` and a 3CX inbound rule routing a DID to the Vapi trunk. |
-| Force-hangup / recording-URL retrieval | Code shipped, not yet smoke-tested. **v0.2.0**. |
-| DIY engine (Jambonz + ElevenLabs primary + local Qwen TTS fallback) — fully self-hosted | Placeholder in v0.1.0. **v0.3.0**. |
-| DTMF mid-call, warm transfer, voicemail-drop, multi-party | Future versions. |
+| 1 | Assistant **name** — e.g. "Alex" |
+| 2 | **Principal** — who Alex is calling on behalf of, e.g. your business name |
+| 3 | **Tasks** — what Alex can help with (schedule meetings / take messages / confirm appointments / follow up) |
+| 4 | **Custom context** *(optional)* — extra detail the AI should know |
+| 5 | **Voice** — pick a voice from the list (defaults to \`alloy\` if unsure) |
+| 6 | **Caller-ID** — pick a Vapi phone-number ID (the dropdown is populated from your account) |
+| 7 | **Daily cost cap** — defaults to \\$10/day. Resets at UTC midnight. Hard cap — calls refuse to start if exceeded. |
+| 8 | Review + save |
 
-If you need any of those today, check the [plugin folder README](README.md) for the broader feature roadmap.
+The wizard creates the Paperclip agent record AND the engine-side Vapi assistant in one shot. You'll land on the agent's detail page.
+
+### C3. Optionally set this as the account's default assistant
+
+On the plugin Configuration tab, edit the account and set **Default assistant ID** to the agent's UUID. This is the assistant used when \`phone_call_make\` is called without an explicit \`assistant\` parameter — convenient for scripts/skills.
+
+---
+
+# D. Configure warm transfer
+
+**What it does:** when the AI is on a call and the prospect asks for a human, the AI invokes its \`transferCall\` tool. Vapi places an outbound leg to a configured DID on your PBX — 3CX answers via its inbound rules and routes to the human extension.
+
+**Why it matters:** without warm transfer, qualified leads have nowhere to go. **Campaigns refuse to start if their driving assistant has no transferTarget.**
+
+### D1. Pick a destination DID
+
+Pick a phone number that, when dialed, rings the human(s) you want qualified leads to land on. Typically a DID on your 3CX PBX whose inbound rule routes to a sales extension or queue.
+
+Example: \`+12155551234\` rings ext 200 (Barry's desk phone).
+
+### D2. Configure on the assistant's Phone tab
+
+Open the assistant's detail page → **Phone** tab → scroll to the **Warm transfer** panel → click **Configure**.
+
+| Field | Value |
+|---|---|
+| **Transfer destination (E.164)** | The DID from D1 |
+| **Spoken handoff line** *(optional)* | What the AI says right before the bridge. Default: "One moment, I'm transferring you to a person who can help." Override for skill-specific tone. |
+| **Auto-file qualified leads to project** *(optional)* | Paperclip project UUID where a board issue with the transcript-so-far should be filed on every transfer. The human picking up sees full context. |
+
+Save.
+
+### D3. Smoke-test warm transfer
+
+Same Phone tab → **📲 Test on my phone** → enter your mobile. AI calls you. Say:
+
+> "Can you transfer me to a real person?"
+
+The AI should announce the transfer, then your DID rings. Pick up — the call bridges.
+
+---
+
+# E. Run your first outbound campaign
+
+A campaign = a CSV of leads + an assistant + pacing rules + a compliance preflight. The runner skill (fires every minute) walks the list within budget. AI-invoked opt-outs auto-add to DNC. Qualified leads warm-transfer.
+
+### E1. Open the Campaigns page
+
+In Paperclip's company sidebar, click **📋 Campaigns** → **+ New campaign**.
+
+### E2. Fill in the 4-section wizard
+
+**1. Basics**
+
+| Field | Value |
+|---|---|
+| **Driving assistant** | The Paperclip agent UUID for the assistant from Section C |
+| **Campaign name** | e.g. \`Sample Pack 2026Q2\` |
+| **Purpose** | One sentence spliced into the AI's opener, e.g. "introduce our quarterly print sample pack to local restaurant owners" |
+| **Phone account** *(optional)* | \`main\` (the default account is used if blank) |
+| **Outcome issue project** *(optional)* | Paperclip project UUID for qualified-lead issues. Defaults to the assistant's \`transferIssueProjectId\`. |
+
+**2. Lead list (CSV)**
+
+- Drag-drop a CSV file with at minimum a \`phone\` column. Other useful columns: \`name\`, \`businessName\`, \`website\`, \`timezone\`
+- Or paste CSV text directly
+- Click **✨ Auto-detect columns** — fills the column-mapping inputs from the header row
+- Verify the auto-detected mapping (override any wrong guess)
+
+CSV constraints: 10k rows max per import. Phones are normalized to E.164 (accepts "+", "(555) 123-4567", "5551234567" — anything that resolves to \`+[1-9]\\d{6,14}\`). DNC-listed phones are skipped on import.
+
+**3. Pacing**
+
+Defaults are conservative:
+
+| Field | Default |
+|---|---|
+| Max concurrent | 2 |
+| Seconds between dials | 90 |
+| Max calls / hour | 30 |
+| Max calls / day | 200 |
+
+Tune up only **after** a successful smoke run. Predictive pacing (Section H) auto-adjusts within bounded multipliers after 10+ calls, so don't over-tune up front.
+
+**4. Compliance preflight** ⚠️ **non-skippable**
+
+| Field | What to enter |
+|---|---|
+| **Audience kind** | b2b-businesses *(safest)* / b2b-with-soleprop / consumer |
+| **Audience justification** | Free-form, e.g. "local restaurants — public business lines, B2B carve-out applies" |
+| **List source** | first-party-customers / first-party-inquired / scraped-public-business / rented / purchased / other |
+| **List source note** | Free-form. Required for \`purchased\` / \`rented\` lists. |
+| **Geographic scope** | ISO 3166-2 codes, e.g. \`US-PA, US-NJ\`. ⚠️ **Including FL / CA / OK / TX triggers stricter opener + opt-out rules.** |
+| **Caller-local business hours** | Start hour, end hour, weekends allowed? Default 9–18 weekdays. The runner converts each lead's TZ at dial time. |
+| **Opening disclosure** | What the AI says first. Must self-identify ("this is …") + state purpose ("calling about …"). Default template provided. |
+| **Opt-out language** | How the AI offers opt-out. Must contain an unambiguous opt-out phrase. |
+| **Acknowledgements** | ☑ TCPA reviewed · ☑ DNC will be honored — both required |
+
+Click **Create campaign (draft)** → you'll land on the detail view in \`draft\` status.
+
+### E3. Start the campaign
+
+Verify the leads imported (lead count > 0 on the detail view), then click **▶ Start**.
+
+The per-minute runner picks it up within ~60s. Counters poll every 3s while \`running\`.
+
+**Controls** on the detail view: ⏸ Pause · ▶ Resume · ⏹ Stop.
+
+> **⏹ Stop is terminal.** Pending leads get marked disqualified. Create a new campaign to revisit the list.
+
+---
+
+# F. DNC compliance
+
+Two layers. The first is always on; the second is optional but strongly recommended for any consumer-touching scope.
+
+### F1. Per-account DNC (always on)
+
+Every assistant gets the \`add_to_dnc\` function tool injected automatically, plus a built-in preamble teaching the AI when to invoke it:
+
+> "When the recipient says 'don't call again' / 'stop calling' / 'remove me' / similar — invoke \`add_to_dnc\` immediately, briefly acknowledge ('you won't hear from us again'), end the call."
+
+When invoked mid-call, the number is added to the **per-account DNC list** and never re-dialed by any campaign on that account. The runner also cross-checks DNC before every dial.
+
+**Manual DNC management** (agent tools):
+
+| Tool | Use |
+|---|---|
+| \`phone_dnc_add\` | Add a number manually (with optional \`reason\`) |
+| \`phone_dnc_check\` | Is this number on DNC? |
+| \`phone_dnc_list\` | List all DNC entries on an account |
+| \`phone_dnc_remove\` | Remove an entry — requires audit \`note\` |
+
+HTTP equivalent: \`GET / POST /api/plugins/phone-tools/api/dnc\`.
+
+### F2. Federal DNC cross-check (optional, recommended for B2C scopes)
+
+Adds a second-layer DNC check against any URL serving a plain-text or single-column CSV of E.164 numbers. Works with:
+
+- **FTC National DNC Registry** — register for free at [telemarketing.donotcall.gov](https://telemarketing.donotcall.gov) to get a SAN (Subscription Account Number). Once approved, point this field at the registry's per-area-code download URL.
+- **Third-party scrubbing service** — Numeracle / Caller ID Reputation / etc. — paste the URL they give you.
+- **Self-hosted suppression list** — any plain-text file at any URL the Paperclip server can reach.
+
+**To configure:**
+
+Plugin Configuration tab → edit the account → fill:
+
+| Field | Value |
+|---|---|
+| **Federal DNC list URL** | Any URL serving plain-text or single-column CSV of E.164 numbers |
+| **Federal DNC refresh interval (hours)** | Default 24 (matches FTC's daily update cadence) |
+
+Save. The cache populates on first use. Force-refresh anytime via the \`phone_dnc_federal_refresh\` tool or:
+
+\`\`\`
+POST /api/plugins/phone-tools/api/dnc/federal/refresh?companyId=<companyId>
+\`\`\`
+
+**Verify a single number:**
+
+\`\`\`
+phone_dnc_federal_check { "phoneE164": "+15551234567" }
+\`\`\`
+
+Or: \`GET /api/plugins/phone-tools/api/dnc/federal\` for the cache status.
+
+> **Stale-on-error:** if a scheduled refresh fails (URL unreachable, 5xx), the previous cached set is reused and dials proceed against the older list. Better to dial through a 30h-old DNC than to silently skip the check.
+
+---
+
+# G. Export the audit log
+
+Every campaign dial decision (dialed / skipped-account-dnc / skipped-federal-dnc / skipped-out-of-hours / skipped-concurrency-cap / etc.) appends to plugin state. This is the **regulatory evidence trail** — what you hand to counsel if a TCPA complaint lands.
+
+### G1. Browser download (CSV)
+
+\`\`\`
+GET /api/plugins/phone-tools/api/audit?companyId=<companyId>&since=2026-05-01&until=2026-05-13&format=csv
+\`\`\`
+
+Returns a \`Content-Disposition: attachment\` CSV with columns:
+
+| Column | Meaning |
+|---|---|
+| \`at\` | ISO 8601 timestamp of the decision |
+| \`decision\` | One of: dialed · skipped-account-dnc · skipped-federal-dnc · skipped-out-of-hours · skipped-concurrency-cap · skipped-daily-cap · skipped-hourly-cap · skipped-retry-cap · skipped-duplicate · error |
+| \`phoneE164\` | The number the decision applied to |
+| \`campaignId\` | Source campaign |
+| \`callId\` | Engine call ID (if the dial actually went out) |
+| \`actor\` | Agent / actor that drove the decision |
+| \`note\` | Free-form context |
+
+### G2. Agent tool equivalent
+
+\`\`\`
+phone_audit_export { "since": "2026-05-01", "until": "2026-05-13" }
+\`\`\`
+
+Returns the same data as JSON with an embedded \`csv\` field.
+
+### G3. Retention
+
+Plugin state has a **30-day default TTL**. For longer-term retention (FTC suggests at least 5 years for sales-call records), run the export tool periodically and dump to external cold storage.
+
+---
+
+# H. Predict campaign cost + run time
+
+**"How long will this campaign take? What will it cost?"**
+
+\`\`\`
+phone_campaign_predict { "campaignId": "c_abc123" }
+\`\`\`
+
+Returns:
+
+| Field | Meaning |
+|---|---|
+| \`pendingLeads\` | Lead count remaining in \`pending\` / retry-eligible status |
+| \`estimatedMinutesRemaining\` | Wall-clock minutes to drain at current pacing |
+| \`estimatedRemainingCostUsd\` | Pending leads × mean cost (observed or fallback) |
+| \`adjustedPacing\` | The pacing the runner is using **right now** + rationale string |
+| \`basis\` | The rolling-stats snapshot the estimate was built from |
+| \`notes\` | "Low confidence" warnings when sample is small |
+
+**Confidence:**
+
+- Fewer than **10 completed calls** → falls back to defaults (90s mean duration, \\$0.07/call) and surfaces a low-confidence note
+- 10+ calls → switches to observed rolling mean over the last 30 outcomes
+- Adjusted pacing applies multipliers based on the answer-rate band:
+  - **Low** (<10% answered) — tighten dial spacing 0.5× + bump concurrency 1.5×
+  - **Mid** (10–40%) — leave configured values alone
+  - **High** (>40%) — widen dial spacing 2× + hold concurrency
+
+---
+
+# I. Multi-LLC portfolio rollup
+
+If you run phone campaigns across multiple LLCs, the **🌐 Portfolio rollup** link in the Campaigns sidebar (top-right of the list view) aggregates today's dialed / qualified / transferred / cost counters across every LLC into one view. Refreshes every 30s.
+
+**Most useful from your HQ / portfolio-root company** — non-HQ callers see only their own LLC's stats but the page renders gracefully either way.
+
+Direct API:
+
+\`\`\`
+GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?companyId=<companyId>
+\`\`\`
+
+Returns per-company breakdown + portfolio totals.
+
+---
+
+# J. Troubleshooting
+
+Every error code you might hit, in order of "how often does this happen during setup".
+
+### Setup errors
+
+| Code / Symptom | Cause | Fix |
+|---|---|---|
+| \`[EDISABLED]\` on every tool | Mutations toggle is off | Configuration tab → toggle "Allow place-call / hangup / assistant mutations" ON |
+| \`[ECOMPANY_NOT_ALLOWED]\` | The calling company isn't in any account's allowedCompanies | Configuration tab → edit account → tick this company |
+| \`[EVAPI_AUTH]\` | Bad API key, or stale secret cache | Toggle mutations off then on to force a fresh secret read. Confirm the secret-ref UUID matches the secret on the company's Secrets page. |
+| Sidebar doesn't show Assistants or Campaigns | Same as ECOMPANY_NOT_ALLOWED at the visibility-gate level | Tick the company in allowedCompanies |
+| \`[ENUMBER_NOT_ALLOWED]\` | The phone-number ID isn't in the account's allowedNumbers list | Either remove the allowlist or add the number ID |
+| \`[EASSISTANT_NOT_ALLOWED]\` | Same shape but for assistants | Remove allowlist or add the assistant ID |
+
+### Campaign errors
+
+| Code / Symptom | Cause | Fix |
+|---|---|---|
+| \`[ECAMPAIGN_NO_TRANSFER]\` | Driving assistant has no \`transferTarget\` | Configure warm transfer (Section D) before starting the campaign |
+| \`[ECAMPAIGN_EMPTY]\` | Campaign has zero leads | Import a CSV via the wizard, or \`phone_lead_list_append\` |
+| \`[ECAMPAIGN_BAD_STATE]\` | Tried to start/pause/resume from the wrong state | Read the error — it says which states allow the action |
+| \`[ECAMPAIGN_NOT_FOUND]\` | Wrong \`campaignId\` or wrong company | Confirm the UUID + the calling company owns the campaign |
+| \`[ECAMPAIGN_INVALID_ASSISTANT]\` | Assistant UUID not found in this company | Verify the agent exists with role \`assistant\` |
+
+### Compliance preflight errors
+
+| Code | Cause | Fix |
+|---|---|---|
+| \`[ECOMPLIANCE_NOT_ACKNOWLEDGED]\` | Missed a TCPA or DNC ack checkbox | Tick both boxes on the wizard's Compliance section |
+| \`[ECOMPLIANCE_RISK_TOO_HIGH]\` | \`consumer\` audience with a non-first-party list | Change audience to b2b-businesses, OR change list source to first-party-customers / first-party-inquired |
+| \`[ECOMPLIANCE_BAD_HOURS]\` | Hours window > 14h, inverted, or out of 0–23 range | Use 9-18 weekdays for safety; max width is 14h |
+| \`[ECOMPLIANCE_OPENING_DISCLOSURE]\` | Opener < 20 characters | Lengthen — must identify caller + business + purpose |
+| \`[ECOMPLIANCE_OPT_OUT_LANGUAGE]\` | Opt-out language < 10 characters | Lengthen — must offer a way to revoke consent |
+| \`[ECOMPLIANCE_NO_GEOGRAPHIC_SCOPE]\` | Scope is empty | List at least one ISO 3166-2 code, e.g. \`US-PA\` |
+| \`[ECOMPLIANCE_LIST_SOURCE_NOTE]\` | \`purchased\` / \`rented\` list with no \`listSourceNote\` | Add vendor name + how consent was originally obtained |
+| \`[ECOMPLIANCE_STRICT_STATE_OPENER]\` | Scope includes FL / CA / OK / TX, opener missing self-ID + purpose | Opener must contain a phrase like "this is …" AND "calling about …" |
+| \`[ECOMPLIANCE_STRICT_STATE_OPT_OUT]\` | Strict state in scope, opt-out wording too vague | Opt-out must contain an unambiguous phrase: "don't call", "do not call", "remove me", "take off the list", or "opt out" |
+
+### DNC errors
+
+| Code | Cause | Fix |
+|---|---|---|
+| \`[EFEDERAL_DNC]\` | Destination is on the cached federal DNC list | Expected behavior — lead is skipped + audit-logged. Use \`phone_dnc_federal_check\` to verify. |
+| \`[ENO_FEDERAL_DNC_URL]\` | Called \`phone_dnc_federal_refresh\` on an account without a URL | Set the federalDncListUrl on the account (Section F2) |
+| \`[EFEDERAL_DNC_FETCH]\` | Refresh GET returned non-2xx | Check the URL is reachable from the Paperclip server. Stale-cache fallback means dials still happen against the old list. |
+| \`[EDNC_ALREADY_LISTED]\` | Tried to add a phone that's already on DNC | No-op; just confirm it's listed |
+
+### Call-time errors
+
+| Code / Symptom | Cause | Fix |
+|---|---|---|
+| \`[ECONCURRENCY_LIMIT]\` | Hit account's \`maxConcurrentCalls\` cap | Wait for in-flight calls to finish, or bump the cap |
+| \`[ECOST_CAP]\` | Assistant's daily-cost cap reached | Wait until UTC midnight, or raise the cap on the assistant's Phone tab |
+| Call rings but AI doesn't speak | Voice provider error (e.g. "voice not found") | Check Vapi dashboard → Calls panel → look at the specific call's error log. Drop \`voice\` from the assistant config to use Vapi defaults. |
+| Lead status stuck on \`calling\` forever | Vapi webhook not reaching the plugin | Ensure \`webhookSecretRef\` is set on the account AND Vapi's Server URL = \`https://<paperclip-host>/api/plugins/phone-tools/webhooks/vapi\` |
+| Recipients see "Spam Likely" after Section B | Fresh BYO-trunk numbers start with no reputation | Use the number for a few weeks OR register with a branded-caller-ID service (First Orion / Numeracle / Hiya Connect) |
+
+### CSV import errors
+
+| Code | Cause | Fix |
+|---|---|---|
+| \`[ECSV_EMPTY]\` | CSV has no data rows | Add at least one row |
+| \`[ECSV_TOO_LARGE]\` | More than 10,000 rows | Split into multiple imports |
+| \`[ECSV_BAD_MAPPING]\` | \`mapping.phone\` references a header that doesn't exist | Use the actual column name from the CSV's first row (case-sensitive) |
+
+### Operational notes
+
+- **Predictive pacing says "low sample, using fallback"** — normal until the campaign has 10+ completed calls. Adjustment kicks in past that threshold.
+- **Portfolio rollup shows only one LLC** — the SDK returned only that company. From an HQ / portfolio-root view, the call should fan out across every visible LLC. If it doesn't, check that the operator has board access to the other companies.
+- **Audit export returns empty** — no dial decisions in that date range. Audit logging applies to campaign-driven dials only; manual \`phone_call_make\` calls aren't audited.
+
+---
+
+# K. What's planned next
+
+| Version | What lands |
+|---|---|
+| **v0.6.x** | Inbound routes UI on the Phone tab (DID → assistant mapping, business hours, voicemail-drop fallback); SSE-backed live counters replacing the 3s poll on the campaign detail view |
+| **v0.7.x** | DIY engine — Jambonz + Deepgram (STT) + Claude/GPT (LLM) + ElevenLabs (TTS, with Qwen-local fallback). Same \`PhoneEngine\` interface so it slots in without touching skills or wizards |
+| **Later** | DTMF mid-call, voicemail-drop, mid-call function tools, deeper 3CX Call Control API integration, cross-plugin transfer (\`phone-tools\` → \`pbx_transfer_call\` on a 3CX-known callId for human-initiated mid-call handoffs) |
+
+For the full feature roadmap + recent-changes log, see the [plugin folder README](README.md).
 `;
 
 // `setupInstructions` is recognised by the host's manifest validator
