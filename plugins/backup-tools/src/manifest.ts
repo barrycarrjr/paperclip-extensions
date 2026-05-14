@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "backup-tools";
-const PLUGIN_VERSION = "0.1.11";
+const PLUGIN_VERSION = "0.1.12";
 
 // ---------------------------------------------------------------------------
 // instanceConfigSchema sub-shapes

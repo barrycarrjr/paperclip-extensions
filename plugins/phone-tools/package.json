@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-phone-tools",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Paperclip plugin that lets agents make and receive AI-driven phone calls via the operator's 3CX PBX. Engine-pluggable: ships with Vapi (managed) in v0.1.0; DIY (jambonz + OpenAI Realtime) lands in v0.2.0. Multi-account, per-account company isolation, mutations gated.",
   "type": "module",
   "private": true,
