@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-stripe-tools",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Paperclip plugin that exposes Stripe operations (customers, subscriptions, charges, coupons, exports, metrics) as agent tools. Multi-account, per-resource company isolation, gated mutations.",
   "type": "module",
   "private": true,

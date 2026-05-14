@@ -13,6 +13,8 @@ Multi-account aware. Every Stripe account is scoped to a per-resource
 
 ## Recent changes
 
+- **v0.2.10** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.2.9** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.2.8** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-notepad",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Per-company freeform notepad mounted in the company sidebar. Operators jot ideas/meeting notes/half-formed asks; a 'Convert to issue' action runs the note through the company's chat-agent (Clippy) for an AI cleanup pass and creates a real issue.",
   "type": "module",
   "private": true,
