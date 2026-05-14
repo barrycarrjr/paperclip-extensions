@@ -14,6 +14,7 @@ import {
   getResolvedAccount,
 } from "./engines/registry.js";
 import { handleAssistantsApi } from "./api/assistants-routes.js";
+import { handleCampaignsApi } from "./api/campaigns-routes.js";
 import { handleOperatorPhoneApi } from "./api/operator-phone-routes.js";
 import { recordSpend } from "./assistants/cost-cap.js";
 import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
@@ -2389,7 +2390,7 @@ const plugin = definePlugin({
       return { status: 503, body: { error: "phone-tools worker not initialised yet" } };
     }
     const ctx = webhookCtx;
-    const handlers = [handleAssistantsApi, handleOperatorPhoneApi];
+    const handlers = [handleAssistantsApi, handleCampaignsApi, handleOperatorPhoneApi];
     for (const handle of handlers) {
       const result = await handle(ctx, input);
       if (result) return result;

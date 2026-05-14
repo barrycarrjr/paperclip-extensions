@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.5.0";
+const PLUGIN_VERSION = "0.5.1";
 
 const accountItemSchema = {
   type: "object",
@@ -338,6 +338,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "companies.read",
     "ui.sidebar.register",
     "ui.detailTab.register",
+    "ui.page.register",
+    "issues.create",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -1016,6 +1018,96 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
     },
+
+    // ─── v0.5.1: Campaigns UI backing routes ───────────────────────
+    {
+      routeKey: "campaigns.list",
+      method: "GET",
+      path: "/campaigns",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.create",
+      method: "POST",
+      path: "/campaigns",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.get",
+      method: "GET",
+      path: "/campaigns/:campaignId",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.start",
+      method: "POST",
+      path: "/campaigns/:campaignId/start",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.pause",
+      method: "POST",
+      path: "/campaigns/:campaignId/pause",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.resume",
+      method: "POST",
+      path: "/campaigns/:campaignId/resume",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.stop",
+      method: "POST",
+      path: "/campaigns/:campaignId/stop",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.leads",
+      method: "GET",
+      path: "/campaigns/:campaignId/leads",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.import-csv",
+      method: "POST",
+      path: "/campaigns/:campaignId/leads/import-csv",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.dnc.list",
+      method: "GET",
+      path: "/dnc",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.assistants",
+      method: "GET",
+      path: "/campaigns/eligible-assistants",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
   ],
   ui: {
     slots: [
@@ -1026,11 +1118,23 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         exportName: "AssistantsSidebarItem",
       },
       {
+        type: "sidebar",
+        id: "campaigns-sidebar",
+        displayName: "Campaigns",
+        exportName: "CampaignsSidebarItem",
+      },
+      {
         type: "detailTab",
         id: "agent-phone-tab",
         displayName: "Phone",
         exportName: "AgentPhoneTab",
         entityTypes: ["agent"],
+      },
+      {
+        type: "page",
+        id: "campaigns-page",
+        displayName: "Campaigns",
+        exportName: "CampaignsPage",
       },
     ],
   },
