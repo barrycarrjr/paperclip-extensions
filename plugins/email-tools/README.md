@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.16.5** — `email.list-messages` now returns populated `snippet` strings (previously always empty). `fetchHeaders` gained an opt-in `withSnippets` option that adds `source` to the IMAP fetch and runs `simpleParser` per message — single batched round trip but pulls full message bytes. Trade-off: list calls are a bit heavier but the inbox-row hover preview can finally render the body. Agent-tool `email_search` is unchanged (still empty snippets to keep agent calls cheap).
+
 - **v0.16.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.16.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

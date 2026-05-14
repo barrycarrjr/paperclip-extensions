@@ -188,16 +188,19 @@ export async function fetchHeaders(
   client: ImapFlow,
   folder: string,
   uids: number[],
+  options: { withSnippets?: boolean } = {},
 ): Promise<SearchResultItem[]> {
   if (uids.length === 0) return [];
   const lock = await client.getMailboxLock(folder);
   try {
     const out: SearchResultItem[] = [];
-    for await (const msg of client.fetch(
-      uids,
-      { uid: true, envelope: true, flags: true, bodyStructure: false, internalDate: true },
-      { uid: true },
-    )) {
+    // Fetching `source` is one IMAP FETCH for the whole batch (not per
+    // message), but it does pull full message bytes. Snippet generation is
+    // best-effort — we swallow parse errors and fall back to "".
+    const fetchSpec = options.withSnippets
+      ? { uid: true, envelope: true, flags: true, source: true, internalDate: true }
+      : { uid: true, envelope: true, flags: true, bodyStructure: false, internalDate: true };
+    for await (const msg of client.fetch(uids, fetchSpec, { uid: true })) {
       const env = msg.envelope;
       const fromList = env?.from ?? [];
       const fromStr = fromList
@@ -205,13 +208,22 @@ export async function fetchHeaders(
         .filter(Boolean)
         .join(", ");
       const date = env?.date ?? msg.internalDate;
+      let snippet = "";
+      if (options.withSnippets && msg.source) {
+        try {
+          const parsed = await simpleParser(msg.source);
+          snippet = snippetFromText(parsed.text ?? "");
+        } catch {
+          // Best-effort — leave snippet empty on parse failure.
+        }
+      }
       out.push({
         uid: msg.uid,
         messageId: env?.messageId ?? null,
         from: fromStr,
         subject: env?.subject ?? "",
         date: date instanceof Date ? date.toISOString() : (date ?? ""),
-        snippet: "",
+        snippet,
         unseen: !msg.flags?.has("\\Seen"),
       });
     }

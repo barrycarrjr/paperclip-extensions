@@ -839,7 +839,10 @@ const plugin = definePlugin({
         const uidValidity = await getUidValidity(conn, folder);
         const uids = await searchMessages(conn, { folder, unseen: unseen || undefined });
         const slicedUids = uids.slice(-limit);
-        const messages = await fetchHeaders(conn, folder, slicedUids);
+        // Snippets feed the inbox-row hover preview in the UI. The fetch is
+        // batched (one round trip), but does pull full message bodies through
+        // simpleParser — heavier than envelope-only.
+        const messages = await fetchHeaders(conn, folder, slicedUids, { withSnippets: true });
         return { messages, uidValidity };
       } finally {
         await safeLogout(conn);
