@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.5.0** — UI bridge surface. New `ctx.data.register` / `ctx.actions.register` entries (`helpscout.list-mailboxes`, `helpscout.list-conversations`, `helpscout.get-conversation`, `helpscout.send-reply`, `helpscout.add-note`, `helpscout.change-status`, `helpscout.add-label`, `helpscout.remove-label`) so the Paperclip Email pages can treat a Help Scout mailbox as another kind of mailbox — listing conversations, opening threads, replying, tagging, and closing right from `/email` and Portfolio Email. Same auth and `allowedCompanies` gating as the agent tools; mutation entries respect `allowMutations`. Tool surface unchanged.
+
 - **v0.4.7** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.4.6** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

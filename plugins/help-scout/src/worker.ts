@@ -28,7 +28,21 @@ async function resolveOrError(
   accountKey: string | undefined,
 ): Promise<ResolveResult> {
   try {
-    const resolved = await getHelpScoutAccount(ctx, runCtx, toolName, accountKey);
+    const resolved = await getHelpScoutAccount(ctx, runCtx.companyId, toolName, accountKey);
+    return { ok: true, resolved };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+async function resolveOrErrorForBridge(
+  ctx: PluginContext,
+  companyId: string,
+  bridgeKey: string,
+  accountKey: string | undefined,
+): Promise<ResolveResult> {
+  try {
+    const resolved = await getHelpScoutAccount(ctx, companyId, bridgeKey, accountKey);
     return { ok: true, resolved };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
@@ -51,6 +65,25 @@ async function track(
     });
   } catch {
     // never break tool calls on telemetry failure
+  }
+}
+
+async function trackBridge(
+  ctx: PluginContext,
+  companyId: string,
+  bridgeKey: string,
+  accountKey: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    await ctx.telemetry.track(`help-scout.${bridgeKey}`, {
+      account: accountKey,
+      companyId,
+      surface: "bridge",
+      ...extra,
+    });
+  } catch {
+    // never break bridge calls on telemetry failure
   }
 }
 
@@ -1235,6 +1268,377 @@ const plugin = definePlugin({
         accountsConfigured: accounts.length,
         errors,
       };
+    });
+
+    // ─── UI bridge: read-side data ───────────────────────────────────────
+    //
+    // The Paperclip Email pages call these via pluginsApi.bridgeGetData /
+    // bridgePerformAction. Mirrors the email-tools `email.*` bridge surface
+    // so the same UI shell can treat a Help Scout mailbox as another kind of
+    // mailbox. Companies are gated through getHelpScoutAccount's
+    // assertCompanyAccess. allowMutations is captured at setup time, same as
+    // the tools.
+
+    function requireCompanyId(params: unknown): string {
+      const p = params as { companyId?: string };
+      if (!p.companyId || typeof p.companyId !== "string") {
+        throw new Error("[EINVALID_INPUT] `companyId` is required");
+      }
+      return p.companyId;
+    }
+
+    function gateBridgeMutation(bridgeKey: string): void {
+      if (allowMutations) return;
+      throw new Error(
+        `[EDISABLED] ${bridgeKey} is disabled. Enable 'Allow create/reply/note/status/tag changes' on /instance/settings/plugins/help-scout.`,
+      );
+    }
+
+    /**
+     * `helpscout.list-mailboxes` — lists mailboxes the calling company is
+     * allowed to see across every configured account whose allowedCompanies
+     * covers it. Accounts the company can't see are silently skipped (the UI
+     * uses this to discover mailboxes per company; surfacing forbidden ones
+     * would just clutter the result).
+     */
+    ctx.data.register("helpscout.list-mailboxes", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as { accountKey?: string };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const allAccounts = config.accounts ?? [];
+      const targetAccounts = p.accountKey
+        ? allAccounts.filter(
+            (a) => (a.key ?? "").toLowerCase() === p.accountKey!.toLowerCase(),
+          )
+        : allAccounts;
+      const out: Array<{
+        accountKey: string;
+        mailboxId: string;
+        name: string;
+        email: string;
+      }> = [];
+      for (const account of targetAccounts) {
+        const accountKey = account.key ?? "(no-key)";
+        const allowed = account.allowedCompanies ?? [];
+        const allowedHere =
+          allowed.includes("*") || allowed.includes(companyId);
+        if (!allowedHere) continue;
+        try {
+          const r = await resolveOrErrorForBridge(
+            ctx,
+            companyId,
+            "helpscout.list-mailboxes",
+            accountKey,
+          );
+          if (!r.ok) continue;
+          const resp = await helpScoutRequest<{ _embedded?: { mailboxes?: unknown[] } }>(
+            r.resolved,
+            "/mailboxes",
+            { query: { size: 50 } },
+          );
+          let mailboxes = (resp.body?._embedded?.mailboxes ?? []) as Array<{
+            id: number;
+            name: string;
+            email: string;
+          }>;
+          const allow = r.resolved.account.allowedMailboxes;
+          if (allow && allow.length > 0) {
+            mailboxes = mailboxes.filter((m) => allow.includes(String(m.id)));
+          }
+          for (const m of mailboxes) {
+            out.push({
+              accountKey,
+              mailboxId: String(m.id),
+              name: m.name,
+              email: m.email,
+            });
+          }
+        } catch {
+          // Skip — partial result is more useful than a hard fail.
+        }
+      }
+      await trackBridge(ctx, companyId, "list-mailboxes", p.accountKey ?? "*", {
+        count: out.length,
+      });
+      return { mailboxes: out };
+    });
+
+    /**
+     * `helpscout.list-conversations` — paged conversation list for a mailbox
+     * + status filter. Default status is "open" (active+pending), matching
+     * the UI's notion of "unread" for an HS mailbox.
+     */
+    ctx.data.register("helpscout.list-conversations", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        mailboxId?: string;
+        status?: string;
+        tag?: string;
+        assignedTo?: string;
+        since?: string;
+        query?: string;
+        limit?: number;
+        page?: number;
+      };
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.list-conversations",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      const mailboxId = resolveMailboxId(r.resolved, p.mailboxId, false);
+      const query: Record<string, string | number | undefined> = {
+        size: clampLimit(p.limit, 25, 50),
+        page: p.page,
+      };
+      if (mailboxId) query.mailbox = mailboxId;
+      if (p.query) query.query = p.query;
+      const status = p.status ?? "open";
+      if (status === "open") query.status = "active,pending";
+      else if (status !== "all") query.status = status;
+      if (p.tag) query.tag = normalizeTag(p.tag);
+      if (p.assignedTo) query.assigned_to = p.assignedTo;
+      if (p.since) query.modifiedSince = p.since;
+
+      const resp = await helpScoutRequest<{
+        _embedded?: { conversations?: unknown[] };
+        page?: { totalElements?: number; number?: number; totalPages?: number };
+      }>(r.resolved, "/conversations", { query });
+      const conversations = (resp.body?._embedded?.conversations ?? []) as Array<
+        Record<string, unknown>
+      >;
+      await trackBridge(ctx, companyId, "list-conversations", r.resolved.accountKey, {
+        count: conversations.length,
+        status,
+      });
+      return {
+        conversations: conversations.map(slimConversation),
+        totalCount: resp.body?.page?.totalElements ?? conversations.length,
+        page: resp.body?.page?.number ?? 1,
+        totalPages: resp.body?.page?.totalPages ?? 1,
+      };
+    });
+
+    /**
+     * `helpscout.get-conversation` — full conversation with threads embedded.
+     * The UI uses the threads array to render the message body pane.
+     */
+    ctx.data.register("helpscout.get-conversation", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as { accountKey?: string; conversationId?: string };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.get-conversation",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+      const resp = await helpScoutRequest<Record<string, unknown>>(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}`,
+        { query: { embed: "threads" } },
+      );
+      await trackBridge(ctx, companyId, "get-conversation", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+      });
+      return resp.body ?? {};
+    });
+
+    // ─── UI bridge: write-side actions ───────────────────────────────────
+
+    ctx.actions.register("helpscout.send-reply", async (params) => {
+      gateBridgeMutation("helpscout.send-reply");
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        conversationId?: string;
+        body?: string;
+        customerEmail?: string;
+        cc?: string[];
+        bcc?: string[];
+        imported?: boolean;
+      };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      if (!p.body) throw new Error("[EINVALID_INPUT] `body` is required");
+
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.send-reply",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      const body: Record<string, unknown> = {
+        text: p.body,
+        cc: p.cc,
+        bcc: p.bcc,
+        imported: !!p.imported,
+      };
+      if (p.customerEmail) body.customer = { email: p.customerEmail };
+
+      const resp = await helpScoutRequest<Record<string, unknown>>(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}/reply`,
+        { method: "POST", body, expectStatus: [201] },
+      );
+      await trackBridge(ctx, companyId, "send-reply", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+      });
+      return { ok: true, ...(resp.body ?? {}) };
+    });
+
+    ctx.actions.register("helpscout.add-note", async (params) => {
+      gateBridgeMutation("helpscout.add-note");
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        conversationId?: string;
+        body?: string;
+        userId?: string;
+      };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      if (!p.body) throw new Error("[EINVALID_INPUT] `body` is required");
+
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.add-note",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      const body: Record<string, unknown> = { text: p.body };
+      if (p.userId) body.user = Number(p.userId);
+
+      const resp = await helpScoutRequest<Record<string, unknown>>(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}/notes`,
+        { method: "POST", body, expectStatus: [201] },
+      );
+      await trackBridge(ctx, companyId, "add-note", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+      });
+      return { ok: true, ...(resp.body ?? {}) };
+    });
+
+    ctx.actions.register("helpscout.change-status", async (params) => {
+      gateBridgeMutation("helpscout.change-status");
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        conversationId?: string;
+        status?: string;
+      };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      if (!p.status) throw new Error("[EINVALID_INPUT] `status` is required");
+
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.change-status",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      await helpScoutRequest(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}`,
+        {
+          method: "PATCH",
+          body: { op: "replace", path: "/status", value: p.status },
+          expectStatus: [204],
+        },
+      );
+      await trackBridge(ctx, companyId, "change-status", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+        status: p.status,
+      });
+      return { id: p.conversationId, status: p.status };
+    });
+
+    ctx.actions.register("helpscout.add-label", async (params) => {
+      gateBridgeMutation("helpscout.add-label");
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        conversationId?: string;
+        labels?: string[];
+      };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      if (!p.labels || p.labels.length === 0)
+        throw new Error("[EINVALID_INPUT] `labels` must be a non-empty array");
+
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.add-label",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      const conv = await helpScoutRequest<{ tags?: Array<{ tag?: string }> }>(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}`,
+      );
+      const existing = (conv.body?.tags ?? []).map((t) => normalizeTag(t.tag ?? ""));
+      const incoming = p.labels.map(normalizeTag);
+      const union = Array.from(new Set([...existing, ...incoming])).filter(Boolean);
+
+      await helpScoutRequest(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}/tags`,
+        { method: "PUT", body: { tags: union }, expectStatus: [204] },
+      );
+      await trackBridge(ctx, companyId, "add-label", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+        added: incoming.length,
+      });
+      return { id: p.conversationId, tags: union };
+    });
+
+    ctx.actions.register("helpscout.remove-label", async (params) => {
+      gateBridgeMutation("helpscout.remove-label");
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        conversationId?: string;
+        labels?: string[];
+      };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      if (!p.labels || p.labels.length === 0)
+        throw new Error("[EINVALID_INPUT] `labels` must be a non-empty array");
+
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.remove-label",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      const conv = await helpScoutRequest<{ tags?: Array<{ tag?: string }> }>(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}`,
+      );
+      const existing = (conv.body?.tags ?? []).map((t) => normalizeTag(t.tag ?? ""));
+      const remove = new Set(p.labels.map(normalizeTag));
+      const remaining = existing.filter((t) => t && !remove.has(t));
+
+      await helpScoutRequest(
+        r.resolved,
+        `/conversations/${encodeURIComponent(p.conversationId)}/tags`,
+        { method: "PUT", body: { tags: remaining }, expectStatus: [204] },
+      );
+      await trackBridge(ctx, companyId, "remove-label", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+        removed: existing.length - remaining.length,
+      });
+      return { id: p.conversationId, tags: remaining };
     });
   },
 

@@ -1,4 +1,4 @@
-import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
+import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { assertCompanyAccess } from "./companyAccess.js";
 
 export interface ConfigAccount {
@@ -89,7 +89,7 @@ async function exchangeForAccessToken(
 
 export async function getHelpScoutAccount(
   ctx: PluginContext,
-  runCtx: ToolRunContext,
+  companyId: string,
   toolName: string,
   accountKeyParam: string | undefined,
 ): Promise<ResolvedAccount> {
@@ -117,7 +117,7 @@ export async function getHelpScoutAccount(
     resourceLabel: `help-scout account "${account.key}"`,
     resourceKey: account.key ?? requestedKey,
     allowedCompanies: account.allowedCompanies,
-    companyId: runCtx.companyId,
+    companyId,
   });
 
   if (!account.clientIdRef || !account.clientSecretRef) {
@@ -126,7 +126,7 @@ export async function getHelpScoutAccount(
     );
   }
 
-  const ck = cacheKey(runCtx.companyId, account.key ?? requestedKey);
+  const ck = cacheKey(companyId, account.key ?? requestedKey);
 
   // Force-refresh function — used both on initial cache miss and after a 401 retry.
   const refresh = async (): Promise<string> => {
