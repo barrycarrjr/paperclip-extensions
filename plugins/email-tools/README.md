@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.16.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.16.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.16.0** — New `mute` sender rule type, joining `auto-triage` and `keep-always`. Muted senders stay in INBOX but are marked read on arrival by the poll loop (no folder move, no dispatch, no triage-agent run). `email.set-rule` accepts `ruleType: 'mute'` and runs a one-shot sweep of existing unread INBOX backlog from the sender (`applyMuteRuleToInbox` in `poll.ts`); response includes `sweptCount`. `email.list-rules` now returns a third bucket `mute: string[]` alongside `autoTriage` and `keepAlways`. Telemetry: new `poll-muted` event with mailbox + count. UI surfaces (Portfolio Brief, Morning Brief, Unified Inbox) gain a `Keep · mute` button next to the existing `Keep · read` / `Keep · unread` siblings.

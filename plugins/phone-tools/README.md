@@ -4,6 +4,8 @@ Paperclip plugin that lets agents and operators place AI-driven phone calls thro
 
 ## Recent changes
 
+- **v0.5.3** — Shortened the manifest `description` to fit Paperclip's 500-char cap. Release-notes content moved fully into this log. Fixes the "Invalid plugin manifest: description: String must contain at most 500 character(s)" install failure that blocked upgrading from v0.3.7 → v0.5.2.
+
 - **v0.5.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.5.1** — **Campaigns UI page + 11 backing HTTP routes.** Closes the v0.5.0 UX gap where operators had to drive campaigns via curl/agent-tool calls only. New full-page extension at `/<companyPrefix>/plugins/phone-tools` with three sub-views routed via query params: **list** (filterable table of campaigns with progress + cost-today + status badge), **detail** (counters + leads table + start/pause/resume/stop buttons + compliance footer + 10s live-poll while running), **new** (4-section inline wizard with CSV-file-upload OR paste, all compliance preflight fields, TCPA/DNC ack checkboxes). New sidebar entry "📋 Campaigns" alongside "🤖 Assistants", visibility-gated by the same `assistants.sidebar-visible` rule. New module `src/api/campaigns-routes.ts` wraps the same `campaigns/state.ts` helpers the agent tools use — single source of truth for business logic, two transports (board-authed HTTP for UI, agent-runtime tools for skills). New capabilities: `ui.page.register`, `issues.create`. Federal DNC + per-state TCPA presets + predictive pacing land in v0.5.2.

@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-image-tools",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Paperclip plugin for image composition (sharp-based) and generation (provider-pluggable: Replicate, OpenAI, Stability). Multi-provider, per-provider allowedCompanies, generation gated by a cost switch.",
   "type": "module",
   "private": true,

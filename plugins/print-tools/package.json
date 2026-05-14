@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-print-tools",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Paperclip plugin that lets agents print text content to any Windows printer visible to the Paperclip server.",
   "type": "module",
   "private": true,

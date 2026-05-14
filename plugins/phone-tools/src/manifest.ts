@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.5.2";
+const PLUGIN_VERSION = "0.5.3";
 
 const accountItemSchema = {
   type: "object",
@@ -320,7 +320,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "Phone (AI calls via 3CX + Vapi/DIY)",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX. Backs onto Vapi.ai (DIY engine future). v0.4.0 adds warm transfer: when an assistant has a transferTarget, the engine injects a transferCall tool so the AI can hand off to a human destination DID — 3CX answers and routes via its inbound rules. v0.5.0 adds outbound campaign mode: drop a CSV of leads into a campaign, answer a hard compliance preflight (TCPA / DNC / hours / opt-out language), click start, watch the per-minute runner work the list within budget. Multi-account, per-account allowedCompanies, mutations gated, optional call recording per account.",
+    "Place outbound and answer inbound AI-driven phone calls via the operator's 3CX PBX (Vapi engine; DIY engine roadmap). Includes Assistants builder, warm-transfer to a human, and outbound campaign mode with compliance preflight + DNC. Multi-account, per-account allowedCompanies, mutations gated.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
