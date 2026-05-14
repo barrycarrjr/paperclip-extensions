@@ -7,8 +7,9 @@ import { CampaignWizard } from "./CampaignWizard.js";
 /**
  * Top-level Campaigns page (v0.5.1).
  *
- * Mounted at /<companyPrefix>/plugins/phone-tools by the host, this
- * page owns its own internal navigation between three sub-views:
+ * Mounted at /<companyPrefix>/campaigns by the host (via the page slot's
+ * routePath), this page owns its own internal navigation between three
+ * sub-views:
  *
  *   - list:    table of all campaigns with status filter + new button
  *   - detail:  single-campaign view with counters + leads + actions
