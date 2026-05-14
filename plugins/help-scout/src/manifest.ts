@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.5.5";
+const PLUGIN_VERSION = "0.5.6";
 
 const accountItemSchema = {
   type: "object",
