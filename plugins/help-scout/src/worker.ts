@@ -1682,6 +1682,9 @@ interface SlimConversation {
   assignedTo: string | null;
   tags: string[];
   modifiedAt: string | null;
+  /** Short text snippet of the latest message — Help Scout returns ~150 chars
+   *  in the conversations list response. Useful for inbox-style previews. */
+  preview: string | null;
 }
 
 function slimConversation(c: Record<string, unknown>): SlimConversation {
@@ -1709,6 +1712,7 @@ function slimConversation(c: Record<string, unknown>): SlimConversation {
       : null,
     tags,
     modifiedAt: (c.userUpdatedAt as string) ?? (c.modifiedAt as string) ?? null,
+    preview: (c.preview as string) ?? null,
   };
 }
 
