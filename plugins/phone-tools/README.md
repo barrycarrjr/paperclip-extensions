@@ -42,19 +42,68 @@ Navigate to the **📋 Campaigns** sidebar entry → **+ New campaign**. Fill in
 | Section | What to enter |
 |---|---|
 | **1. Basics** | Driving assistant agent UUID (from step 2), campaign name, one-sentence purpose |
-| **2. Lead list (CSV)** | Drag-drop a CSV with at minimum a `phone` column. Other useful columns: `name`, `businessName`, `website` |
-| **3. Pacing** | Defaults are conservative (2 concurrent, 90s between dials, 30/hr, 200/day). Tune up only after a successful smoke run |
-| **4. Compliance preflight** | Audience kind, list source, geographic scope (e.g. `US-PA, US-NJ`), business hours, opening disclosure, opt-out language. Tick both ack boxes |
+| **2. Lead list (CSV)** | Drag-drop a CSV with at minimum a `phone` column. Other useful columns: `name`, `businessName`, `website`. After loading the CSV, click **✨ Auto-detect columns** to fill the mapping from the header row — verify the result before continuing. |
+| **3. Pacing** | Defaults are conservative (2 concurrent, 90s between dials, 30/hr, 200/day). Tune up only after a successful smoke run — predictive pacing (v0.5.5) auto-adjusts within bounded multipliers once 10+ calls complete, so you don't need to over-tune up-front. |
+| **4. Compliance preflight** | Audience kind, list source, geographic scope (e.g. `US-PA, US-NJ`), business hours, opening disclosure, opt-out language. Tick both ack boxes. If your scope includes **FL / CA / OK / TX**, the opener must self-identify ("this is …") + state purpose ("calling about …") and your opt-out wording must contain an unambiguous opt-out phrase. |
 
-Click **Create campaign (draft)** → you'll land on the detail view in `draft` status. Verify the leads imported correctly, then click **▶ Start**. The per-minute runner picks it up within ~60s; counters poll live.
+Click **Create campaign (draft)** → you'll land on the detail view in `draft` status. Verify the leads imported correctly, then click **▶ Start**. The per-minute runner picks it up within ~60s; counters poll every 3s while the campaign is `running`.
 
 **Pause / Resume / Stop** any time from the detail view. **Stop is terminal** — pending leads get marked disqualified.
 
-### 6. Opt-outs
+### 6. Opt-outs (always-on)
 
-The AI is taught (via the always-on `PHONE_DNC_PREAMBLE`) to invoke `add_to_dnc` whenever a recipient says "don't call again" / "remove me from your list" / similar. The number is added to the **per-account DNC list** automatically and never re-dialed by any campaign on that account.
+The AI is taught (via the built-in `PHONE_DNC_PREAMBLE`) to invoke `add_to_dnc` whenever a recipient says "don't call again" / "remove me from your list" / similar. The number is added to the **per-account DNC list** automatically and never re-dialed by any campaign on that account.
 
 The runner also cross-checks DNC before every dial. To inspect or manually add/remove DNC entries, agents can use the `phone_dnc_list` / `phone_dnc_add` / `phone_dnc_remove` tools (or the `/api/plugins/phone-tools/api/dnc` HTTP route).
+
+### 7. Federal DNC cross-check (optional but recommended for B2C scopes)
+
+Add a federal DNC URL on the plugin settings page so every campaign dial is cross-checked against the FTC registry (or a third-party scrubbing list, or your own corporate suppression list — any plain-text or single-column CSV of E.164 numbers works).
+
+`/instance/settings/plugins/phone-tools` → **Configuration** tab → edit the account → fill:
+
+| Field | What to enter |
+|---|---|
+| **Federal DNC list URL** | Any URL serving the list. For the FTC's National DNC Registry you need free **SAN registration** at [telemarketing.donotcall.gov](https://telemarketing.donotcall.gov); once approved you can point this field at the registry's per-area-code download URL. Alternatives: any DNC scrubbing service's published list, or a self-hosted text file. |
+| **Federal DNC refresh interval (hours)** | Default 24 (matches the FTC's daily update cadence). |
+
+Save. The cache populates on first use; force-refresh anytime with the `phone_dnc_federal_refresh` tool or `POST /api/plugins/phone-tools/api/dnc/federal/refresh`. Stale-on-error: if a refresh fails, the previous cache is reused — campaigns never silently lose the check.
+
+To verify: `phone_dnc_federal_check { "phoneE164": "+15551234567" }` returns whether a number is on the cached list. Or visit `GET /api/plugins/phone-tools/api/dnc/federal` for the cache status.
+
+### 8. Export the audit log (for compliance evidence)
+
+Every campaign dial decision (dialed / skipped-account-dnc / skipped-federal-dnc / skipped-out-of-hours / skipped-concurrency-cap / etc.) appends to `audit:<accountKey>:<YYYY-MM-DD>` in plugin state. This is the regulatory evidence trail — what you hand to counsel if a TCPA complaint lands.
+
+**Browser download (CSV):**
+```
+GET /api/plugins/phone-tools/api/audit?companyId=<companyId>&since=2026-05-01&until=2026-05-13&format=csv
+```
+Returns a `Content-Disposition: attachment` CSV with columns `at,decision,phoneE164,campaignId,callId,actor,note`.
+
+**Agent tool:** `phone_audit_export { "since": "2026-05-01", "until": "2026-05-13" }` returns the same data as JSON with an embedded `csv` field.
+
+Plugin state has a 30-day default TTL. For longer-term retention (FTC suggests at least 5 years for sales-call records), run the export tool periodically and dump to external cold storage.
+
+### 9. Predict campaign cost + run time
+
+Before / during a campaign, the `phone_campaign_predict` tool answers "how long will this take and what will it cost?":
+
+```
+phone_campaign_predict { "campaignId": "c_abc123" }
+```
+
+Returns: pending lead count, estimated wall-clock minutes to drain, estimated remaining cost, plus the adjusted pacing the runner is using this tick (with a rationale string explaining why — low/mid/high answer-rate band).
+
+When the campaign has fewer than 10 completed calls, the prediction uses fallbacks (90s mean duration, $0.07/call) and surfaces a "low confidence" note. After 10+ calls, the estimate switches to the observed rolling mean.
+
+### 10. Multi-company portfolio rollup (HQ view)
+
+If you run phone campaigns across multiple LLCs, the **🌐 Portfolio rollup** link in the Campaigns sidebar (top-right of the list view) aggregates today's dialed / qualified / transferred / cost counters across every LLC into one view. Refreshes every 30s.
+
+Most useful when viewed from your **HQ / portfolio-root** company — non-HQ callers see only their own LLC's stats but the page still renders gracefully.
+
+Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?companyId=<companyId>`.
 
 ---
 
@@ -66,10 +115,18 @@ The runner also cross-checks DNC before every dial. To inspect or manually add/r
 | `[ECAMPAIGN_NO_TRANSFER]` when starting a campaign | Step 3 — assistant has no `transferTarget` |
 | `[ECOMPLIANCE_NOT_ACKNOWLEDGED]` | Step 5 — both ack boxes must be ticked |
 | `[ECOMPLIANCE_RISK_TOO_HIGH]` | You picked `consumer` audience with a non-first-party list. Change audience or list source |
+| `[ECOMPLIANCE_STRICT_STATE_OPENER]` | Step 5 — scope includes FL/CA/OK/TX; opener must self-identify (e.g. "this is …") AND state purpose (e.g. "calling about …") |
+| `[ECOMPLIANCE_STRICT_STATE_OPT_OUT]` | Step 5 — scope includes a strict state; opt-out must contain an unambiguous opt-out phrase ("don't call", "remove me", "take off the list", "opt out") |
+| `[EFEDERAL_DNC]` on a dial | Step 7 — the destination is on the cached federal DNC list. Lead is skipped + audit-logged. Use `phone_dnc_federal_check` to verify. |
+| `[ENO_FEDERAL_DNC_URL]` | You called `phone_dnc_federal_refresh` but the account has no `federalDncListUrl` configured — set it on the plugin settings page first (Step 7) |
+| `[EFEDERAL_DNC_FETCH]` | Refresh GET to your `federalDncListUrl` returned non-2xx. Check the URL is reachable from the Paperclip server; stale-cache fallback means dials still happen against the old list. |
 | Caller sees "Spam Likely" / unknown number | Step 4 — wire the 3CX SIP trunk for branded caller-ID |
 | Sidebar doesn't show Assistants or Campaigns | Plugin settings → tick this company in `allowedCompanies` on the account |
 | Lead status stuck on "calling" forever | Vapi webhook not reaching the plugin. Check `webhookSecretRef` is set + Vapi Server URL points at `/api/plugins/phone-tools/webhooks/vapi` |
-| Campaign won't start: "[ECAMPAIGN_EMPTY]" | Import leads via the wizard's CSV step or `phone_lead_list_append` before clicking Start |
+| Campaign won't start: `[ECAMPAIGN_EMPTY]` | Import leads via the wizard's CSV step or `phone_lead_list_append` before clicking Start |
+| Predictive pacing says "low sample; using fallback" | Normal until the campaign has 10+ completed calls. Adjustment kicks in past that threshold. |
+| Portfolio rollup shows only one LLC | The plugin SDK's `ctx.companies.list` returned only that company. From an HQ / portfolio-root view, the call should fan out across every visible LLC. |
+| Audit export returns empty | No dial decisions logged on the requested date range. Audit logging applies to campaign-driven dials only; manual `phone_call_make` calls aren't audited. |
 
 ---
 
