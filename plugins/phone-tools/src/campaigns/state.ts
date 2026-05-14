@@ -16,6 +16,13 @@ import type {
   DncEntry,
   DncList,
 } from "./types.js";
+import {
+  appendOutcome,
+  emptyWindow,
+  type AnswerRateWindow,
+  type CallOutcome,
+  DEFAULT_WINDOW_SIZE,
+} from "./pacing.js";
 
 // ─── Key builders ──────────────────────────────────────────────────────
 
@@ -41,6 +48,10 @@ function companyCampaignsIndexKey(companyId: string): string {
 
 function dncKey(accountKey: string): string {
   return `dnc:${accountKey}`;
+}
+
+function pacingWindowKey(campaignId: string): string {
+  return `campaign:${campaignId}:pacing-window`;
 }
 
 function todayKey(date: Date = new Date()): string {
@@ -282,4 +293,44 @@ export async function removeDncEntry(
   if (list.entries.length === before) return { removed: false };
   await writeDncList(ctx, list);
   return { removed: true };
+}
+
+// ─── Pacing window (v0.5.5) ─────────────────────────────────────────────
+
+/**
+ * Read the rolling answer-rate window for a campaign. Returns an
+ * empty window (default size) on first access.
+ */
+export async function readPacingWindow(
+  ctx: PluginContext,
+  campaignId: string,
+): Promise<AnswerRateWindow> {
+  const value = await ctx.state.get({
+    scopeKind: "instance",
+    stateKey: pacingWindowKey(campaignId),
+  });
+  if (value && typeof value === "object" && Array.isArray((value as AnswerRateWindow).outcomes)) {
+    const w = value as AnswerRateWindow;
+    // Defensive: if maxSize was lost in serialization, fall back.
+    return { outcomes: w.outcomes, maxSize: w.maxSize > 0 ? w.maxSize : DEFAULT_WINDOW_SIZE };
+  }
+  return emptyWindow();
+}
+
+/**
+ * Append a call outcome to the campaign's pacing window. Bounded
+ * by the window's maxSize — older outcomes drop off.
+ */
+export async function appendPacingOutcome(
+  ctx: PluginContext,
+  campaignId: string,
+  outcome: CallOutcome,
+): Promise<AnswerRateWindow> {
+  const prev = await readPacingWindow(ctx, campaignId);
+  const next = appendOutcome(prev, outcome);
+  await ctx.state.set(
+    { scopeKind: "instance", stateKey: pacingWindowKey(campaignId) },
+    next,
+  );
+  return next;
 }

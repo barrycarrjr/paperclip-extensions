@@ -132,6 +132,8 @@ export async function handleCampaignsApi(
       return federalDncRefresh(ctx, input);
     case "campaigns.audit.export":
       return auditExport(ctx, input);
+    case "campaigns.portfolio-rollup":
+      return portfolioRollup(ctx, input);
     default:
       return null;
   }
@@ -597,6 +599,131 @@ async function federalDncRefresh(
     return ok({ count: cache.count, refreshedAt: cache.refreshedAt, sourceUrl: url });
   } catch (err) {
     return serverError((err as Error).message);
+  }
+}
+
+/**
+ * Cross-LLC portfolio rollup. Aggregates campaigns + counters across
+ * every company the calling user can see (typically only meaningful
+ * at HQ / portfolio-root). For non-HQ callers the response only
+ * covers their single company — the rollup is degenerate but the
+ * API returns gracefully rather than 403.
+ *
+ * The rollup lives behind a single endpoint rather than a per-LLC
+ * query because the typical HQ use is "tell me right now what every
+ * LLC's phones did today" — one request, fan-out aggregation.
+ */
+async function portfolioRollup(
+  ctx: PluginContext,
+  input: PluginApiRequestInput,
+): Promise<PluginApiResponse> {
+  // Resolve the set of company IDs the calling instance can read.
+  // SDK exposes `ctx.companies.list()` which returns the operator's
+  // visible companies; we filter to those that have campaigns.
+  const companies = await listVisibleCompanies(ctx).catch(() => []);
+  const includeIds = companies.length > 0 ? companies.map((c) => c.id) : [input.companyId];
+
+  const perCompany: Array<{
+    companyId: string;
+    companyName?: string;
+    isPortfolioRoot?: boolean;
+    campaigns: number;
+    running: number;
+    paused: number;
+    todayDialed: number;
+    todayQualified: number;
+    todayTransferred: number;
+    todayCostUsd: number;
+  }> = [];
+  let totalCampaigns = 0;
+  let totalRunning = 0;
+  let totalDialed = 0;
+  let totalQualified = 0;
+  let totalTransferred = 0;
+  let totalCostUsd = 0;
+
+  for (const companyId of includeIds) {
+    const cs = await listCompanyCampaigns(ctx, companyId);
+    if (cs.length === 0) {
+      // Skip the silent companies — keeps the rollup focused on
+      // active phone-using LLCs.
+      continue;
+    }
+    let dialed = 0;
+    let qualified = 0;
+    let transferred = 0;
+    let cost = 0;
+    let running = 0;
+    let paused = 0;
+    for (const c of cs) {
+      const counters = await readCounters(ctx, c.id);
+      dialed += counters.attempted;
+      qualified += counters.qualified;
+      transferred += counters.transferred;
+      cost += counters.costUsd;
+      if (c.status === "running") running++;
+      if (c.status === "paused") paused++;
+    }
+    const company = companies.find((x) => x.id === companyId);
+    perCompany.push({
+      companyId,
+      companyName: company?.name,
+      isPortfolioRoot: company?.isPortfolioRoot,
+      campaigns: cs.length,
+      running,
+      paused,
+      todayDialed: dialed,
+      todayQualified: qualified,
+      todayTransferred: transferred,
+      todayCostUsd: Math.round(cost * 100) / 100,
+    });
+    totalCampaigns += cs.length;
+    totalRunning += running;
+    totalDialed += dialed;
+    totalQualified += qualified;
+    totalTransferred += transferred;
+    totalCostUsd += cost;
+  }
+
+  return ok({
+    perCompany: perCompany.sort((a, b) => b.todayDialed - a.todayDialed),
+    totals: {
+      companiesActive: perCompany.length,
+      campaigns: totalCampaigns,
+      running: totalRunning,
+      todayDialed: totalDialed,
+      todayQualified: totalQualified,
+      todayTransferred: totalTransferred,
+      todayCostUsd: Math.round(totalCostUsd * 100) / 100,
+    },
+  });
+}
+
+interface VisibleCompany {
+  id: string;
+  name?: string;
+  isPortfolioRoot?: boolean;
+}
+
+async function listVisibleCompanies(ctx: PluginContext): Promise<VisibleCompany[]> {
+  // Defensive: the SDK's companies surface has churned across versions
+  // — try the documented method, fall back to an empty list which
+  // forces single-company mode in the caller.
+  const companies = (ctx as unknown as { companies?: { list?: () => Promise<unknown[]> } })
+    .companies;
+  if (!companies?.list) return [];
+  try {
+    const list = await companies.list();
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((c): c is VisibleCompany => !!c && typeof c === "object" && typeof (c as VisibleCompany).id === "string")
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        isPortfolioRoot: c.isPortfolioRoot,
+      }));
+  } catch {
+    return [];
   }
 }
 

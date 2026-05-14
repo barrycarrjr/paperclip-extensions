@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.5.4";
+const PLUGIN_VERSION = "0.5.5";
 
 const accountItemSchema = {
   type: "object",
@@ -976,6 +976,29 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         },
       },
     },
+    {
+      name: "phone_campaign_predict",
+      displayName: "Estimate remaining time + cost for a campaign",
+      description:
+        "Given a campaign, returns: pending lead count, estimated wall-clock minutes to drain (using observed mean call duration / fallback when sample is small), estimated remaining cost, and the adjusted pacing the runner is using (with rationale — low/mid/high answer-rate band). Read.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          campaignId: { type: "string" },
+          fallbackDurationSec: {
+            type: "number",
+            default: 90,
+            description: "Used when the rolling window has too few samples for a reliable mean.",
+          },
+          fallbackCostUsd: {
+            type: "number",
+            default: 0.07,
+            description: "Used when the rolling window has too few samples for a reliable mean.",
+          },
+        },
+        required: ["campaignId"],
+      },
+    },
   ],
   apiRoutes: [
     {
@@ -1186,6 +1209,16 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       routeKey: "campaigns.audit.export",
       method: "GET",
       path: "/audit",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+
+    // ─── v0.5.5: HQ portfolio rollup ───────────────────────────────
+    {
+      routeKey: "campaigns.portfolio-rollup",
+      method: "GET",
+      path: "/campaigns/portfolio-rollup",
       auth: "board",
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },

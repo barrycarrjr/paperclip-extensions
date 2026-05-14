@@ -9,3 +9,4 @@ export { AssistantsSidebarItem } from "./AssistantsSidebarItem.js";
 export { AgentPhoneTab } from "./AgentPhoneTab.js";
 export { CampaignsSidebarItem } from "./CampaignsSidebarItem.js";
 export { CampaignsPage } from "./CampaignsPage.js";
+export { PortfolioRollup } from "./PortfolioRollup.js";

@@ -3,6 +3,7 @@ import { useHostContext, type PluginPageProps } from "@paperclipai/plugin-sdk/ui
 import { CampaignsList } from "./CampaignsList.js";
 import { CampaignDetail } from "./CampaignDetail.js";
 import { CampaignWizard } from "./CampaignWizard.js";
+import { PortfolioRollup } from "./PortfolioRollup.js";
 
 /**
  * Top-level Campaigns page (v0.5.1).
@@ -72,6 +73,22 @@ export function CampaignsPage(_props: PluginPageProps) {
             <span>New campaign</span>
           </>
         )}
+        {view.kind === "portfolio" && (
+          <>
+            <span style={muted}>›</span>
+            <span>Portfolio rollup</span>
+          </>
+        )}
+        {view.kind === "list" && (
+          <button
+            type="button"
+            onClick={() => setView({ kind: "portfolio" })}
+            style={{ ...breadcrumbButton, marginLeft: "auto", fontWeight: 400, fontSize: 12 }}
+            title="Cross-LLC view of every company's campaign activity. Most useful from HQ / portfolio root."
+          >
+            🌐 Portfolio rollup
+          </button>
+        )}
       </header>
 
       {view.kind === "list" && (
@@ -98,6 +115,9 @@ export function CampaignsPage(_props: PluginPageProps) {
           onCreated={(id) => setView({ kind: "detail", campaignId: id })}
         />
       )}
+      {view.kind === "portfolio" && (
+        <PortfolioRollup companyId={companyId} onBack={() => setView({ kind: "list" })} />
+      )}
     </div>
   );
 }
@@ -105,12 +125,14 @@ export function CampaignsPage(_props: PluginPageProps) {
 type View =
   | { kind: "list" }
   | { kind: "detail"; campaignId: string }
-  | { kind: "new" };
+  | { kind: "new" }
+  | { kind: "portfolio" };
 
 function readViewFromUrl(): View {
   if (typeof window === "undefined") return { kind: "list" };
   const params = new URLSearchParams(window.location.search);
   if (params.get("new") === "1") return { kind: "new" };
+  if (params.get("portfolio") === "1") return { kind: "portfolio" };
   const id = params.get("id");
   if (id) return { kind: "detail", campaignId: id };
   return { kind: "list" };
@@ -121,8 +143,10 @@ function writeViewToUrl(view: View): void {
   const url = new URL(window.location.href);
   url.searchParams.delete("new");
   url.searchParams.delete("id");
+  url.searchParams.delete("portfolio");
   if (view.kind === "new") url.searchParams.set("new", "1");
   if (view.kind === "detail") url.searchParams.set("id", view.campaignId);
+  if (view.kind === "portfolio") url.searchParams.set("portfolio", "1");
   window.history.replaceState({}, "", url.toString());
 }
 

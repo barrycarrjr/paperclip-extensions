@@ -76,10 +76,15 @@ export function CampaignDetail({ campaignId, companyId, onBack, onChanged }: Cam
 
   useEffect(() => {
     void load();
-    // Poll every 10s while the campaign is running so counters stay live.
+    // v0.5.5: tightened to 3s while running so the counters feel
+    // live during a smoke test or a small campaign. Idle campaigns
+    // (paused / draft / stopped) don't re-poll. SSE on the
+    // /campaigns/:id/events endpoint is planned for v0.6.x — once
+    // that lands, this poll becomes the fallback for clients that
+    // can't open an EventSource (older proxies, mobile webviews).
     const id = window.setInterval(() => {
       if (data?.campaign.status === "running") void load();
-    }, 10_000);
+    }, 3_000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId, companyId, data?.campaign.status]);

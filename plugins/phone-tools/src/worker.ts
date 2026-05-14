@@ -20,6 +20,7 @@ import { recordSpend } from "./assistants/cost-cap.js";
 import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
 import {
   addDncEntry,
+  appendPacingOutcome,
   bumpCounter,
   checkDnc,
   listCompanyCampaigns,
@@ -29,10 +30,16 @@ import {
   readCounters,
   readDncList,
   readLead,
+  readPacingWindow,
   removeDncEntry,
   writeCampaign,
   writeLead,
 } from "./campaigns/state.js";
+import {
+  adjustPacing,
+  computeStats,
+  estimateRemaining,
+} from "./campaigns/pacing.js";
 import { assertPreflight } from "./campaigns/preflight.js";
 import { normalizeToE164, parseCsv, rowToLead } from "./campaigns/csv.js";
 import {
@@ -571,6 +578,20 @@ async function updateCampaignLeadFromEvent(
       status: nextStatus,
       nextAttemptAfter,
       lastAttemptAt: lead.lastAttemptAt ?? new Date().toISOString(),
+    });
+
+    // v0.5.5: feed the campaign's rolling pacing window. "Answered"
+    // for our purposes = the AI engaged a live human (transferred to
+    // a person, OR completed a conversation that wasn't voicemail /
+    // no-answer / busy). The pacing module reads this rolling rate
+    // to bias future tick spacing.
+    const answered: boolean =
+      event.kind === "call.transferred" || nextStatus === "called";
+    await appendPacingOutcome(ctx, campaignId, {
+      answered,
+      durationSec: event.durationSec ?? 0,
+      costUsd: event.costUsd,
+      endedAt: event.endedAt ?? new Date().toISOString(),
     });
 
     ctx.logger.info("phone-tools: campaign lead updated", {
@@ -2303,6 +2324,50 @@ const plugin = definePlugin({
             cacheRefreshedAt: cache.refreshedAt,
             cacheCount: cache.count,
           },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_campaign_predict",
+      {
+        displayName: "Estimate campaign remaining time + cost",
+        description: "Pending leads × adjusted-pacing → minutes + cost.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            campaignId: { type: "string" },
+            fallbackDurationSec: { type: "number" },
+            fallbackCostUsd: { type: "number" },
+          },
+          required: ["campaignId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as {
+          campaignId?: string;
+          fallbackDurationSec?: number;
+          fallbackCostUsd?: number;
+        };
+        if (!p.campaignId) return { error: "[EINVALID_INPUT] `campaignId` required" };
+        const campaign = await readCampaign(ctx, p.campaignId);
+        if (!campaign || campaign.companyId !== runCtx.companyId) {
+          return { error: `[ECAMPAIGN_NOT_FOUND] ${p.campaignId}` };
+        }
+        const window = await readPacingWindow(ctx, campaign.id);
+        const stats = computeStats(window);
+        const adjusted = adjustPacing(campaign.pacing, stats);
+        const pending = (await listLeads(ctx, campaign.id, { status: "pending" })).length;
+        const estimate = estimateRemaining({
+          pendingLeads: pending,
+          effectiveConcurrent: adjusted.maxConcurrent,
+          stats,
+          fallbackDurationSec: p.fallbackDurationSec ?? 90,
+          fallbackCostUsd: p.fallbackCostUsd ?? 0.07,
+        });
+        return {
+          content: `~${estimate.estimatedMinutesRemaining}m and $${estimate.estimatedRemainingCostUsd.toFixed(2)} to drain ${pending} pending leads.`,
+          data: { estimate, adjustedPacing: adjusted, stats },
         };
       },
     );
