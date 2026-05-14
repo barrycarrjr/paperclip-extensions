@@ -298,6 +298,21 @@ export interface ConfigAccount {
   recordingEnabled?: boolean;
   /** Per-account concurrency cap for outbound calls. Default 3. */
   maxConcurrentCalls?: number;
+  /**
+   * URL pointing at a plain-text or single-column CSV of E.164 numbers
+   * to treat as federally do-not-call. Fetched periodically and cached.
+   * Empty / missing = no federal DNC check (account-local DNC still
+   * applies). Use the FTC's National Do Not Call Registry URL after
+   * SAN registration, OR a third-party scrubbing service's published
+   * list, OR an internal corporate suppression list.
+   */
+  federalDncListUrl?: string;
+  /**
+   * How long the federal DNC cache may live before refresh. Default
+   * 24 hours. The FTC list updates daily; faster refresh is rarely
+   * useful and just hammers the source URL.
+   */
+  federalDncRefreshHours?: number;
 }
 
 export interface InstanceConfig {

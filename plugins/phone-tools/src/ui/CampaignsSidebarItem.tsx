@@ -24,12 +24,9 @@ export function CampaignsSidebarItem(_props: PluginSidebarProps) {
 
   if (loading || !data?.visible) return null;
 
-  // Plugin pages are mounted at /<companyPrefix>/plugins/<pluginId>.
-  // No deeper sub-routing supported by the host — the page handles
-  // its own internal navigation via query params.
   const href = host.companyPrefix
-    ? `/${host.companyPrefix}/plugins/phone-tools`
-    : `/plugins/phone-tools`;
+    ? `/${host.companyPrefix}/campaigns`
+    : `/campaigns`;
 
   return (
     <a

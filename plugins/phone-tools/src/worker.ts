@@ -36,6 +36,17 @@ import {
 import { assertPreflight } from "./campaigns/preflight.js";
 import { normalizeToE164, parseCsv, rowToLead } from "./campaigns/csv.js";
 import {
+  getOrRefreshFederalDnc,
+  isInFederalDnc,
+  refreshFederalDncCache,
+} from "./campaigns/federalDnc.js";
+import {
+  appendAudit,
+  readAuditRange,
+  renderAuditCsv,
+  type DialDecision,
+} from "./campaigns/audit.js";
+import {
   DEFAULT_PACING,
   DEFAULT_RETRY,
   type Campaign,
@@ -1218,6 +1229,36 @@ const plugin = definePlugin({
 
           checkConcurrencyLimit(r.resolved);
 
+          // v0.5.4: federal DNC + audit log. The check runs only for
+          // campaign-driven dials (metadata.paperclip_campaign_id) so
+          // operator-initiated one-off calls aren't gated on a list
+          // they may not have configured. Still cheap (cache hit) when
+          // configured but not relevant.
+          const meta = (p.metadata ?? {}) as Record<string, unknown>;
+          const campaignId =
+            typeof meta.paperclip_campaign_id === "string" ? meta.paperclip_campaign_id : undefined;
+          const normalizedTo = normalizeToE164(p.to) ?? p.to;
+          if (campaignId && r.resolved.account.federalDncListUrl) {
+            const cache = await getOrRefreshFederalDnc(
+              ctx,
+              r.resolved.accountKey,
+              r.resolved.account.federalDncListUrl,
+              r.resolved.account.federalDncRefreshHours ?? 24,
+            );
+            if (cache && isInFederalDnc(cache, normalizedTo)) {
+              await appendAudit(ctx, r.resolved.accountKey, {
+                phoneE164: normalizedTo,
+                decision: "skipped-federal-dnc",
+                campaignId,
+                actor: runCtx.agentId,
+                note: `cache refreshedAt ${cache.refreshedAt}`,
+              });
+              return {
+                error: `[EFEDERAL_DNC] ${normalizedTo} is on the federal DNC list (cache refreshedAt ${cache.refreshedAt}); skipped.`,
+              };
+            }
+          }
+
           const start = await r.resolved.engine.startOutboundCall({
             to: p.to,
             numberId,
@@ -1230,6 +1271,18 @@ const plugin = definePlugin({
             callId: start.callId,
             to: p.to,
           });
+          // Audit log: every campaign-driven dial that actually went
+          // out gets an entry. Non-campaign dials skip the audit (they
+          // don't carry the regulatory framing the audit log captures).
+          if (campaignId) {
+            await appendAudit(ctx, r.resolved.accountKey, {
+              phoneE164: normalizedTo,
+              decision: "dialed",
+              campaignId,
+              callId: start.callId,
+              actor: runCtx.agentId,
+            });
+          }
           return {
             content: `Placed outbound call ${start.callId} → ${p.to} (${start.status}).`,
             data: start,
@@ -2168,6 +2221,117 @@ const plugin = definePlugin({
         return {
           content: result.removed ? `Removed ${phone} from DNC.` : `${phone} not on DNC; no-op.`,
           data: result,
+        };
+      },
+    );
+
+    // ─── v0.5.4: Federal DNC + audit export ────────────────────────
+
+    ctx.tools.register(
+      "phone_dnc_federal_refresh",
+      {
+        displayName: "Force-refresh the federal DNC cache",
+        description: "Re-fetch the configured federalDncListUrl now.",
+        parametersSchema: {
+          type: "object",
+          properties: { account: { type: "string" } },
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const gate = await gateMutation("phone_dnc_federal_refresh");
+        if (gate) return gate;
+        const p = params as { account?: string };
+        const r = await resolveOrError(ctx, runCtx, "phone_dnc_federal_refresh", p.account);
+        if (!r.ok) return { error: r.error };
+        const url = r.resolved.account.federalDncListUrl;
+        if (!url) {
+          return { error: "[ENO_FEDERAL_DNC_URL] account has no federalDncListUrl configured." };
+        }
+        try {
+          const cache = await refreshFederalDncCache(ctx, r.resolved.accountKey, url);
+          return {
+            content: `Refreshed ${cache.count} federal DNC entries from ${url}.`,
+            data: { count: cache.count, refreshedAt: cache.refreshedAt, sourceUrl: url },
+          };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "phone_dnc_federal_check",
+      {
+        displayName: "Check a phone against federal DNC",
+        description: "Read; refreshes the cache transparently if stale.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            phoneE164: { type: "string" },
+          },
+          required: ["phoneE164"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { account?: string; phoneE164?: string };
+        const phone = normalizeToE164(String(p.phoneE164 ?? ""));
+        if (!phone) return { error: "[EINVALID_INPUT] phoneE164 not normalizable" };
+        const r = await resolveOrError(ctx, runCtx, "phone_dnc_federal_check", p.account);
+        if (!r.ok) return { error: r.error };
+        const url = r.resolved.account.federalDncListUrl;
+        const refreshHours = r.resolved.account.federalDncRefreshHours ?? 24;
+        if (!url) {
+          return {
+            content: `No federalDncListUrl configured; check skipped.`,
+            data: { inFederalDnc: false, configured: false },
+          };
+        }
+        const cache = await getOrRefreshFederalDnc(ctx, r.resolved.accountKey, url, refreshHours);
+        if (!cache) {
+          return {
+            content: `Federal DNC cache empty (refresh failed and no prior cache); allowing.`,
+            data: { inFederalDnc: false, configured: true, cacheEmpty: true },
+          };
+        }
+        const inDnc = isInFederalDnc(cache, phone);
+        return {
+          content: inDnc ? `${phone} IS on federal DNC.` : `${phone} is not on federal DNC.`,
+          data: {
+            inFederalDnc: inDnc,
+            configured: true,
+            cacheRefreshedAt: cache.refreshedAt,
+            cacheCount: cache.count,
+          },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "phone_audit_export",
+      {
+        displayName: "Export the dial-decision audit log as CSV",
+        description: "Returns CSV; use for compliance archival.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            since: { type: "string" },
+            until: { type: "string" },
+          },
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { account?: string; since?: string; until?: string };
+        const r = await resolveOrError(ctx, runCtx, "phone_audit_export", p.account);
+        if (!r.ok) return { error: r.error };
+        const since = p.since ?? new Date().toISOString().slice(0, 10);
+        const until = p.until ?? since;
+        const entries = await readAuditRange(ctx, r.resolved.accountKey, since, until);
+        const csv = renderAuditCsv(entries);
+        return {
+          content: `${entries.length} audit entries between ${since} and ${until}.`,
+          data: { count: entries.length, since, until, csv },
         };
       },
     );

@@ -2,7 +2,80 @@
 
 Paperclip plugin that lets agents and operators place AI-driven phone calls through Vapi.ai. **v0.3.0 ships the Assistants UI** — a top-level "Assistants" sidebar entry, an 8-step builder wizard, a Phone tab on the agent detail page, "Place call" / "Test on my phone" modals, and a hard daily cost cap per assistant. The agent-tool surface from v0.1.0 still works the same way for skill / heartbeat consumers; the new UI is operator-facing.
 
+## Quick start (do these once after install)
+
+This walkthrough takes a fresh phone-tools install to a working warm-transfer + campaign setup. **Pre-req:** you've already wired the plugin to a Vapi account on the plugin settings page (see "Setup" tab, or the bigger walkthrough in [Setup section](#setup--outbound-calls-via-vapi) below).
+
+### 1. Enable mutations
+
+On `/instance/settings/plugins/phone-tools` → **Configuration** tab → toggle **"Allow place-call / hangup / assistant mutations"** ON.
+
+Without this, every tool that places or controls a call returns `[EDISABLED]`. Default is OFF so a fresh install can't accidentally spend money.
+
+### 2. Build at least one assistant
+
+Navigate to the **Assistants** sidebar entry → **+ New assistant** → run the 8-step wizard. You'll be asked for voice, caller-ID, and a daily cost cap. Save.
+
+If you don't see the Assistants sidebar entry, your company isn't in any account's `allowedCompanies` list — fix that on the plugin settings page first.
+
+### 3. Configure warm transfer on the assistant
+
+Open the assistant's detail page → **Phone** tab → scroll to the **Warm transfer** panel → click **Configure**.
+
+Fill in:
+- **Transfer destination (E.164)** — a number Vapi can dial that 3CX answers, e.g. `+15551234567`. This is typically a DID on your PBX whose inbound rule routes to the human extension or queue you want qualified leads to land on.
+- **Spoken handoff line** *(optional)* — what the AI says right before the SIP bridge. Default is "One moment, I'm transferring you to a person who can help."
+- **Auto-file qualified leads to project** *(optional)* — Paperclip project UUID where transferred-call issues should land. The human picking up sees the transcript-so-far as a board issue.
+
+Save. The assistant now has the `transferCall` tool — it will hand off to your DID when a caller asks for a person, hits a problem the AI can't solve, or escalates.
+
+### 4. Smoke-test the assistant
+
+Same Phone tab → click **📲 Test on my phone**. Enter your mobile in E.164. The AI calls you within a few seconds. Try saying "transfer me to a real person" — your DID should ring.
+
+If the AI's caller-ID shows as "Spam Likely" or "Unknown", you're still on Vapi's pooled number. Wire the 3CX SIP trunk per the [3CX SIP-trunk binding](#production--outbound-via-3cx-sip-trunk-byo-carrier) section below to get your own branded caller-ID. **This is a hard prerequisite for cold-call campaigns** — pooled numbers spam-flag fast.
+
+### 5. Run your first campaign
+
+Navigate to the **📋 Campaigns** sidebar entry → **+ New campaign**. Fill in the wizard:
+
+| Section | What to enter |
+|---|---|
+| **1. Basics** | Driving assistant agent UUID (from step 2), campaign name, one-sentence purpose |
+| **2. Lead list (CSV)** | Drag-drop a CSV with at minimum a `phone` column. Other useful columns: `name`, `businessName`, `website` |
+| **3. Pacing** | Defaults are conservative (2 concurrent, 90s between dials, 30/hr, 200/day). Tune up only after a successful smoke run |
+| **4. Compliance preflight** | Audience kind, list source, geographic scope (e.g. `US-PA, US-NJ`), business hours, opening disclosure, opt-out language. Tick both ack boxes |
+
+Click **Create campaign (draft)** → you'll land on the detail view in `draft` status. Verify the leads imported correctly, then click **▶ Start**. The per-minute runner picks it up within ~60s; counters poll live.
+
+**Pause / Resume / Stop** any time from the detail view. **Stop is terminal** — pending leads get marked disqualified.
+
+### 6. Opt-outs
+
+The AI is taught (via the always-on `PHONE_DNC_PREAMBLE`) to invoke `add_to_dnc` whenever a recipient says "don't call again" / "remove me from your list" / similar. The number is added to the **per-account DNC list** automatically and never re-dialed by any campaign on that account.
+
+The runner also cross-checks DNC before every dial. To inspect or manually add/remove DNC entries, agents can use the `phone_dnc_list` / `phone_dnc_add` / `phone_dnc_remove` tools (or the `/api/plugins/phone-tools/api/dnc` HTTP route).
+
+---
+
+## Troubleshooting cheat sheet
+
+| Symptom | Likely cause |
+|---|---|
+| `[EDISABLED]` on every tool | Step 1 — toggle mutations on |
+| `[ECAMPAIGN_NO_TRANSFER]` when starting a campaign | Step 3 — assistant has no `transferTarget` |
+| `[ECOMPLIANCE_NOT_ACKNOWLEDGED]` | Step 5 — both ack boxes must be ticked |
+| `[ECOMPLIANCE_RISK_TOO_HIGH]` | You picked `consumer` audience with a non-first-party list. Change audience or list source |
+| Caller sees "Spam Likely" / unknown number | Step 4 — wire the 3CX SIP trunk for branded caller-ID |
+| Sidebar doesn't show Assistants or Campaigns | Plugin settings → tick this company in `allowedCompanies` on the account |
+| Lead status stuck on "calling" forever | Vapi webhook not reaching the plugin. Check `webhookSecretRef` is set + Vapi Server URL points at `/api/plugins/phone-tools/webhooks/vapi` |
+| Campaign won't start: "[ECAMPAIGN_EMPTY]" | Import leads via the wizard's CSV step or `phone_lead_list_append` before clicking Start |
+
+---
+
 ## Recent changes
+
+- **v0.5.4** — **Federal DNC + per-state TCPA presets + dial-decision audit log + CSV column auto-detect.** Closes Plan 14 Phase 3. (1) **Federal DNC** — new per-account `federalDncListUrl` field (any URL serving plain-text or single-column CSV of E.164 numbers; works with the FTC registry after SAN registration, third-party scrubbing services, or your own corporate suppression list). Cached per account with 24h refresh default; stale-on-error so a bad refresh never silently disables the check. Cross-checked before every campaign dial. New tools: `phone_dnc_federal_refresh`, `phone_dnc_federal_check`. New API routes: `GET /api/plugins/phone-tools/api/dnc/federal`, `POST /api/plugins/phone-tools/api/dnc/federal/refresh`. (2) **Per-state TCPA presets** — when geographic scope includes FL/CA/OK/TX (private-right-of-action / stricter-rules states), the preflight enforces additional opener requirements (clear self-identification + purpose disclosure) plus an unambiguous opt-out phrase in `optOutLanguage`. (3) **Audit log** — every campaign dial decision (dialed / skipped-account-dnc / skipped-federal-dnc / skipped-out-of-hours / skipped-concurrency-cap / skipped-daily-cap / skipped-hourly-cap / skipped-retry-cap / skipped-duplicate / error) appends to `audit:<accountKey>:<YYYY-MM-DD>` in `ctx.state`. New tool `phone_audit_export` returns the JSON or CSV; new API route `GET /api/plugins/phone-tools/api/audit?since=&until=&format=csv` for downloadable evidence. (4) **CSV column auto-detect** — a new `autoDetectMapping` helper (header keyword + data-shape scoring) suggests the column mapping; new "✨ Auto-detect columns" button in the campaign wizard fills the column inputs from the pasted CSV's first row. README also gains a top-of-file Quick Start so anyone reinstalling can get from zero to a running campaign without reading further.
 
 - **v0.5.3** — Shortened the manifest `description` to fit Paperclip's 500-char cap. Release-notes content moved fully into this log. Fixes the "Invalid plugin manifest: description: String must contain at most 500 character(s)" install failure that blocked upgrading from v0.3.7 → v0.5.2.
 
@@ -61,8 +134,7 @@ Paperclip plugin that lets agents and operators place AI-driven phone calls thro
 
 | Version | What lands |
 |---|---|
-| v0.5.2 | Federal DNC list cross-check on every dial; per-state TCPA preset language (CA / FL / TX / OK); audit log of every dial decision; CSV column auto-detect. |
-| v0.5.3 | Predictive pacing (adaptive based on observed answer rate); HQ portfolio rollup (cross-LLC campaigns view); SSE for live counter updates. |
+| v0.5.5 | Predictive pacing (adaptive based on observed answer rate); HQ portfolio rollup (cross-LLC campaigns view); faster live counters (3s poll → SSE). |
 | v0.6.x | Inbound routes UI on the Phone tab (DID → Assistant mapping, business hours, voicemail-drop fallback). |
 | v0.5.0 | DIY engine — Jambonz + Deepgram (STT) + Claude/GPT (LLM) + ElevenLabs (TTS, with Qwen-local fallback). Same `PhoneEngine` interface so it slots in without touching skills or wizards. Same engine dropdown on the account config. |
 | Later | DTMF mid-call, voicemail-drop, mid-call function tools, deeper 3CX Call Control API integration, cross-plugin transfer (`phone-tools` → `pbx_transfer_call` on a 3CX-known callId for human-initiated mid-call handoffs) |

@@ -3,7 +3,7 @@
  */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { normalizeToE164, parseCsv, rowToLead } from "./csv.js";
+import { autoDetectMapping, normalizeToE164, parseCsv, rowToLead } from "./csv.js";
 
 test("parseCsv: basic header + 2 rows", () => {
   const r = parseCsv("name,phone\nAlice,5551234567\nBob,5559876543");
@@ -108,4 +108,47 @@ test("rowToLead: optional columns absent → undefined fields", () => {
   assert.equal(result.lead?.name, undefined);
   assert.equal(result.lead?.businessName, undefined);
   assert.equal(result.lead?.timezoneHint, undefined);
+});
+
+// ─── autoDetectMapping (v0.5.4) ────────────────────────────────────────
+
+test("autoDetectMapping: header-named phone column wins", () => {
+  const parsed = parseCsv("name,phone\nAlice,5551234567\nBob,5559876543");
+  const r = autoDetectMapping(parsed);
+  assert.equal(r.mapping.phone, "phone");
+  assert.equal(r.confidence.phone, "high");
+});
+
+test("autoDetectMapping: data-shape inference when no header keyword matches", () => {
+  const parsed = parseCsv("col_a,col_b\nAlice,5551234567\nBob,5559876543\nCarol,5557777777");
+  const r = autoDetectMapping(parsed);
+  assert.equal(r.mapping.phone, "col_b");
+  // No name match → score is low/medium, depending on the validity share.
+  assert.ok(r.confidence.phone === "medium" || r.confidence.phone === "low");
+});
+
+test("autoDetectMapping: also picks name + business + website columns", () => {
+  const parsed = parseCsv("phone,fullname,Company,website\n5551234567,Alice,Acme,acme.com");
+  const r = autoDetectMapping(parsed);
+  assert.equal(r.mapping.phone, "phone");
+  assert.equal(r.mapping.name, "fullname");
+  assert.equal(r.mapping.businessName, "Company");
+  assert.equal(r.mapping.website, "website");
+});
+
+test("autoDetectMapping: claims each header at most once (business-before-name priority)", () => {
+  // 'businessName' contains both 'business' and 'name'. Business wins
+  // (we match business keywords first), name should fall through.
+  const parsed = parseCsv("phone,businessName,contactName\n5551234567,Acme,Alice");
+  const r = autoDetectMapping(parsed);
+  assert.equal(r.mapping.businessName, "businessName");
+  assert.equal(r.mapping.name, "contactName");
+});
+
+test("autoDetectMapping: gives up on phone if nothing matches", () => {
+  const parsed = parseCsv("a,b\nfoo,bar\nbaz,qux");
+  const r = autoDetectMapping(parsed);
+  assert.equal(r.mapping.phone, "");
+  assert.equal(r.confidence.phone, "none");
+  assert.ok(r.rationale.some((line) => line.includes("phone → none")));
 });

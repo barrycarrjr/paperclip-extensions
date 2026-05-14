@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.5.3";
+const PLUGIN_VERSION = "0.5.4";
 
 const accountItemSchema = {
   type: "object",
@@ -19,6 +19,8 @@ const accountItemSchema = {
     "allowedAssistants",
     "recordingEnabled",
     "maxConcurrentCalls",
+    "federalDncListUrl",
+    "federalDncRefreshHours",
     "allowedCompanies",
   ],
   properties: {
@@ -101,6 +103,20 @@ const accountItemSchema = {
       title: "Max concurrent outbound calls",
       description:
         "Per-account cap on simultaneous outbound calls. phone_call_make returns [ECONCURRENCY_LIMIT] if exceeded. Prevents a runaway agent from blowing through PSTN minutes. Default 3.",
+    },
+    federalDncListUrl: {
+      type: "string",
+      title: "Federal DNC list URL (optional)",
+      description:
+        "URL pointing at a plain-text or single-column CSV of E.164 numbers to treat as federally do-not-call. Fetched periodically and cached per-account. Use this with the FTC's National DNC Registry (after free SAN registration), a third-party scrubbing service's published list, or your own corporate suppression list. Empty = no federal check (account-local DNC still applies). Cross-checked before every campaign dial; manual phone_call_make is unaffected.",
+    },
+    federalDncRefreshHours: {
+      type: "number",
+      default: 24,
+      minimum: 1,
+      title: "Federal DNC refresh interval (hours)",
+      description:
+        "How long the cached federal DNC list may live before refresh. Default 24h (matches the FTC's daily update cadence). Stale-on-error: if a refresh fails, the previous cached set is reused and the dial proceeds against the older list rather than skipping the check.",
     },
     allowedCompanies: {
       type: "array",
@@ -920,6 +936,46 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         required: ["phoneE164", "note"],
       },
     },
+
+    // ─── v0.5.4: Federal DNC + audit ───────────────────────────────
+    {
+      name: "phone_dnc_federal_refresh",
+      displayName: "Force-refresh the federal DNC cache",
+      description:
+        "Fetch the configured federalDncListUrl and replace the cached set. Use when the list source has changed (e.g. after operator updates the URL or knows the registry was just dumped). No-op if the account has no federalDncListUrl. Mutation, gated.",
+      parametersSchema: {
+        type: "object",
+        properties: { account: { type: "string" } },
+      },
+    },
+    {
+      name: "phone_dnc_federal_check",
+      displayName: "Check a number against the federal DNC list",
+      description:
+        "Returns whether a phone number appears in the cached federal DNC set. Read-only; refreshes the cache transparently if stale.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string" },
+          phoneE164: { type: "string" },
+        },
+        required: ["phoneE164"],
+      },
+    },
+    {
+      name: "phone_audit_export",
+      displayName: "Export the dial-decision audit log as CSV",
+      description:
+        "Returns every dial-decision entry for an account between since/until (UTC days, inclusive). Use for regulatory evidence, compliance review, or external cold-storage archival. Read.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string" },
+          since: { type: "string", description: "ISO date 'YYYY-MM-DD' or full ISO timestamp." },
+          until: { type: "string", description: "ISO date 'YYYY-MM-DD' or full ISO timestamp." },
+        },
+      },
+    },
   ],
   apiRoutes: [
     {
@@ -1108,6 +1164,32 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
     },
+
+    // ─── v0.5.4: federal DNC + audit export ────────────────────────
+    {
+      routeKey: "campaigns.dnc.federal-status",
+      method: "GET",
+      path: "/dnc/federal",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.dnc.federal-refresh",
+      method: "POST",
+      path: "/dnc/federal/refresh",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "campaigns.audit.export",
+      method: "GET",
+      path: "/audit",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
   ],
   ui: {
     slots: [
@@ -1135,6 +1217,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         id: "campaigns-page",
         displayName: "Campaigns",
         exportName: "CampaignsPage",
+        routePath: "campaigns",
       },
     ],
   },

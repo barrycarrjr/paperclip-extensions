@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { validatePreflight } from "./preflight.js";
+import { isStrictStateInScope, validatePreflight } from "./preflight.js";
 import type { CompliancePreflight } from "./types.js";
 
 const validBase: CompliancePreflight = {
@@ -127,6 +127,59 @@ test("rented list with sourceNote allowed", () => {
       ...validBase,
       listSource: "rented",
       listSourceNote: "leadgen co X, B2B opt-in collected via web form 2025",
+    },
+    validCtx,
+  );
+  assert.equal(r.ok, true);
+});
+
+// ─── per-state TCPA presets (v0.5.4) ───────────────────────────────────
+
+test("isStrictStateInScope: detects FL/CA/OK/TX", () => {
+  assert.equal(isStrictStateInScope(["US-FL"]), true);
+  assert.equal(isStrictStateInScope(["US-CA", "US-NJ"]), true);
+  assert.equal(isStrictStateInScope(["us-ok"]), true); // case-insensitive
+  assert.equal(isStrictStateInScope(["US-PA", "US-NJ"]), false);
+  assert.equal(isStrictStateInScope([]), false);
+});
+
+test("strict state in scope: opener with no self-id rejected", () => {
+  const r = validatePreflight(
+    {
+      ...validBase,
+      geographicScope: ["US-PA", "US-FL"],
+      openingDisclosure:
+        "Wondering if you have time to chat about restaurants and our pricing for the week?",
+    },
+    validCtx,
+  );
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes("ECOMPLIANCE_STRICT_STATE_OPENER")));
+});
+
+test("strict state in scope: weak opt-out rejected", () => {
+  const r = validatePreflight(
+    {
+      ...validBase,
+      geographicScope: ["US-CA"],
+      openingDisclosure: validBase.openingDisclosure,
+      optOutLanguage: "Let me know if any of this works for you.",
+    },
+    validCtx,
+  );
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes("ECOMPLIANCE_STRICT_STATE_OPT_OUT")));
+});
+
+test("strict state in scope: compliant opener + opt-out passes", () => {
+  // The validBase opener already self-IDs ("this is Alex from M3 Print")
+  // and discloses purpose ("calling about our quarterly sample pack");
+  // the validBase opt-out includes "don't call again". Both rules are
+  // satisfied — strict state should not block.
+  const r = validatePreflight(
+    {
+      ...validBase,
+      geographicScope: ["US-FL", "US-NJ"],
     },
     validCtx,
   );

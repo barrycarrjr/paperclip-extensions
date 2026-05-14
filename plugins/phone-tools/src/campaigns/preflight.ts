@@ -26,6 +26,55 @@ export interface PreflightValidationResult {
 const MAX_DAILY_HOURS = 14;
 const WARN_DAILY_HOURS = 12;
 
+/**
+ * States with stricter-than-federal TCPA analogues. Calling into any
+ * of these requires additional disclosure language and tighter
+ * acknowledgement. List based on:
+ *   - FL: FTSA (2021) — private right of action, "express written
+ *         consent" required for AI/auto-dialed calls
+ *   - CA: CCPA + Robocall law — opt-out language must be explicit
+ *         and reachable via a single utterance
+ *   - OK: TCPA-2024 — pre-recorded / artificial voice rules apply
+ *         to most B2B calls too
+ *   - TX: stricter consumer protection; no-purchase consent rules
+ *
+ * Format: ISO 3166-2 codes. Update as state law changes; the
+ * preflight check is conservative — any geographic scope entry that
+ * matches triggers the stricter rules.
+ */
+const STRICT_STATES = new Set(["US-FL", "US-CA", "US-OK", "US-TX"]);
+
+/**
+ * Phrases the opening disclosure must contain (case-insensitive)
+ * when calling into a strict state. The preflight scans the
+ * configured `openingDisclosure` string for ANY match per category.
+ *
+ * The phrasing is deliberately loose — we don't want to over-prescribe
+ * the AI's exact words. Any greeting that conveys (a) who's calling
+ * and (b) why is acceptable. Strict-state operators have to confirm
+ * those phrases land in the opener.
+ */
+const STRICT_STATE_OPENER_REQUIREMENTS: Array<{
+  category: string;
+  needles: string[];
+  guidance: string;
+}> = [
+  {
+    category: "self-identification",
+    needles: ["this is", "i'm calling", "calling on behalf of", "calling from"],
+    guidance: "must clearly identify the caller (e.g. 'Hi, this is <Name> from <Business>...')",
+  },
+  {
+    category: "purpose-disclosure",
+    needles: ["calling about", "regarding", "with regards to", "in regards to", "to talk about", "to ask about", "to follow up", "to introduce"],
+    guidance: "must state the purpose of the call ('calling about X')",
+  },
+];
+
+export function isStrictStateInScope(scope: string[]): boolean {
+  return scope.some((s) => STRICT_STATES.has(s.trim().toUpperCase()));
+}
+
 export function validatePreflight(
   preflight: CompliancePreflight,
   ctx: PreflightValidationContext,
@@ -122,6 +171,36 @@ export function validatePreflight(
     if (!preflight.listSourceNote || preflight.listSourceNote.trim().length < 10) {
       errors.push(
         "[ECOMPLIANCE_LIST_SOURCE_NOTE] When listSource is 'purchased' or 'rented', listSourceNote must describe the source — vendor name + how consent was originally obtained. Required for the audit trail.",
+      );
+    }
+  }
+
+  // Per-state TCPA presets. When any strict state is in scope, the
+  // opening disclosure must clearly identify the caller AND state the
+  // purpose. Strict states have private right of action and stricter
+  // consent regimes — under-disclosed openers are the most-cited
+  // violation in private TCPA litigation.
+  if (Array.isArray(preflight.geographicScope) && isStrictStateInScope(preflight.geographicScope)) {
+    const opener = (preflight.openingDisclosure ?? "").toLowerCase();
+    for (const requirement of STRICT_STATE_OPENER_REQUIREMENTS) {
+      const matched = requirement.needles.some((n) => opener.includes(n.toLowerCase()));
+      if (!matched) {
+        errors.push(
+          `[ECOMPLIANCE_STRICT_STATE_OPENER] Geographic scope includes a strict-rule state (FL/CA/OK/TX). Opening disclosure ${requirement.guidance}.`,
+        );
+      }
+    }
+    // Strict states care more about explicit opt-out reachability.
+    const optOut = (preflight.optOutLanguage ?? "").toLowerCase();
+    if (
+      !optOut.includes("don't call") &&
+      !optOut.includes("do not call") &&
+      !optOut.includes("remove") &&
+      !optOut.includes("take you off") &&
+      !optOut.includes("opt out")
+    ) {
+      errors.push(
+        "[ECOMPLIANCE_STRICT_STATE_OPT_OUT] Strict-rule state in scope: opt-out language must contain an unambiguous opt-out phrase ('don't call', 'do not call', 'remove me', 'take off the list', or 'opt out'). Required so the AI recognizes opt-out requests reliably.",
       );
     }
   }

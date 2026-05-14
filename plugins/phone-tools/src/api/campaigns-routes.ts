@@ -23,6 +23,12 @@ import { getResolvedAccount } from "../engines/registry.js";
 import { assertPreflight } from "../campaigns/preflight.js";
 import { normalizeToE164, parseCsv, rowToLead } from "../campaigns/csv.js";
 import {
+  getOrRefreshFederalDnc,
+  isInFederalDnc,
+  refreshFederalDncCache,
+} from "../campaigns/federalDnc.js";
+import { readAuditRange, renderAuditCsv } from "../campaigns/audit.js";
+import {
   DEFAULT_PACING,
   DEFAULT_RETRY,
   type Campaign,
@@ -120,6 +126,12 @@ export async function handleCampaignsApi(
       return dncList(ctx, input);
     case "campaigns.assistants":
       return eligibleAssistants(ctx, input);
+    case "campaigns.dnc.federal-status":
+      return federalDncStatus(ctx, input);
+    case "campaigns.dnc.federal-refresh":
+      return federalDncRefresh(ctx, input);
+    case "campaigns.audit.export":
+      return auditExport(ctx, input);
     default:
       return null;
   }
@@ -518,4 +530,107 @@ async function eligibleAssistants(
     });
   }
   return ok({ assistants: results });
+}
+
+// ─── v0.5.4: federal DNC + audit export ─────────────────────────────
+
+async function federalDncStatus(
+  ctx: PluginContext,
+  input: PluginApiRequestInput,
+): Promise<PluginApiResponse> {
+  const accountKey = typeof input.query.account === "string" ? input.query.account : undefined;
+  let resolved;
+  try {
+    resolved = await getResolvedAccount(
+      ctx,
+      syntheticRunCtx(input),
+      "campaigns-federal-dnc-status",
+      accountKey,
+    );
+  } catch (err) {
+    return badRequest((err as Error).message);
+  }
+  const url = resolved.account.federalDncListUrl;
+  if (!url) {
+    return ok({
+      configured: false,
+      url: null,
+      note: "No federalDncListUrl configured — federal DNC check is disabled for campaign dials.",
+    });
+  }
+  const refreshHours = resolved.account.federalDncRefreshHours ?? 24;
+  const cache = await getOrRefreshFederalDnc(ctx, resolved.accountKey, url, refreshHours);
+  return ok({
+    configured: true,
+    url,
+    refreshHours,
+    refreshedAt: cache?.refreshedAt ?? null,
+    count: cache?.count ?? 0,
+    cacheEmpty: !cache,
+  });
+}
+
+async function federalDncRefresh(
+  ctx: PluginContext,
+  input: PluginApiRequestInput,
+): Promise<PluginApiResponse> {
+  const gate = await assertMutationsAllowed(ctx);
+  if (gate) return gate;
+  const accountKey = typeof input.query.account === "string" ? input.query.account : undefined;
+  let resolved;
+  try {
+    resolved = await getResolvedAccount(
+      ctx,
+      syntheticRunCtx(input),
+      "campaigns-federal-dnc-refresh",
+      accountKey,
+    );
+  } catch (err) {
+    return badRequest((err as Error).message);
+  }
+  const url = resolved.account.federalDncListUrl;
+  if (!url) {
+    return badRequest("[ENO_FEDERAL_DNC_URL] account has no federalDncListUrl configured.");
+  }
+  try {
+    const cache = await refreshFederalDncCache(ctx, resolved.accountKey, url);
+    return ok({ count: cache.count, refreshedAt: cache.refreshedAt, sourceUrl: url });
+  } catch (err) {
+    return serverError((err as Error).message);
+  }
+}
+
+async function auditExport(
+  ctx: PluginContext,
+  input: PluginApiRequestInput,
+): Promise<PluginApiResponse> {
+  const accountKey = typeof input.query.account === "string" ? input.query.account : undefined;
+  const since = typeof input.query.since === "string"
+    ? input.query.since
+    : new Date().toISOString().slice(0, 10);
+  const until = typeof input.query.until === "string" ? input.query.until : since;
+  const format = typeof input.query.format === "string" ? input.query.format : "json";
+  let resolved;
+  try {
+    resolved = await getResolvedAccount(
+      ctx,
+      syntheticRunCtx(input),
+      "campaigns-audit-export",
+      accountKey,
+    );
+  } catch (err) {
+    return badRequest((err as Error).message);
+  }
+  const entries = await readAuditRange(ctx, resolved.accountKey, since, until);
+  if (format === "csv") {
+    return {
+      status: 200,
+      body: renderAuditCsv(entries),
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="audit-${resolved.accountKey}-${since}_${until}.csv"`,
+      },
+    };
+  }
+  return ok({ accountKey: resolved.accountKey, since, until, count: entries.length, entries });
 }

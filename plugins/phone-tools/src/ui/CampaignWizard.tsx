@@ -71,6 +71,49 @@ export function CampaignWizard({ companyId, onCancel, onCreated }: CampaignWizar
     reader.readAsText(file);
   }
 
+  /**
+   * Header-name auto-detect — scans the first row of the CSV and
+   * fills the column-mapping inputs based on header keywords. The
+   * server-side `import-csv` route runs a more thorough data-shape
+   * scoring (sees actual values), so wrong client-side guesses still
+   * surface as `[ECSV_BAD_MAPPING]` on submit; this is just a
+   * starting-point convenience for the operator.
+   */
+  function autoDetectColumns() {
+    const firstLine = csvText.split(/\r?\n/)[0]?.trim();
+    if (!firstLine) return;
+    const headers = firstLine.split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+    const lowered = headers.map((h) => h.toLowerCase().replace(/[\s_-]+/g, ""));
+    const findIdx = (keywords: string[], skip: Set<number>): number => {
+      for (let i = 0; i < lowered.length; i++) {
+        if (skip.has(i)) continue;
+        if (keywords.some((k) => lowered[i].includes(k))) return i;
+      }
+      return -1;
+    };
+    const claimed = new Set<number>();
+    const phoneIdx = findIdx(["phone", "tel", "mobile", "number", "cell"], claimed);
+    if (phoneIdx >= 0) {
+      setCsvPhoneCol(headers[phoneIdx]);
+      claimed.add(phoneIdx);
+    }
+    const bizIdx = findIdx(["business", "company", "organization", "org", "biz"], claimed);
+    if (bizIdx >= 0) {
+      setCsvBusinessCol(headers[bizIdx]);
+      claimed.add(bizIdx);
+    }
+    const nameIdx = findIdx(["name", "contact", "person"], claimed);
+    if (nameIdx >= 0) {
+      setCsvNameCol(headers[nameIdx]);
+      claimed.add(nameIdx);
+    }
+    const webIdx = findIdx(["website", "url", "site", "domain", "web"], claimed);
+    if (webIdx >= 0) {
+      setCsvWebsiteCol(headers[webIdx]);
+      claimed.add(webIdx);
+    }
+  }
+
   async function handleSubmit() {
     setError(null);
     setCsvImportResult(null);
@@ -239,6 +282,17 @@ export function CampaignWizard({ companyId, onCancel, onCreated }: CampaignWizar
             style={{ ...input, fontFamily: "monospace", fontSize: 12 }}
           />
         </Field>
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <button
+            type="button"
+            onClick={autoDetectColumns}
+            disabled={!csvText.trim()}
+            style={ghostButton}
+            title="Scan the CSV's first row and fill the column mapping based on header keywords."
+          >
+            ✨ Auto-detect columns
+          </button>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <Field label="Phone column">
             <input type="text" value={csvPhoneCol} onChange={(e) => setCsvPhoneCol(e.target.value)} style={input} />
