@@ -47,7 +47,7 @@ export function WarmTransferModal({
     setError(null);
     const trimmed = transferTarget.trim();
     if (trimmed && !/^\+[1-9]\d{6,14}$/.test(trimmed)) {
-      setError("Destination must be empty (to disable) or a valid E.164 number, e.g. +12154636348.");
+      setError("Destination must be empty (to disable) or a valid E.164 number, e.g. +15555551212.");
       return;
     }
     setSubmitting(true);
@@ -147,7 +147,7 @@ export function WarmTransferModal({
               type="tel"
               value={transferTarget}
               onChange={(e) => setTransferTarget(e.target.value)}
-              placeholder="+12154636348"
+              placeholder="+15555551212"
               style={input}
             />
             <span style={hint}>Leave empty to disable warm transfer.</span>

@@ -603,7 +603,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           transferTarget: {
             type: "string",
             description:
-              "Optional E.164 destination for warm transfer to a human. When set, the engine gives the assistant a `transferCall` tool it may invoke when the caller asks for a person, has a problem the AI can't solve, or becomes hostile. The engine dials this number, plays the configured transfer message to the caller, then SIP-REFERs the leg. Typically this is a 3CX DID that the PBX routes to the intended extension or queue via its inbound rules (e.g. '+12154636348' for 'Sales DID that rings Barry'). Leave empty to disable warm transfer for this assistant.",
+              "Optional E.164 destination for warm transfer to a human. When set, the engine gives the assistant a `transferCall` tool it may invoke when the caller asks for a person, has a problem the AI can't solve, or becomes hostile. The engine dials this number, plays the configured transfer message to the caller, then SIP-REFERs the leg. Typically this is a 3CX DID that the PBX routes to the intended extension or queue via its inbound rules (e.g. '+15555551212' for 'Sales DID that rings Someone'). Leave empty to disable warm transfer for this assistant.",
           },
           transferMessage: {
             type: "string",

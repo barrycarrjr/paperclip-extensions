@@ -49,7 +49,7 @@ export interface AssistantConfig {
    * dial — typically a 3CX DID that routes to the intended extension
    * or queue via 3CX's inbound rules.
    *
-   * Example: `+12154636348` for "Sales DID at Carr Rock that rings
+   * Example: `+15555454548` for "Sales DID at ACME Co that rings
    * Barry's extension". 3CX answers, applies its inbound rule, and the
    * SIP leg lands on the right human. No 3cx-tools call required —
    * Vapi handles the SIP REFER itself.
