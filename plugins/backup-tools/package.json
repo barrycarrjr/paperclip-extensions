@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-backup-tools",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Paperclip plugin that produces encrypted system snapshots of an instance's data on a schedule (or on demand) and ships them to one or more destinations (S3-compatible, Google Drive). Restore wizard included. Encryption is client-side (Argon2id + AES-256-GCM); destinations never see plaintext.",
   "type": "module",
   "private": true,

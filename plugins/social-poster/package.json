@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-social-poster",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Paperclip plugin that posts to Facebook Pages, Instagram Business, and X (Twitter) via their public APIs. Encrypted credentials, brand-variant guardrails, optional scheduling.",
   "type": "module",
   "private": true,

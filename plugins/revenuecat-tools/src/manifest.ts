@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "revenuecat-tools";
-const PLUGIN_VERSION = "0.2.7";
+const PLUGIN_VERSION = "0.2.8";
 
 const projectItemSchema = {
   type: "object",
