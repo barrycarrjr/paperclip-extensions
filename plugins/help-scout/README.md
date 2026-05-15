@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.5.7** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.5.6** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.5.5** — Cross-plugin release bump that picks up the v0.5.4 `SlimConversation.preview` rollout (UI components updated to consume the new field, plus minor layout consistency tweaks and a dropdown for extra message actions).

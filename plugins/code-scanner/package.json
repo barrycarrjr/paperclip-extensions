@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-code-scanner",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Read-only code and agent-observability detectors for the Steward agent. Wraps gitleaks (secret scan), knip (dead exports), git grep+blame (aged TODOs), README/AGENTS.md drift, and cross-company agent state. Cross-company by default; LLM-agnostic; no mutations.",
   "type": "module",
   "private": true,

@@ -26,8 +26,8 @@ const REPO_ROOT = dirname(__dirname);
 const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
-  "backup-tools":
-    "First release on the registry. v0.1.0 ships system-snapshot management: encrypted backups (Argon2id + AES-256-GCM, client-side) on a schedule, fan-out to S3-compatible + Google Drive destinations, and a restore wizard with typed-confirmation. Requires paperclip core ≥ the matching system-snapshot endpoints landing in the host repo. Full feature list and v0.2 roadmap in README.",
+  "phone-tools":
+    "Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.",
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";
