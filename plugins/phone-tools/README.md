@@ -132,6 +132,8 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- **v0.5.12** — Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.
+
 - **v0.5.11** — Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.
 
 - **v0.5.10** — Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.

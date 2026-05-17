@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.4.10** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.4.9** — Dropped v18 support. The `pbxVersion` field is now `enum: ["20"]` (was `["20", "18"]`) — v18 was never implemented and would error with `[EENGINE_NOT_AVAILABLE]` if selected. Most v18 installs upgrade to v20 for free; if you're still on v18, upgrade before installing. README and roadmap cleaned up to match. No effect on existing v20 configs.
 
 - **v0.4.8** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
