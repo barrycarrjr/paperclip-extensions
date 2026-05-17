@@ -276,15 +276,23 @@ async function testHappyReadPath() {
   }
 }
 
-async function testParkedCallsAlwaysEmpty() {
+async function testParkedCallsReturnsEmptyWhen404OnEverySlot() {
+  // Default parkSlotRange (8000-8009) is probed; 3CX returns 404 on slots
+  // with no current participants. The engine should swallow 404s and return
+  // an empty list — NOT an error.
   const harness = await makeHarness({
     allowMutations: false,
     defaultAccount: ACCOUNT_KEY,
     accounts: [baseAccount],
   });
+  let participantsCalls = 0;
   const stub = stubFetch(async (url) => {
     if (url.endsWith("/connect/token"))
       return jsonResponse({ access_token: "tok", expires_in: 3600 });
+    if (url.includes("/callcontrol/") && url.endsWith("/participants")) {
+      participantsCalls += 1;
+      return new Response("Not Found", { status: 404 });
+    }
     return new Response("not stubbed", { status: 404 });
   });
   try {
@@ -293,10 +301,112 @@ async function testParkedCallsAlwaysEmpty() {
       {},
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     )) as { error?: string; data?: { parked: unknown[] } };
-    if (result.data?.parked?.length === 0 && !result.error) {
-      ok("pbx_parked_calls returns empty array (no XAPI endpoint; v0.2 will add Call Control API)");
+    if (result.data?.parked?.length === 0 && !result.error && participantsCalls === 10) {
+      ok(`pbx_parked_calls probes 10 default slots, returns [] when all 404 (calls=${participantsCalls})`);
     } else {
-      fail("pbx_parked_calls empty stub", JSON.stringify(result));
+      fail(
+        "pbx_parked_calls 404-everywhere path",
+        JSON.stringify({ result, participantsCalls }),
+      );
+    }
+  } finally {
+    stub.restore();
+  }
+}
+
+async function testParkedCallsReturnsNormalizedParticipant() {
+  // One park slot (8000) has a participant; the rest 404. Engine should
+  // normalize that participant into a NormalizedParkedCall with the right
+  // slot, callerNumber, and originalExtension.
+  const harness = await makeHarness({
+    allowMutations: false,
+    defaultAccount: ACCOUNT_KEY,
+    accounts: [baseAccount],
+  });
+  const startedAt = new Date(Date.now() - 47_000).toISOString(); // parked 47s ago
+  const stub = stubFetch(async (url) => {
+    if (url.endsWith("/connect/token"))
+      return jsonResponse({ access_token: "tok", expires_in: 3600 });
+    if (url.endsWith("/callcontrol/8000/participants")) {
+      return jsonResponse([
+        {
+          id: "p-abc",
+          callid: "call-abc",
+          dn: "8000",
+          party_caller_number: "+15551234567",
+          party_dn: "100",
+          status: "Connected",
+          start_time: startedAt,
+        },
+      ]);
+    }
+    if (url.includes("/callcontrol/") && url.endsWith("/participants")) {
+      return new Response("Not Found", { status: 404 });
+    }
+    return new Response("not stubbed", { status: 404 });
+  });
+  try {
+    const result = (await harness.executeTool(
+      "pbx_parked_calls",
+      {},
+      { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
+    )) as {
+      error?: string;
+      data?: {
+        parked: { slot?: string; callerNumber?: string; originalExtension?: string; parkedSinceSec?: number }[];
+      };
+    };
+    const parked = result.data?.parked ?? [];
+    const first = parked[0];
+    if (
+      !result.error &&
+      parked.length === 1 &&
+      first?.slot === "8000" &&
+      first?.callerNumber === "+15551234567" &&
+      first?.originalExtension === "100" &&
+      typeof first?.parkedSinceSec === "number" &&
+      first.parkedSinceSec >= 40 &&
+      first.parkedSinceSec <= 60
+    ) {
+      ok(`pbx_parked_calls normalizes participant: slot=8000 caller=+15551234567 origExt=100 parkedSinceSec≈47`);
+    } else {
+      fail("pbx_parked_calls normalized shape", JSON.stringify(result));
+    }
+  } finally {
+    stub.restore();
+  }
+}
+
+async function testParkedCallsEmptyRangeShortCircuits() {
+  // Operator explicitly cleared the range — engine should NOT fan out at all.
+  const harness = await makeHarness({
+    allowMutations: false,
+    defaultAccount: ACCOUNT_KEY,
+    accounts: [{ ...baseAccount, parkSlotRange: [] }],
+  });
+  let participantsCalls = 0;
+  const stub = stubFetch(async (url) => {
+    if (url.endsWith("/connect/token"))
+      return jsonResponse({ access_token: "tok", expires_in: 3600 });
+    if (url.includes("/callcontrol/") && url.endsWith("/participants")) {
+      participantsCalls += 1;
+      return jsonResponse([]);
+    }
+    return new Response("not stubbed", { status: 404 });
+  });
+  try {
+    const result = (await harness.executeTool(
+      "pbx_parked_calls",
+      {},
+      { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
+    )) as { error?: string; data?: { parked: unknown[] } };
+    if (result.data?.parked?.length === 0 && !result.error && participantsCalls === 0) {
+      ok("pbx_parked_calls with parkSlotRange=[] short-circuits (no HTTP probes)");
+    } else {
+      fail(
+        "pbx_parked_calls empty-range short-circuit",
+        JSON.stringify({ result, participantsCalls }),
+      );
     }
   } finally {
     stub.restore();
@@ -705,7 +815,9 @@ async function main() {
   await testMutationsDisabled();
   await testScopeViolation();
   await testHappyReadPath();
-  await testParkedCallsAlwaysEmpty();
+  await testParkedCallsReturnsEmptyWhen404OnEverySlot();
+  await testParkedCallsReturnsNormalizedParticipant();
+  await testParkedCallsEmptyRangeShortCircuits();
   await testHangupUsesXapiPbxDropCall();
   await testParkRoutesToParkSlot();
   await testDidsNormalizedToE164();

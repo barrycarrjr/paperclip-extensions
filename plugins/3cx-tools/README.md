@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.5.0** — `pbx_parked_calls` is now real. Previously it always returned `[]` because XAPI doesn't expose live park-slot state. The engine now fans out `GET /callcontrol/<slot>/participants` per configured park-slot extension (default `8000-8009`) and normalizes each participant into the existing `NormalizedParkedCall` shape (`slot`, `callerNumber`, `parkedSinceSec`, `originalExtension`). New per-account config field `parkSlotRange` lets operators on non-default park ranges override the slot list; setting it to `[]` short-circuits the probe entirely. 404 on an individual slot is treated as "no calls parked there" (the common case); 403 / auth-style errors bubble up as `[E3CX_CC_NOT_ENABLED]` with operator-actionable guidance. The Call Control API path requires the second Service-Principal checkbox AND each park-slot extension added to the Extension(s) selector — same operator setup as `pbx_park_call` / `pbx_transfer_call`. Defensive about field-name variance: the participant shape is matched against both lowercase_underscore (Call Control convention) and PascalCase (XAPI convention) names so an upstream rename doesn't crash the tool.
+
 - **v0.4.10** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.4.9** — Dropped v18 support. The `pbxVersion` field is now `enum: ["20"]` (was `["20", "18"]`) — v18 was never implemented and would error with `[EENGINE_NOT_AVAILABLE]` if selected. Most v18 installs upgrade to v20 for free; if you're still on v18, upgrade before installing. README and roadmap cleaned up to match. No effect on existing v20 configs.
@@ -152,7 +154,7 @@ The normalized number then has the company's `outboundDialPrefix` applied (with 
 
 All Call Control API mutations require the **second** checkbox on the Service Principal ("Enable access to the 3CX Call Control API") AND the operating extension(s) added to the Service Principal's Extension(s) selector.
 
-`pbx_parked_calls` (read-side park-slot enumeration) currently returns an empty list — XAPI doesn't expose live parked calls, and we haven't yet wired a Call Control API endpoint for the listing. Useful as "no parked calls right now" signal but not authoritative; track via the synthetic events emitted around `pbx_park_call` / `pbx_pickup_park` if you need authoritative state.
+`pbx_parked_calls` (read-side park-slot enumeration) fans out `GET /callcontrol/<slot>/participants` across the per-account `parkSlotRange` (defaults to `8000-8009` — 3CX's conventional first park-slot range). Each participant found is normalized into `{ slot, callerNumber, parkedSinceSec, originalExtension }`. 404 on an individual slot is treated as "nothing parked there" — the common case. Configure `parkSlotRange` on the account if your install uses a non-default slot range; set it to `[]` to disable the probe entirely (the tool then returns `[]` without hitting the PBX).
 
 ### Notes on park / transfer behavior
 
@@ -218,6 +220,7 @@ Open `/instance/settings/plugins/3cx-tools` and fill in the settings form.
 - **Allowed companies** — Paperclip company UUIDs whose agents may use this account at all. **Empty = unusable**. Use `["*"]` for portfolio-wide (only meaningful in single mode).
 - **Expose call recording URLs** — default off. Many jurisdictions require an audible "this call may be recorded" disclosure; flip on only after your IVR/queue greeting handles consent.
 - **Max click-to-call per day per company** — hard cap, default 50. Set 0 to disable click-to-call for the account regardless of the master mutation switch.
+- **Park slot extensions** — list of single extensions or contiguous ranges (e.g. `["8000-8009"]`) that act as park slots on this PBX. Defaults to `["8000-8009"]` if unset. `pbx_parked_calls` probes one `GET /callcontrol/<slot>/participants` per slot. Set to `[]` to disable enumeration.
 
 ### 4. Pick the right mode
 
@@ -380,7 +383,6 @@ pnpm --filter paperclipai exec tsx cli/src/index.ts plugin reinstall 3cx-tools
 ## Roadmap
 
 - **v0.5** — `pbx_trunk_status` for SIP-trunk registration health.
-- **v0.5** — `pbx_parked_calls` real implementation (currently returns `[]` — see [plugin-plans/10c-3cx-parked-calls.md](../../plugin-plans/10c-3cx-parked-calls.md)).
 - **v0.6** — bridge with `phone-tools`: `pbx_transfer_call` accepting a `phone-tools` callId for AI→human hand-off.
 
 ## Out of scope

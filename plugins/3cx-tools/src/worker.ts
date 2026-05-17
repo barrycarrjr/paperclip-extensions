@@ -14,7 +14,7 @@ import {
   listAccountsForEvents,
 } from "./engines/registry.js";
 import { isCompanyAllowed } from "./companyAccess.js";
-import { buildScopeFilter } from "./scopeFilter.js";
+import { buildScopeFilter, collectIndividualExtensions } from "./scopeFilter.js";
 import { XapiClient } from "./engines/v20Xapi/xapiClient.js";
 import { V20XapiEngine } from "./engines/v20Xapi/v20XapiEngine.js";
 import type {
@@ -83,6 +83,21 @@ function asBool(v: unknown): boolean | undefined {
 function todayUtcDate(): string {
   const d = new Date();
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Resolve the per-account `parkSlotRange` config into a flat list of slot
+ * extensions to probe at `pbx_parked_calls` time. Defaults to the
+ * conventional 3CX first park-slot range (8000-8009) when the account
+ * has no `parkSlotRange` configured. An explicit empty array on the
+ * config disables probing — the engine returns `[]` without fanning out.
+ */
+const DEFAULT_PARK_SLOT_RANGE = ["8000-8009"];
+function resolveParkSlots(account: ConfigAccount): string[] {
+  const configured = account.parkSlotRange;
+  if (configured === undefined) return collectIndividualExtensions(DEFAULT_PARK_SLOT_RANGE);
+  if (configured.length === 0) return [];
+  return collectIndividualExtensions(configured);
 }
 
 /**
@@ -405,10 +420,12 @@ const plugin = definePlugin({
         const r = await resolveOrError(ctx, runCtx, "pbx_parked_calls", accountKey);
         if (!r.ok) return errorResult(r.error);
         const engine = getEngineFor(runCtx.companyId, r.resolved.accountKey);
+        const parkSlots = resolveParkSlots(r.resolved.account);
         try {
-          const parked = await engine.listParkedCalls(r.resolved.scope);
+          const parked = await engine.listParkedCalls(r.resolved.scope, parkSlots);
           await track(ctx, runCtx, "pbx_parked_calls", r.resolved.accountKey, {
             count: parked.length,
+            slotsProbed: parkSlots.length,
           });
           return { data: { parked } };
         } catch (err) {

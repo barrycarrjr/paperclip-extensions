@@ -147,14 +147,67 @@ export class V20XapiEngine implements ThreeCxEngine {
     };
   }
 
-  async listParkedCalls(_filter: ScopeFilter): Promise<NormalizedParkedCall[]> {
+  async listParkedCalls(
+    filter: ScopeFilter,
+    parkSlots: string[],
+  ): Promise<NormalizedParkedCall[]> {
     // Parked calls are NOT exposed via XAPI on 3CX v20 — the OData metadata
     // only has CallParkingSettings (config), not a runtime parked-calls
-    // collection. Live parked-call enumeration requires the Call Control
-    // API, which the v0.1.0 engine doesn't yet integrate. Returning an
-    // empty list (rather than throwing) keeps this tool usable as a
-    // signal-of-absence; v0.2 will add Call Control API support.
-    return [];
+    // collection. Live parked-call enumeration goes through the Call Control
+    // API: a parked call appears as a participant of its park-slot extension.
+    // We fan out one GET per slot in parallel, normalize the participants
+    // we find, and apply the scope filter on top.
+    //
+    // If no slot range is configured, return [] rather than probing — the
+    // caller (worker) is responsible for defaulting parkSlots to the
+    // conventional "8000-8009" range, so an empty list here means the
+    // operator explicitly cleared the range.
+    if (!parkSlots || parkSlots.length === 0) return [];
+
+    const responses = await Promise.all(
+      parkSlots.map(async (slot) => {
+        try {
+          const participants = await this.client.get<RawCcParticipant[]>(
+            EP.ccParticipants(slot),
+          );
+          return { slot, participants: participants ?? [] };
+        } catch (err) {
+          const msg = (err as Error).message ?? "";
+          // 404 on a slot that's not currently active is the common case —
+          // 3CX returns it when no participants are routed there. Treat as
+          // empty rather than failing the whole tool call.
+          if (msg.includes("[E3CX_HTTP_404]") || msg.includes("[E3CX_NOT_FOUND]")) {
+            return { slot, participants: [] as RawCcParticipant[] };
+          }
+          // Auth-style errors are operator-actionable — bubble them up so
+          // the agent sees a useful failure mode rather than a silent empty.
+          if (
+            msg.includes("[E3CX_HTTP_403]") ||
+            msg.includes("[E3CX_AUTH]") ||
+            msg.includes("[E3CX_CC_NOT_ENABLED]")
+          ) {
+            throw new Error(
+              `[E3CX_CC_NOT_ENABLED] /callcontrol/${slot}/participants returned ${msg}. ` +
+                `The Service Principal needs Call Control API access enabled AND the park-slot ` +
+                `extension(s) added to its Extension(s) selector.`,
+            );
+          }
+          // Anything else: log-and-skip the individual slot rather than fail
+          // the whole tool — the operator can still see the other slots.
+          return { slot, participants: [] as RawCcParticipant[] };
+        }
+      }),
+    );
+
+    const now = Date.now();
+    const normalized: NormalizedParkedCall[] = [];
+    for (const { slot, participants } of responses) {
+      for (const p of participants) {
+        normalized.push(toParkedCall(slot, p, now));
+      }
+    }
+
+    return filterParkedCalls(filter, normalized);
   }
 
   async listActiveCalls(filter: ScopeFilter): Promise<NormalizedActiveCall[]> {
@@ -772,13 +825,56 @@ interface RawQueueAgent {
   IsLoggedIn?: boolean;
 }
 
-interface RawParkedCall {
-  Slot?: string;
-  CallerId?: string;
-  CallerNumber?: string;
-  ParkedAt?: string;
-  ParkedSinceSec?: number;
-  OriginalExtension?: string;
+/**
+ * Call Control API participant shape — what `GET /callcontrol/<ext>/participants`
+ * returns. 3CX has historically used inconsistent field names across versions
+ * and OData vs. Call Control API surfaces; we declare both lowercase_underscore
+ * (Call Control convention) and PascalCase (XAPI/OData convention) variants
+ * and pick whichever is populated at runtime in `toParkedCall`.
+ *
+ * Documented fields (best-effort against 3CX v20 docs + community samples):
+ *   - id / Id                — participant id
+ *   - callid / CallId        — call id
+ *   - legid / LegId          — leg id
+ *   - dn / Dn                — the DN the participant sits on (== slot extension here)
+ *   - device_id              — for routed-from-extension cases
+ *   - party_caller_id        — caller's display id (text)
+ *   - party_caller_name      — caller's display name
+ *   - party_caller_number    — caller's number (E.164-ish or extension)
+ *   - party_dn / PartyDn     — the *other* leg's DN (the original-owning extension
+ *                              for a parked call — the extension that parked it,
+ *                              or the original ringing destination on inbound)
+ *   - direction              — usually "Inbound" / "Outbound" / "Internal"
+ *   - status                 — "Connected" / "Dialing" / "Ringing" / etc.
+ *   - start_time / StartTime — ISO timestamp
+ *
+ * Everything is optional — the worst-case "unknown" shape produces a
+ * NormalizedParkedCall with mostly-empty fields, which is better than crashing.
+ */
+interface RawCcParticipant {
+  id?: string;
+  Id?: string;
+  callid?: string;
+  CallId?: string;
+  legid?: string;
+  LegId?: string;
+  dn?: string;
+  Dn?: string;
+  device_id?: string;
+  party_caller_id?: string;
+  party_caller_name?: string;
+  party_caller_number?: string;
+  PartyCallerId?: string;
+  PartyCallerName?: string;
+  PartyCallerNumber?: string;
+  party_dn?: string;
+  PartyDn?: string;
+  direction?: string;
+  Direction?: string;
+  status?: string;
+  Status?: string;
+  start_time?: string;
+  StartTime?: string;
 }
 
 interface RawActiveCall {
@@ -1109,15 +1205,43 @@ function toQueue(r: RawQueue): NormalizedQueue {
   };
 }
 
-function toParkedCall(r: RawParkedCall): NormalizedParkedCall {
-  const since =
-    r.ParkedSinceSec ??
-    (r.ParkedAt ? Math.max(0, Math.floor((Date.now() - new Date(r.ParkedAt).getTime()) / 1000)) : 0);
+/**
+ * Map a Call Control API participant (sitting on a park-slot extension's
+ * /participants list) to the normalized parked-call shape.
+ *
+ * Defensive about field-name variance — see the RawCcParticipant comment
+ * for the catalogue of names 3CX has been observed to use. Anything we
+ * can't extract falls back to a safe default (`"unknown"` / `0` /
+ * undefined) rather than throwing — the operator deserves a partial
+ * result over a hard failure on an unexpected payload shape.
+ */
+function toParkedCall(
+  slot: string,
+  r: RawCcParticipant,
+  nowMs: number,
+): NormalizedParkedCall {
+  const startedAtRaw = r.start_time ?? r.StartTime;
+  let parkedSinceSec = 0;
+  if (startedAtRaw) {
+    const startedMs = Date.parse(startedAtRaw);
+    if (Number.isFinite(startedMs)) {
+      parkedSinceSec = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
+    }
+  }
+  const callerNumber =
+    r.party_caller_number ??
+    r.PartyCallerNumber ??
+    r.party_caller_id ??
+    r.PartyCallerId ??
+    r.party_caller_name ??
+    r.PartyCallerName ??
+    "unknown";
+  const originalExtension = r.party_dn ?? r.PartyDn ?? undefined;
   return {
-    slot: String(r.Slot ?? ""),
-    callerNumber: r.CallerNumber ?? r.CallerId ?? "unknown",
-    parkedSinceSec: since,
-    originalExtension: r.OriginalExtension,
+    slot,
+    callerNumber,
+    parkedSinceSec,
+    originalExtension,
   };
 }
 

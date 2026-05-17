@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.4.10";
+const PLUGIN_VERSION = "0.5.0";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -123,6 +123,7 @@ const accountItemSchema = {
     "allowedCompanies",
     "exposeRecordings",
     "maxClickToCallPerDay",
+    "parkSlotRange",
   ],
   properties: {
     key: {
@@ -210,6 +211,13 @@ const accountItemSchema = {
       title: "Max click-to-call per day per company",
       description:
         "Hard cap on pbx_click_to_call invocations per (company, calendar-day, account). Prevents runaway loops if a skill misbehaves; PSTN minutes cost real money. Set 0 to disable click-to-call for this account regardless of allowMutations.",
+    },
+    parkSlotRange: {
+      type: "array",
+      items: { type: "string" },
+      title: "Park slot extensions",
+      description:
+        "Extensions used as park slots on this PBX. Each entry is either a single extension (\"8000\") or a contiguous range (\"8000-8009\"). pbx_parked_calls fans out one GET /callcontrol/<slot>/participants per slot — leaving this empty disables the probe and the tool returns []. If omitted entirely, the plugin defaults to [\"8000-8009\"] (3CX's conventional range). The Service Principal must have Call Control API access enabled AND each park-slot extension added to its Extension(s) selector, otherwise the per-slot probes 403 and the tool returns an [E3CX_CC_NOT_ENABLED] error.",
     },
   },
 } as const;

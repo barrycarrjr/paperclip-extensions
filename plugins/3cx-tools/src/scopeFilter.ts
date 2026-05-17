@@ -54,9 +54,11 @@ export function buildScopeFilter(
  * Expand "100-119" + "201" + "300-309" into ["100","101",...,"119","201","300",...].
  *
  * Returns deduped, lexicographic-stable list. Used in scope filters for
- * O(1) "is this extension allowed" lookups.
+ * O(1) "is this extension allowed" lookups, and (exported) by the worker
+ * to expand `parkSlotRange` into the slot list passed into the engine's
+ * `listParkedCalls`.
  */
-function collectIndividualExtensions(ranges: string[]): string[] {
+export function collectIndividualExtensions(ranges: string[]): string[] {
   const out = new Set<string>();
   for (const raw of ranges) {
     const trimmed = raw.trim();

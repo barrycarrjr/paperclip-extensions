@@ -10,7 +10,7 @@
  * tools or events see the same shape regardless of engine.
  */
 
-export type EngineKind = "v20-xapi" | "v18-cc";
+export type EngineKind = "v20-xapi";
 
 // ─── Config shapes (mirrored from manifest) ────────────────────────────
 
@@ -38,7 +38,7 @@ export interface ConfigAccount {
   key: string;
   displayName?: string;
   pbxBaseUrl: string;
-  pbxVersion?: "20" | "18";
+  pbxVersion?: "20";
   clientIdRef: string;
   clientSecretRef: string;
   mode: ThreeCxMode;
@@ -47,6 +47,14 @@ export interface ConfigAccount {
   allowedCompanies?: string[];
   exposeRecordings?: boolean;
   maxClickToCallPerDay?: number;
+  /**
+   * Park slot extensions (or contiguous ranges). Each entry is either a
+   * single extension ("8000") or a hyphenated range ("8000-8009"). The
+   * engine queries `/callcontrol/<slot>/participants` per slot at
+   * `pbx_parked_calls` time to enumerate live parked calls. Defaults to
+   * "8000-8009" (3CX's conventional first park-slot range) when unset.
+   */
+  parkSlotRange?: string[];
 }
 
 export interface UserExtensionMapping {
@@ -302,7 +310,7 @@ export interface ThreeCxEngine {
   // ─── Reads (Phase 1) ──────────────────────────────────────────────
   listQueues(filter: ScopeFilter): Promise<NormalizedQueue[]>;
   getQueueStatus(filter: ScopeFilter, queueIdOrExt: string): Promise<NormalizedQueueStatus>;
-  listParkedCalls(filter: ScopeFilter): Promise<NormalizedParkedCall[]>;
+  listParkedCalls(filter: ScopeFilter, parkSlots: string[]): Promise<NormalizedParkedCall[]>;
   listActiveCalls(filter: ScopeFilter): Promise<NormalizedActiveCall[]>;
   listAgents(filter: ScopeFilter, extension?: string): Promise<NormalizedAgent[]>;
   getTodayStats(filter: ScopeFilter, opts?: { queueId?: string; direction?: CallDirection }): Promise<NormalizedDayStats>;
