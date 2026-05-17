@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.5.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.5.0** — `pbx_parked_calls` is now real. Previously it always returned `[]` because XAPI doesn't expose live park-slot state. The engine now fans out `GET /callcontrol/<slot>/participants` per configured park-slot extension (default `8000-8009`) and normalizes each participant into the existing `NormalizedParkedCall` shape (`slot`, `callerNumber`, `parkedSinceSec`, `originalExtension`). New per-account config field `parkSlotRange` lets operators on non-default park ranges override the slot list; setting it to `[]` short-circuits the probe entirely. 404 on an individual slot is treated as "no calls parked there" (the common case); 403 / auth-style errors bubble up as `[E3CX_CC_NOT_ENABLED]` with operator-actionable guidance. The Call Control API path requires the second Service-Principal checkbox AND each park-slot extension added to the Extension(s) selector — same operator setup as `pbx_park_call` / `pbx_transfer_call`. Defensive about field-name variance: the participant shape is matched against both lowercase_underscore (Call Control convention) and PascalCase (XAPI convention) names so an upstream rename doesn't crash the tool.
 
 - **v0.4.10** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

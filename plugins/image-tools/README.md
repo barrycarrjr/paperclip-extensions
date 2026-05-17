@@ -12,6 +12,8 @@ per-provider `allowedCompanies`, generation gated by a cost switch.
 
 ## Recent changes
 
+- **v0.2.17** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.2.16** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.2.15** — Removed `stability` from the `Provider kind` enum. Stability AI's hosted API was a stub that never shipped; Replicate covers the same models (SDXL, SD3, Stable Image Core/Ultra) plus FLUX and everything else, so the option was misleading. `local` remains as a placeholder for self-hosted ComfyUI / Automatic1111 endpoints. Existing configs using `kind: "stability"` will need to switch to `kind: "replicate"` and pick a Stability model slug (e.g. `stability-ai/sdxl`).
