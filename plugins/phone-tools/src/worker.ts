@@ -16,6 +16,7 @@ import {
 import { handleAssistantsApi } from "./api/assistants-routes.js";
 import { handleCampaignsApi } from "./api/campaigns-routes.js";
 import { handleOperatorPhoneApi } from "./api/operator-phone-routes.js";
+import { handleDiyJambonzApi } from "./api/diy-jambonz-routes.js";
 import { recordSpend } from "./assistants/cost-cap.js";
 import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
 import {
@@ -2624,6 +2625,25 @@ const plugin = definePlugin({
       const result = await handle(ctx, input);
       if (result) return result;
     }
+    // DIY engine Jambonz hooks — synchronous verb responses required.
+    const diy = await handleDiyJambonzApi(ctx, input, async (event, accountKey, allowedCompanies) => {
+      for (const companyId of allowedCompanies) {
+        try {
+          await ctx.events.emit(
+            `call.${event.kind.replace(/^call\./, "")}`,
+            companyId,
+            { ...event, accountKey, engine: "diy" },
+          );
+        } catch (err) {
+          ctx.logger.warn?.("phone-tools: failed to emit diy event", {
+            companyId,
+            eventKind: event.kind,
+            err: (err as Error).message,
+          });
+        }
+      }
+    });
+    if (diy) return diy;
     return { status: 404, body: { error: `Unknown plugin route: ${input.routeKey}` } };
   },
 

@@ -8,6 +8,7 @@ import type {
   ResolvedAccount,
 } from "./types.js";
 import { createVapiEngine } from "./vapi/vapiEngine.js";
+import { createDiyEngine, type DiyEngine } from "./diy/diyEngine.js";
 
 /**
  * Cache resolved engines per (companyId, accountKey). Engines hold cached
@@ -73,28 +74,31 @@ export async function getResolvedAccount(
   });
 
   const engineKind: EngineKind = account.engine ?? "vapi";
-  if (engineKind === "diy") {
+  if (engineKind !== "vapi" && engineKind !== "diy") {
     throw new Error(
-      "[EENGINE_NOT_AVAILABLE] DIY engine (jambonz + OpenAI Realtime) ships in v0.2.0. Switch this account to engine='vapi' or wait for the v0.2.0 release.",
-    );
-  }
-  if (engineKind !== "vapi") {
-    throw new Error(
-      `[EENGINE_UNKNOWN] phone-tools engine "${engineKind}" is not recognized. Supported in v0.1.0: 'vapi'.`,
+      `[EENGINE_UNKNOWN] phone-tools engine "${engineKind}" is not recognized. Supported: 'vapi', 'diy'.`,
     );
   }
 
-  if (!account.apiKeyRef) {
+  if (!account.apiKeyRef && engineKind === "vapi") {
     throw new Error(
       `[ECONFIG] phone-tools account "${account.key}" has no apiKeyRef configured.`,
     );
+  }
+  if (engineKind === "diy") {
+    const missing = listMissingDiyFields(account);
+    if (missing.length > 0) {
+      throw new Error(
+        `[ECONFIG] phone-tools DIY account "${account.key}" is missing required fields: ${missing.join(", ")}. See the Setup tab for the DIY engine walkthrough.`,
+      );
+    }
   }
 
   const ck = cacheKey(runCtx.companyId, account.key ?? requestedKey);
   const cached = engineCache.get(ck);
   if (
     cached &&
-    cached.apiKeyRefAtBind === account.apiKeyRef &&
+    cached.apiKeyRefAtBind === (account.apiKeyRef ?? "") &&
     cached.webhookSecretRefAtBind === (account.webhookSecretRef ?? null)
   ) {
     return {
@@ -106,11 +110,15 @@ export async function getResolvedAccount(
     };
   }
 
-  const apiKey = await ctx.secrets.resolve(account.apiKeyRef);
-  if (!apiKey) {
-    throw new Error(
-      `[ECONFIG] phone-tools account "${account.key}": secret "${account.apiKeyRef}" did not resolve.`,
-    );
+  let apiKey = "";
+  if (engineKind === "vapi") {
+    const resolved = await ctx.secrets.resolve(account.apiKeyRef!);
+    if (!resolved) {
+      throw new Error(
+        `[ECONFIG] phone-tools account "${account.key}": secret "${account.apiKeyRef}" did not resolve.`,
+      );
+    }
+    apiKey = resolved;
   }
 
   let webhookSecret: string | null = null;
@@ -124,19 +132,54 @@ export async function getResolvedAccount(
     webhookSecret = resolved;
   }
 
-  const engine = createVapiEngine({
-    apiKey,
-    webhookSecret,
-    engineConfig: account.engineConfig ?? {},
-    recordingEnabled: !!account.recordingEnabled,
-  });
+  let engine: PhoneEngine;
+  if (engineKind === "vapi") {
+    engine = createVapiEngine({
+      apiKey,
+      webhookSecret,
+      engineConfig: account.engineConfig ?? {},
+      recordingEnabled: !!account.recordingEnabled,
+    });
+  } else {
+    const jambonzApiKey = await ctx.secrets.resolve(account.jambonzApiKeyRef!);
+    if (!jambonzApiKey) {
+      throw new Error(
+        `[ECONFIG] DIY account "${account.key}": jambonzApiKeyRef "${account.jambonzApiKeyRef}" did not resolve.`,
+      );
+    }
+    const llmApiKey = await ctx.secrets.resolve(account.diyLlmApiKeyRef!);
+    if (!llmApiKey) {
+      throw new Error(
+        `[ECONFIG] DIY account "${account.key}": diyLlmApiKeyRef "${account.diyLlmApiKeyRef}" did not resolve.`,
+      );
+    }
+    engine = createDiyEngine({
+      jambonzApiUrl: account.jambonzApiUrl!,
+      jambonzApiKey,
+      jambonzAccountSid: account.jambonzAccountSid!,
+      jambonzApplicationSid: account.jambonzApplicationSid!,
+      webhookSecret,
+      hostBaseUrl: account.hostBaseUrl!,
+      pluginId: "phone-tools",
+      accountKey: account.key ?? requestedKey,
+      llmProvider: account.diyLlmProvider ?? "anthropic",
+      llmApiKey,
+      llmModelOverride: account.diyLlmModel,
+      ttsVendor: account.diyTtsVendor ?? "google",
+      ttsVoice: account.diyTtsVoice ?? "en-US-Wavenet-D",
+      ttsLanguage: account.diyTtsLanguage ?? "en-US",
+      sttVendor: account.diySttVendor ?? "deepgram",
+      sttLanguage: account.diySttLanguage ?? "en-US",
+      recordingEnabled: !!account.recordingEnabled,
+    });
+  }
 
   engineCache.set(ck, {
     account,
     engine,
     apiKey,
     webhookSecret,
-    apiKeyRefAtBind: account.apiKeyRef,
+    apiKeyRefAtBind: account.apiKeyRef ?? "",
     webhookSecretRefAtBind: account.webhookSecretRef ?? null,
   });
 
@@ -147,6 +190,79 @@ export async function getResolvedAccount(
     webhookSecret,
     engine,
   };
+}
+
+function listMissingDiyFields(account: ConfigAccount): string[] {
+  const missing: string[] = [];
+  if (!account.jambonzApiUrl) missing.push("jambonzApiUrl");
+  if (!account.jambonzApiKeyRef) missing.push("jambonzApiKeyRef");
+  if (!account.jambonzAccountSid) missing.push("jambonzAccountSid");
+  if (!account.jambonzApplicationSid) missing.push("jambonzApplicationSid");
+  if (!account.diyLlmProvider) missing.push("diyLlmProvider");
+  if (!account.diyLlmApiKeyRef) missing.push("diyLlmApiKeyRef");
+  if (!account.hostBaseUrl) missing.push("hostBaseUrl");
+  return missing;
+}
+
+/**
+ * Resolve the DIY engine for an account by key without requiring a runCtx
+ * (Jambonz webhooks don't carry a calling company). Used by the
+ * onApiRequest dispatcher for /diy/jambonz/* hooks. Returns the cached
+ * engine when available, otherwise instantiates fresh.
+ */
+export async function getDiyEngineForAccount(
+  ctx: PluginContext,
+  accountKey: string,
+): Promise<{ account: ConfigAccount; engine: DiyEngine } | null> {
+  const config = (await ctx.config.get()) as InstanceConfig;
+  const account = (config.accounts ?? []).find(
+    (a) => (a.key ?? "").toLowerCase() === accountKey.toLowerCase(),
+  );
+  if (!account) return null;
+  if ((account.engine ?? "vapi") !== "diy") return null;
+  if (listMissingDiyFields(account).length > 0) return null;
+
+  // Reuse the per-company cache if possible — the engine is per-(company, accountKey)
+  // but the underlying Jambonz/LLM clients don't actually depend on companyId,
+  // so any entry for this accountKey works for hook dispatch.
+  for (const [, entry] of engineCache.entries()) {
+    if (entry.account.key === account.key && entry.engine.engineKind === "diy") {
+      return { account, engine: entry.engine as DiyEngine };
+    }
+  }
+
+  // Cold path — instantiate without caching. (Caching would require a
+  // companyId, which webhook dispatch doesn't have. The next agent-side
+  // tool call for this account will populate the proper cache entry.)
+  const [jambonzApiKey, llmApiKey, webhookSecret] = await Promise.all([
+    ctx.secrets.resolve(account.jambonzApiKeyRef!),
+    ctx.secrets.resolve(account.diyLlmApiKeyRef!),
+    account.webhookSecretRef
+      ? ctx.secrets.resolve(account.webhookSecretRef)
+      : Promise.resolve(null),
+  ]);
+  if (!jambonzApiKey || !llmApiKey) return null;
+
+  const engine = createDiyEngine({
+    jambonzApiUrl: account.jambonzApiUrl!,
+    jambonzApiKey,
+    jambonzAccountSid: account.jambonzAccountSid!,
+    jambonzApplicationSid: account.jambonzApplicationSid!,
+    webhookSecret,
+    hostBaseUrl: account.hostBaseUrl!,
+    pluginId: "phone-tools",
+    accountKey: account.key ?? accountKey,
+    llmProvider: account.diyLlmProvider ?? "anthropic",
+    llmApiKey,
+    llmModelOverride: account.diyLlmModel,
+    ttsVendor: account.diyTtsVendor ?? "google",
+    ttsVoice: account.diyTtsVoice ?? "en-US-Wavenet-D",
+    ttsLanguage: account.diyTtsLanguage ?? "en-US",
+    sttVendor: account.diySttVendor ?? "deepgram",
+    sttLanguage: account.diySttLanguage ?? "en-US",
+    recordingEnabled: !!account.recordingEnabled,
+  });
+  return { account, engine };
 }
 
 /**
@@ -176,7 +292,12 @@ export async function getEnginesForEndpoint(
   for (const account of accounts) {
     const engineKind: EngineKind = account.engine ?? "vapi";
     if (engineKind !== endpointKey) continue;
-    if (engineKind === "diy") continue; // not yet shipped
+    if (engineKind === "diy") {
+      // DIY webhooks land on apiRoutes (verb-array responses required),
+      // not the void-returning onWebhook surface. The /webhooks/diy
+      // endpoint is reserved for future status-only events.
+      continue;
+    }
     if (!account.apiKeyRef) continue;
 
     let apiKey: string;

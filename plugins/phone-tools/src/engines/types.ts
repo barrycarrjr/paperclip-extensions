@@ -298,6 +298,36 @@ export interface ConfigAccount {
   recordingEnabled?: boolean;
   /** Per-account concurrency cap for outbound calls. Default 3. */
   maxConcurrentCalls?: number;
+  // ─── DIY engine fields (engine === "diy" only) ───
+  /** Jambonz instance base URL, e.g. https://jambonz.example.com */
+  jambonzApiUrl?: string;
+  /** Paperclip secret holding the Jambonz API key. */
+  jambonzApiKeyRef?: string;
+  /** Jambonz Account SID the plugin operates against. */
+  jambonzAccountSid?: string;
+  /** Jambonz Application SID — the application used for placed/received calls. */
+  jambonzApplicationSid?: string;
+  /** LLM provider used for the DIY engine's turn-by-turn reasoning. */
+  diyLlmProvider?: "anthropic" | "openai";
+  /** Paperclip secret holding the LLM provider's API key. */
+  diyLlmApiKeyRef?: string;
+  /** Optional model override; defaults applied per provider when unset. */
+  diyLlmModel?: string;
+  /** Jambonz TTS vendor name (e.g. "elevenlabs", "google"). */
+  diyTtsVendor?: string;
+  /** Default voice id for the TTS vendor. */
+  diyTtsVoice?: string;
+  /** Default BCP-47 language for TTS. */
+  diyTtsLanguage?: string;
+  /** Jambonz STT vendor name (e.g. "deepgram", "google"). */
+  diySttVendor?: string;
+  diySttLanguage?: string;
+  /**
+   * Paperclip host's public base URL (e.g. https://paperclip.example.com).
+   * Used to compose the absolute callback URLs Jambonz hits between turns.
+   * Required for DIY engine; ignored for Vapi.
+   */
+  hostBaseUrl?: string;
   /**
    * URL pointing at a plain-text or single-column CSV of E.164 numbers
    * to treat as federally do-not-call. Fetched periodically and cached.

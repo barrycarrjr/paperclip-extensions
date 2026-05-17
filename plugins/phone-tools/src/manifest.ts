@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.5.12";
+const PLUGIN_VERSION = "0.6.0";
 
 const accountItemSchema = {
   type: "object",
@@ -13,6 +13,19 @@ const accountItemSchema = {
     "apiKeyRef",
     "webhookSecretRef",
     "engineConfig",
+    "jambonzApiUrl",
+    "jambonzApiKeyRef",
+    "jambonzAccountSid",
+    "jambonzApplicationSid",
+    "hostBaseUrl",
+    "diyLlmProvider",
+    "diyLlmApiKeyRef",
+    "diyLlmModel",
+    "diyTtsVendor",
+    "diyTtsVoice",
+    "diyTtsLanguage",
+    "diySttVendor",
+    "diySttLanguage",
     "defaultNumberId",
     "defaultAssistantId",
     "allowedNumbers",
@@ -41,14 +54,15 @@ const accountItemSchema = {
       default: "vapi",
       title: "Engine",
       description:
-        "Which voice-AI backend handles this account. 'vapi' = Vapi.ai (managed, hosted; ~$0.05/min on top of model costs). 'diy' = self-hosted Jambonz + OpenAI Realtime (ships in v0.2.0; selecting it now returns [EENGINE_NOT_AVAILABLE] so the field is forward-compatible).",
+        "Which voice-AI backend handles this account. 'vapi' = Vapi.ai (managed, hosted; ~$0.05/min on top of model costs). 'diy' = self-hosted Jambonz + provider-neutral LLM HTTP (Anthropic or OpenAI), with Jambonz handling SIP / RTP / STT / TTS. Operator runs Jambonz themselves; the plugin only talks to Jambonz's REST + hook URLs.",
     },
     apiKeyRef: {
       type: "string",
       format: "secret-ref",
-      title: "Engine API key",
+      title: "Engine API key (Vapi)",
       description:
-        "Paperclip secret holding the engine's API key. For Vapi: get a Private API Key from https://dashboard.vapi.ai → Org → API Keys (NOT the public/web key — those can't initiate calls). Create the secret first on the company's Secrets page; never paste the raw token here.",
+        "Paperclip secret holding the engine's API key. For Vapi: get a Private API Key from https://dashboard.vapi.ai → Org → API Keys (NOT the public/web key — those can't initiate calls). Create the secret first on the company's Secrets page; never paste the raw token here. Ignored when engine='diy' — DIY uses jambonzApiKeyRef + diyLlmApiKeyRef instead.",
+      "x-paperclip-showWhen": { engine: "vapi" },
     },
     webhookSecretRef: {
       type: "string",
@@ -124,6 +138,103 @@ const accountItemSchema = {
       title: "Allowed companies",
       description:
         "Companies whose agents may use this phone account. Tick 'Portfolio-wide' for ['*']; otherwise tick specific companies. Empty = unusable (fail-safe deny). A phone account typically belongs to one LLC — prefer single-company lists.",
+    },
+    // ─── DIY engine fields (engine === "diy") ───
+    jambonzApiUrl: {
+      type: "string",
+      title: "Jambonz API URL",
+      description:
+        "Base URL of your self-hosted Jambonz install (e.g. https://jambonz.example.com). Don't include a path — the plugin appends /v1/Accounts/... automatically.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    jambonzApiKeyRef: {
+      type: "string",
+      format: "secret-ref",
+      title: "Jambonz API key",
+      description:
+        "Paperclip secret holding the Jambonz API key (Bearer token used for /v1/Accounts/* REST calls). Create the secret first on the company's Secrets page.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    jambonzAccountSid: {
+      type: "string",
+      title: "Jambonz Account SID",
+      description:
+        "The Jambonz account this plugin operates against. Find it in the Jambonz portal under Settings → Account.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    jambonzApplicationSid: {
+      type: "string",
+      title: "Jambonz Application SID",
+      description:
+        "Jambonz application sid the plugin uses for placed/received calls. Create a Jambonz application whose 'Call webhook URL' points at https://<paperclip-host>/api/plugins/phone-tools/api/diy/jambonz/call (the plugin handles the rest of the routing via query params).",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    hostBaseUrl: {
+      type: "string",
+      title: "Paperclip host base URL (DIY)",
+      description:
+        "Public URL of THIS Paperclip instance (e.g. https://paperclip.example.com). The plugin constructs absolute callback URLs Jambonz hits between conversation turns — those URLs need to be reachable from your Jambonz host.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diyLlmProvider: {
+      type: "string",
+      enum: ["anthropic", "openai"],
+      default: "anthropic",
+      title: "DIY LLM provider",
+      description:
+        "Which LLM the DIY engine calls to drive each conversation turn. Anthropic (Claude) tends to be better at instruction-following on short phone replies; OpenAI is fine too. Either provider is invoked via plain HTTP (no SDK dependency).",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diyLlmApiKeyRef: {
+      type: "string",
+      format: "secret-ref",
+      title: "DIY LLM API key",
+      description:
+        "Paperclip secret holding the API key for the chosen DIY LLM provider. For Anthropic: console.anthropic.com → API Keys. For OpenAI: platform.openai.com/api-keys.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diyLlmModel: {
+      type: "string",
+      title: "DIY LLM model (optional)",
+      description:
+        "Override the default model. Defaults: Anthropic → claude-haiku-4-5-20251001; OpenAI → gpt-4o-mini. Override per AssistantConfig at call time too if you need different models per assistant.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diyTtsVendor: {
+      type: "string",
+      default: "google",
+      title: "DIY TTS vendor",
+      description:
+        "Jambonz TTS vendor name. Common values: 'google', 'elevenlabs', 'aws', 'microsoft'. Must match a TTS credential configured on the Jambonz side.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diyTtsVoice: {
+      type: "string",
+      default: "en-US-Wavenet-D",
+      title: "DIY TTS voice",
+      description:
+        "Voice ID for the chosen TTS vendor. Examples: Google 'en-US-Wavenet-D', ElevenLabs 'rachel' (or a voice ID).",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diyTtsLanguage: {
+      type: "string",
+      default: "en-US",
+      title: "DIY TTS language (BCP-47)",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diySttVendor: {
+      type: "string",
+      default: "deepgram",
+      title: "DIY STT vendor",
+      description:
+        "Jambonz STT vendor name for caller transcription. Common: 'deepgram', 'google', 'aws', 'microsoft'. Must match an STT credential configured on the Jambonz side.",
+      "x-paperclip-showWhen": { engine: "diy" },
+    },
+    diySttLanguage: {
+      type: "string",
+      default: "en-US",
+      title: "DIY STT language (BCP-47)",
+      "x-paperclip-showWhen": { engine: "diy" },
     },
   },
 } as const;
@@ -1579,6 +1690,28 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       auth: "board",
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
+    },
+    // ─── v0.6.0: DIY engine Jambonz application hooks ──────────────
+    {
+      routeKey: "diy.jambonz.call",
+      method: "POST",
+      path: "/diy/jambonz/call",
+      auth: "webhook",
+      capability: "api.routes.register",
+    },
+    {
+      routeKey: "diy.jambonz.next",
+      method: "POST",
+      path: "/diy/jambonz/next",
+      auth: "webhook",
+      capability: "api.routes.register",
+    },
+    {
+      routeKey: "diy.jambonz.status",
+      method: "POST",
+      path: "/diy/jambonz/status",
+      auth: "webhook",
+      capability: "api.routes.register",
     },
   ],
   ui: {
