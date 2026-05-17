@@ -21,9 +21,14 @@ export function assertCompanyAccess(
   }
   if (allowedCompanies.includes("*")) return;
   if (!allowedCompanies.includes(companyId)) {
-    ctx.logger.warn("ECOMPANY_NOT_ALLOWED", { tool, companyId, resourceKey });
+    ctx.logger.warn("ECOMPANY_NOT_ALLOWED", {
+      tool,
+      companyId,
+      resourceKey,
+      allowedCompanies,
+    });
     throw new Error(
-      `[ECOMPANY_NOT_ALLOWED] ${resourceLabel} is not assigned to company ${companyId}.`,
+      `[ECOMPANY_NOT_ALLOWED] ${resourceLabel} is not assigned to company ${companyId}. Saved allowedCompanies for this account: ${JSON.stringify(allowedCompanies)}.`,
     );
   }
 }

@@ -18,6 +18,7 @@ import type {
   NormalizedExtension,
   NormalizedParkedCall,
   NormalizedQueue,
+  NormalizedRecording,
   ScopeFilter,
 } from "./types.js";
 import { didInScope, extensionInScope, queueInScope } from "../scopeFilter.js";
@@ -96,4 +97,52 @@ export function filterExtensions(
 ): NormalizedExtension[] {
   if (scope.mode !== "manual") return exts;
   return exts.filter((e) => extensionInScope(scope, e.number));
+}
+
+export function filterRecordings(
+  scope: ScopeFilter,
+  recordings: NormalizedRecording[],
+): NormalizedRecording[] {
+  if (scope.mode !== "manual") return recordings;
+  return recordings.filter(
+    (r) =>
+      extensionInScope(scope, r.extension) ||
+      didMatchesScope(scope, r.fromDidNumber) ||
+      didMatchesScope(scope, r.toDidNumber),
+  );
+}
+
+/**
+ * Authorize the audio-fetch route. A recording is in scope if the
+ * internal extension matches OR (when extension matching fails) one of
+ * the DIDs matches — same OR-of-attributes logic as `filterRecordings`.
+ * The audio handler passes the already-resolved scope plus the recording
+ * metadata; callers should pre-load metadata to take advantage of DID
+ * matching.
+ */
+export function recordingInScope(
+  scope: ScopeFilter,
+  args: { extension?: string; fromDidNumber?: string; toDidNumber?: string },
+): boolean {
+  if (scope.mode !== "manual") return true;
+  return (
+    extensionInScope(scope, args.extension) ||
+    didMatchesScope(scope, args.fromDidNumber) ||
+    didMatchesScope(scope, args.toDidNumber)
+  );
+}
+
+/**
+ * 3CX returns DIDs on Recording entries as bare digits ("12154636348"),
+ * while the operator types them with a `+` prefix ("+12154636348") in
+ * the configured `dids` list. Match in either direction by comparing
+ * the bare-digits form.
+ */
+function didMatchesScope(scope: ScopeFilter, did: string | undefined): boolean {
+  if (!did || scope.mode !== "manual") return false;
+  const bare = did.replace(/^\+/, "");
+  for (const configured of scope.dids) {
+    if (configured.replace(/^\+/, "") === bare) return true;
+  }
+  return false;
 }

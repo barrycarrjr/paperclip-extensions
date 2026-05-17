@@ -8,6 +8,22 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.4.7** — Fix: the v0.4.6 extension dropdown only showed "Anyone" because `engine.listExtensions` hardcoded `$top=500` on `/xapi/v1/Users` and 3CX v20 rejects any `$top > 100` with **HTTP 400** (server cap not documented in the OData `$metadata`). The worker caught the 400 and returned an empty extensions list, leaving the dropdown bare. Both `listExtensions` and the all-extensions branch of `listAgents` now paginate with `$top=100&$skip=N` until the server returns a short page (with a 5000-row safety cap). Also dropped the broken `$filter=Type eq 'User'` from `listAgents` — many Users records have no `Type` field, so the server-side filter was silently excluding them.
+
+- **v0.4.6** — Recordings page UX: extension text input replaced with a **dropdown** (sourced from a new `recordings.pbx-extensions` data channel that returns every PBX user with display name; defaults to "Anyone"). **Date range filter** added — preset chips (Month to Date / Last 7 / Last 30 / YTD / All Time / Custom) mirroring the host's Portfolio Costs page, with from/to date inputs in custom mode; default is Month to Date. **Pagination** via a "Load more" button that accumulates pages using the worker-returned `nextCursor`. Engine: `RecordingListOpts` gains `from`/`to` (ISO 8601) ANDed into the OData `$filter` on `StartTime`; agent-facing `pbx_recording_list` tool accepts the same parameters. The PBX-extensions data channel is intentionally unscoped (calls `engine.listExtensions({mode: "single"})`) so it works on shared-extension setups where the company has no `extensionRanges` claim — recording results still apply company scope on top of whatever extension is picked, so cross-company data can't leak.
+
+- **v0.4.5** — Fix: clicking **Play** on a recording returned `[E3CX_NOT_FOUND] Recording "<id>" not found on the PBX`. The engine's single-entity metadata fetch used `GET /xapi/v1/Recordings(<id>)`, which 3CX v20 rejects with 404 across every key-syntax variant (bare-int, quoted, slash) even though `Id` is declared as the OData entity key in `$metadata`. Switched the scope-authorization preflight to `GET /xapi/v1/Recordings?$filter=Id eq <id>&$top=1`, which is the only single-entity read shape 3CX accepts. The audio download itself (the bound function `Pbx.DownloadRecording(recId=<id>)`) already worked because it's on the collection rather than a single entity.
+
+- **v0.4.4** — Fix: shared-extension manual-mode setups (`extensionRanges` empty per company, partitioning by DID instead) were returning **zero recordings** because `filterRecordings` only matched on extension. The filter now mirrors `filterCallHistory` / `filterActiveCalls` — accepts a recording if the internal extension is in scope OR the `FromDidNumber` / `ToDidNumber` matches one of the company's configured `dids` (`+` prefix normalized away on both sides since 3CX returns DIDs as bare digits). The OData `$filter` is also extended server-side to push the OR-of-extensions-and-DIDs into the query, so pagination doesn't waste pages on out-of-scope rows on busy PBXs. `NormalizedRecording` gained optional `fromDidNumber` and `toDidNumber` fields to support this. Audio-fetch authz now uses the same OR logic.
+
+- **v0.4.3** — Breaking rename: the voicemail tools/UI/routes are now properly named after what they return. Tools `pbx_voicemail_list` / `pbx_voicemail_get` → `pbx_recording_list` / `pbx_recording_get`. The sidebar entry and page are renamed from "Voicemails" to "Recordings" with route `/<companyPrefix>/recordings`. The plugin-scoped audio endpoint moved from `/voicemails/audio` to `/recordings/audio` (`routeKey: recordings.audio`). The `unreadOnly` parameter and `isRead` field are removed entirely (recordings have no read state). UI components: `VoicemailsSidebarItem` → `RecordingsSidebarItem`, `VoicemailsPage` → `RecordingsPage`. Engine method names: `listVoicemails`/`fetchVoicemailAudio` → `listRecordings`/`fetchRecordingAudio`. No behavior changes vs. v0.4.2 — same /Recordings backend.
+
+- **v0.4.2** — Voicemail tools retargeted to `/xapi/v1/Recordings` on the v20 engine. The previous `/xapi/v1/Voicemails` path **does not exist** on 3CX v20 (confirmed against a live v20.0.8 install via the OData `$metadata` doc — there is no Voicemail EntityType at all, and `/callcontrol/voicemails` returns 403 to even a system_owners-scoped OAuth client). Recordings is the closest queryable surface and includes voicemail-style recordings when "Record voicemail" is enabled per extension, alongside ordinary call recordings — so `pbx_voicemail_list` now returns recorded calls more broadly. Audio bytes are fetched via the bound OData function `Pbx.DownloadRecording(recId=...)` and come back as `audio/x-wav`. The `unreadOnly` parameter is now a documented no-op (Recordings have no read state on v20). For true voicemail-only inbox access, configure VMEmailOptions per user in 3CX so voicemails are delivered as email attachments and ingest via an inbox plugin.
+
+- **v0.4.1** — Voicemails page in the Paperclip UI. Adds a sidebar entry ("🎙️ Voicemails") and a per-company page at `/<companyPrefix>/voicemails` listing voicemails with inline `<audio>` players. Filters: account (when multiple are configured), extension, unread-only. Audio loads lazily on play — the page hits the same `/voicemails/audio` route the worker tools already use and renders the bytes via a Blob URL. Sidebar item hides itself for companies that aren't in any account's `allowedCompanies`.
+
+- **v0.4.0** — Voicemail support. Two new tools (`pbx_voicemail_list`, `pbx_voicemail_get`) and a plugin-scoped API route at `/api/plugins/3cx-tools/api/voicemails/audio` that proxies the audio bytes from 3CX so any browser surface can render them with an `<audio>` element. The list tool returns metadata + a playable `audioUrl`; `pbx_voicemail_get` optionally inlines the audio as a `data:` URL (`inlineAudio: true`). Manual-mode scoping applies: voicemails for extensions outside the calling company's range are filtered out. Voicemail deletion + read/unread mutations remain out of scope for now.
+
 - **v0.3.14** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.3.13** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -80,6 +96,19 @@ If you want an AI to talk to someone, use `phone-tools`. If you want to query or
 | `pbx_call_history` | Paginated call records: callId, fromNumber, toNumber, extension, queue, startedAt, endedAt, durationSec, direction, disposition, recordingUrl (if exposeRecordings) |
 | `pbx_did_list` | DIDs (E.164) routed to the company |
 | `pbx_extension_list` | Extensions visible to the company: number, displayName, type, email |
+
+### Call recordings (Phase 4, v0.4.0; retargeted v0.4.2, renamed v0.4.3)
+
+| Tool | Returns |
+|---|---|
+| `pbx_recording_list` | Recordings in scope: `id`, `extension`, `from`, `receivedAt`, `durationSec`, `audioContentType`, `audioUrl`. Filters: `extension` (matches both FromDn and ToDn), paginated via `cursor` |
+| `pbx_recording_get` | One recording by `id`. Pass `inlineAudio: true` to also receive `audioBase64` + `audioDataUrl` (a `data:audio/x-wav;base64,…` URL slot-able into `<audio src>`) |
+
+Backed by `/xapi/v1/Recordings` on the v20 engine, which holds call recordings plus any voicemail-style recordings when "Record voicemail" is enabled per extension. 3CX v20 doesn't expose a dedicated voicemail collection to OAuth clients — for voicemail-only access, configure VMEmailOptions per user so voicemails are emailed and ingest via an inbox plugin.
+
+`audioUrl` resolves to `GET /api/plugins/3cx-tools/api/recordings/audio?companyId=<id>&account=<key>&id=<rec-id>`. The route is `board`-auth, returns `{ contentType, base64 }`, and is the recommended path for browser playback — the UI base64-decodes into a `Blob` and uses `URL.createObjectURL` for `<audio>`. The 3CX bearer token never leaves the plugin worker; the browser only ever talks to Paperclip.
+
+`inlineAudio: true` on `pbx_recording_get` is opt-in because recordings routinely run several MB; the default flow returns metadata only and lets the UI request audio lazily.
 
 ### User-aware click-to-call
 
@@ -350,7 +379,7 @@ pnpm --filter paperclipai exec tsx cli/src/index.ts plugin reinstall 3cx-tools
 
 ## Out of scope
 
-- Voicemail playback / management.
+- Recording mutations (deleting, archiving). `pbx_recording_*` is read-only by design — a misbehaving agent deleting recordings is a worse failure mode than not having delete.
 - Recording bulk export (per-call URLs are exposed via `pbx_call_history` when `exposeRecordings` is on).
 - Agent login/logout via API.
 - IVR / call-flow / queue config edits — manage in 3CX admin.

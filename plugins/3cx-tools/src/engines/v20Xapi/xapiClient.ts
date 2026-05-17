@@ -89,6 +89,65 @@ export class XapiClient {
     }
   }
 
+  /**
+   * GET that returns raw bytes + the response Content-Type. Used for
+   * recording-audio download endpoints (bound OData functions that
+   * return binary instead of JSON). Skips the JSON-cache; audio is
+   * fetched on-demand per playback request and would just waste memory.
+   */
+  async getBytes(path: string): Promise<{ contentType: string; bytes: Uint8Array }> {
+    const url = this.urlFor(path);
+    let attempt = 0;
+    let forceRefresh = false;
+
+    while (true) {
+      attempt += 1;
+      const token = await this.resolveBearerToken(forceRefresh);
+      forceRefresh = false;
+      const headers: Record<string, string> = {
+        Accept: "*/*",
+        Authorization: `Bearer ${token}`,
+      };
+      if (this.opts.tenantId) headers["X-3CX-Tenant"] = this.opts.tenantId;
+
+      let res: Response;
+      try {
+        res = await fetch(url, { method: "GET", headers });
+      } catch (err) {
+        throw new Error(
+          `[E3CX_NETWORK] GET ${path} failed: ${(err as Error).message}`,
+        );
+      }
+
+      if (res.status === 401 && attempt === 1) {
+        clearToken(this.cacheKey);
+        forceRefresh = true;
+        continue;
+      }
+      if (res.status === 429 && attempt <= 2) {
+        const retryAfter = Number(res.headers.get("Retry-After") ?? "1");
+        await sleep(Math.min(5000, Math.max(500, retryAfter * 1000)));
+        continue;
+      }
+      if (!res.ok) {
+        const text = await safeText(res);
+        throw new Error(mapError(res.status, "GET", path, text));
+      }
+      const contentType = res.headers.get("Content-Type") ?? "application/octet-stream";
+      const arrayBuf = await res.arrayBuffer();
+      return { contentType, bytes: new Uint8Array(arrayBuf) };
+    }
+  }
+
+  /**
+   * Expose the absolute base URL so callers that need to chase 3CX-issued
+   * absolute DownloadUrls (which are sometimes returned alongside the
+   * relative `/$value` path) can normalize to a single host.
+   */
+  get pbxBaseUrl(): string {
+    return this.opts.pbxBaseUrl;
+  }
+
   /** The bearer token to use for raw transports (e.g. WebSocket). */
   async resolveBearerToken(force = false): Promise<string> {
     return getAccessToken({

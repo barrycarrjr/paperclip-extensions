@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.3.14";
+const PLUGIN_VERSION = "0.4.7";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -313,9 +313,13 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "events.emit",
     "plugin.state.read",
     "plugin.state.write",
+    "api.routes.register",
+    "ui.sidebar.register",
+    "ui.page.register",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
+    ui: "./dist/ui",
   },
   instanceConfigSchema: {
     type: "object",
@@ -553,6 +557,71 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       },
     },
 
+    // ─── Phase 4: Call recordings ─────────────────────────────────
+    //
+    // Surfaces 3CX's /xapi/v1/Recordings — call recordings (and any
+    // voicemail-style recordings when "Record voicemail" is enabled per
+    // extension). 3CX v20 XAPI doesn't expose a dedicated voicemail
+    // inbox to OAuth clients; for voicemail-only access, configure
+    // per-user VMEmailOptions in 3CX so voicemails are emailed and
+    // ingest via an inbox plugin.
+    {
+      name: "pbx_recording_list",
+      displayName: "List call recordings",
+      description:
+        "List recorded calls on the PBX scoped to the calling company. Each entry has an `audioUrl` you can drop into an <audio> tag. Pass `extension` to narrow to one extension's recordings (matches both FromDn and ToDn). Pass `from`/`to` (ISO 8601) to bound `StartTime`. On 3CX v20 this returns every recording — including any voicemail-style recordings — sourced from /xapi/v1/Recordings.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string", description: "Account identifier. Optional." },
+          extension: {
+            type: "string",
+            description:
+              "Extension to filter by (e.g. '200'). Matches recordings where either party is this extension. Must be in the company's scope in manual mode.",
+          },
+          from: {
+            type: "string",
+            description:
+              "ISO 8601 timestamp. Recordings whose StartTime is at or after this are returned.",
+          },
+          to: {
+            type: "string",
+            description:
+              "ISO 8601 timestamp. Recordings whose StartTime is at or before this are returned.",
+          },
+          limit: {
+            type: "integer",
+            description: "Page size (default 50, max 200).",
+            minimum: 1,
+            maximum: 200,
+          },
+          cursor: {
+            type: "string",
+            description: "Opaque pagination cursor returned by a previous call.",
+          },
+        },
+      },
+    },
+    {
+      name: "pbx_recording_get",
+      displayName: "Get one call recording",
+      description:
+        "Fetch a single recording by id (Recording.Id, integer string from pbx_recording_list). Returns metadata; pass `inlineAudio: true` to also include `audioBase64` and `audioDataUrl` — a `data:` URL drop-in for an <audio src>. Inline audio is opt-in because WAV recordings often exceed several MB. Audio comes back as audio/x-wav.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string", description: "Account identifier. Optional." },
+          id: { type: "string", description: "Recording id from pbx_recording_list (numeric string)." },
+          inlineAudio: {
+            type: "boolean",
+            description: "If true, also return base64-encoded audio bytes inline. Default false.",
+            default: false,
+          },
+        },
+        required: ["id"],
+      },
+    },
+
     // ─── Phase 2: Mutation tools ──────────────────────────────────
     {
       name: "pbx_click_to_call",
@@ -665,6 +734,33 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       },
     },
   ],
+  apiRoutes: [
+    {
+      routeKey: "recordings.audio",
+      method: "GET",
+      path: "/recordings/audio",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+  ],
+  ui: {
+    slots: [
+      {
+        type: "sidebar",
+        id: "recordings-sidebar",
+        displayName: "Recordings",
+        exportName: "RecordingsSidebarItem",
+      },
+      {
+        type: "page",
+        id: "recordings-page",
+        displayName: "Recordings",
+        exportName: "RecordingsPage",
+        routePath: "recordings",
+      },
+    ],
+  },
 };
 
 export default manifest;

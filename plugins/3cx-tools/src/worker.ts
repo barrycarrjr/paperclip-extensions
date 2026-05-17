@@ -1,6 +1,8 @@
 import {
   definePlugin,
   runWorker,
+  type PluginApiRequestInput,
+  type PluginApiResponse,
   type PluginContext,
   type ToolResult,
   type ToolRunContext,
@@ -81,6 +83,28 @@ function asBool(v: unknown): boolean | undefined {
 function todayUtcDate(): string {
   const d = new Date();
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Build the plugin-scoped audio URL the browser will GET to play a
+ * recording. The path here MUST match the manifest's apiRoutes entry; the
+ * host prefixes it with `/api/plugins/3cx-tools/api`.
+ */
+function buildRecordingAudioUrl(
+  companyId: string,
+  accountKey: string,
+  recordingId: string,
+): string {
+  const params = new URLSearchParams({
+    companyId,
+    account: accountKey,
+    id: recordingId,
+  });
+  return `/api/plugins/3cx-tools/api/recordings/audio?${params.toString()}`;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64");
 }
 
 async function assertMutationsEnabled(ctx: PluginContext, tool: string): Promise<void> {
@@ -278,9 +302,16 @@ function eventInScope(scope: ScopeFilter, event: NormalizedPbxEvent): boolean {
 
 // ─── Plugin definition ───────────────────────────────────────────────
 
+/**
+ * Captured during setup() so the API-request handler (which doesn't
+ * receive a ctx) can talk to the engine registry, secrets, and logger.
+ */
+let pluginCtx: PluginContext | null = null;
+
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
-    ctx.logger.info("3cx-tools plugin starting", { version: "0.1.0" });
+    pluginCtx = ctx;
+    ctx.logger.info("3cx-tools plugin starting", { version: "0.4.1" });
 
     // Health: warn at startup about accounts with empty allowedCompanies.
     try {
@@ -591,6 +622,217 @@ const plugin = definePlugin({
       },
     );
 
+    // ─── Recordings (Phase 4) ─────────────────────────────────────
+
+    ctx.tools.register(
+      "pbx_recording_list",
+      {
+        displayName: "List call recordings",
+        description:
+          "List call recordings on the PBX scoped to the calling company. Each item includes a playable audioUrl.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            extension: { type: "string" },
+            from: { type: "string", description: "ISO 8601 lower bound on Recording.StartTime" },
+            to: { type: "string", description: "ISO 8601 upper bound on Recording.StartTime" },
+            limit: { type: "integer", minimum: 1, maximum: 200 },
+            cursor: { type: "string" },
+          },
+        },
+      },
+      async (params, runCtx) => {
+        const p = params as Record<string, unknown>;
+        const accountKey = asString(p.account);
+        const r = await resolveOrError(ctx, runCtx, "pbx_recording_list", accountKey);
+        if (!r.ok) return errorResult(r.error);
+        const engine = getEngineFor(runCtx.companyId, r.resolved.accountKey);
+        try {
+          const result = await engine.listRecordings(
+            r.resolved.scope,
+            {
+              extension: asString(p.extension),
+              from: asString(p.from),
+              to: asString(p.to),
+              limit: asNumber(p.limit),
+              cursor: asString(p.cursor),
+            },
+            (recId) => buildRecordingAudioUrl(runCtx.companyId, r.resolved.accountKey, recId),
+          );
+          await track(ctx, runCtx, "pbx_recording_list", r.resolved.accountKey, {
+            count: result.recordings.length,
+          });
+          return { data: result };
+        } catch (err) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "pbx_recording_get",
+      {
+        displayName: "Get one call recording",
+        description:
+          "Fetch a single call recording. With inlineAudio=true, also returns a data: URL playable in <audio>.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            id: { type: "string" },
+            inlineAudio: { type: "boolean" },
+          },
+          required: ["id"],
+        },
+      },
+      async (params, runCtx) => {
+        const p = params as Record<string, unknown>;
+        const id = asString(p.id);
+        if (!id) return errorResult("[EVALIDATION] `id` is required.");
+        const accountKey = asString(p.account);
+        const r = await resolveOrError(ctx, runCtx, "pbx_recording_get", accountKey);
+        if (!r.ok) return errorResult(r.error);
+        const engine = getEngineFor(runCtx.companyId, r.resolved.accountKey);
+        try {
+          const audioUrlBuilder = (recId: string) =>
+            buildRecordingAudioUrl(runCtx.companyId, r.resolved.accountKey, recId);
+          // Reuse list with a tight filter so we share normalization.
+          // The Recordings entity doesn't support OData filter-by-Id cleanly
+          // across versions, so list-then-find. Cap limit at the page size.
+          const page = await engine.listRecordings(
+            r.resolved.scope,
+            { limit: 200 },
+            audioUrlBuilder,
+          );
+          const match = page.recordings.find((v) => v.id === id);
+          if (!match) {
+            return errorResult(
+              `[E3CX_NOT_FOUND] Recording "${id}" not found in the first 200 entries for your scope.`,
+            );
+          }
+          let inline: { audioBase64?: string; audioDataUrl?: string } = {};
+          if (asBool(p.inlineAudio) === true) {
+            const audio = await engine.fetchRecordingAudio(r.resolved.scope, id);
+            const base64 = bytesToBase64(audio.bytes);
+            inline = {
+              audioBase64: base64,
+              audioDataUrl: `data:${audio.contentType};base64,${base64}`,
+            };
+          }
+          await track(ctx, runCtx, "pbx_recording_get", r.resolved.accountKey, {
+            inlineAudio: asBool(p.inlineAudio) ?? false,
+          });
+          return { data: { ...match, ...inline } };
+        } catch (err) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+
+    // ─── UI getData handlers (for the Recordings page + sidebar) ──
+
+    // Sidebar visibility: returns true when the calling company is in any
+    // account's allowedCompanies list. The Recordings sidebar item reads
+    // this via usePluginData("recordings.sidebar-visible") and hides
+    // itself for companies without PBX access.
+    ctx.data.register("recordings.sidebar-visible", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { visible: false };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = config.accounts ?? [];
+      const visible = accounts.some((a) => {
+        const allowed = a.allowedCompanies ?? [];
+        return allowed.includes("*") || allowed.includes(companyId);
+      });
+      return { visible };
+    });
+
+    // Account picker for the recordings page — surfaces the accounts the
+    // calling company has access to, so the page can offer a dropdown when
+    // multiple accounts are configured.
+    ctx.data.register("recordings.accounts", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { accounts: [], defaultAccount: null };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = (config.accounts ?? [])
+        .filter((a) => {
+          const allowed = a.allowedCompanies ?? [];
+          return allowed.includes("*") || allowed.includes(companyId);
+        })
+        .map((a) => ({ key: a.key, displayName: a.displayName ?? a.key }));
+      return {
+        accounts,
+        defaultAccount: config.defaultAccount ?? accounts[0]?.key ?? null,
+      };
+    });
+
+    // Recordings listing for the page — same shape as the agent-facing
+    // tool, but invoked via the UI bridge so the page doesn't need a
+    // companyId-bearing tool credential.
+    ctx.data.register("recordings.list", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { recordings: [], nextCursor: undefined };
+      const accountKey = typeof params.account === "string" ? params.account : undefined;
+      const extension = typeof params.extension === "string" ? params.extension : undefined;
+      const from = typeof params.from === "string" ? params.from : undefined;
+      const to = typeof params.to === "string" ? params.to : undefined;
+      const limit = typeof params.limit === "number" ? params.limit : undefined;
+      const cursor = typeof params.cursor === "string" ? params.cursor : undefined;
+
+      const runCtxLike: ToolRunContext = {
+        companyId,
+        runId: "ui-recordings.list",
+        agentId: "",
+        projectId: "",
+      };
+      const r = await resolveOrError(ctx, runCtxLike, "recordings.list", accountKey);
+      if (!r.ok) return { error: r.error, recordings: [], nextCursor: undefined };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const result = await engine.listRecordings(
+          r.resolved.scope,
+          { extension, from, to, limit, cursor },
+          (recId) => buildRecordingAudioUrl(companyId, r.resolved.accountKey, recId),
+        );
+        return result;
+      } catch (err) {
+        return { error: (err as Error).message, recordings: [], nextCursor: undefined };
+      }
+    });
+
+    // PBX-wide extension list for the dropdown on the Recordings page.
+    // Intentionally NOT scoped to the calling company: on shared-extension
+    // setups the company has no `extensionRanges` claim and we want the
+    // operator to be able to filter recordings by any agent on the PBX.
+    // The recording list itself still applies company scope on top of
+    // whatever extension is picked, so cross-company data can't leak.
+    // Companies without ANY 3cx-tools access still get [] (no allowed
+    // account at all → no PBX visibility).
+    ctx.data.register("recordings.pbx-extensions", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { extensions: [] };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = config.accounts ?? [];
+      const accessible = accounts.find((a) => {
+        const allowed = a.allowedCompanies ?? [];
+        return allowed.includes("*") || allowed.includes(companyId);
+      });
+      if (!accessible) return { extensions: [] };
+      const engine = getEngineFor(companyId, accessible.key);
+      try {
+        // Bypass scope filter intentionally — see comment above.
+        const exts = await engine.listExtensions({ mode: "single" });
+        const userExts = exts
+          .filter((e) => e.type === "user" && /^\d{2,5}$/.test(e.number))
+          .map((e) => ({ extension: e.number, displayName: e.displayName }))
+          .sort((a, b) => a.extension.localeCompare(b.extension, undefined, { numeric: true }));
+        return { extensions: userExts };
+      } catch (err) {
+        return { extensions: [], error: (err as Error).message };
+      }
+    });
+
     // ─── Mutation tools (Phase 2) ─────────────────────────────────
 
     ctx.tools.register(
@@ -879,7 +1121,61 @@ const plugin = definePlugin({
       details: { wsAccounts: Array.from(wsBindings.keys()) },
     };
   },
+
+  async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
+    if (input.routeKey === "recordings.audio") {
+      return handleRecordingAudio(pluginCtx, input);
+    }
+    return { status: 404, body: { error: `Unknown route: ${input.routeKey}` } };
+  },
 });
+
+async function handleRecordingAudio(
+  ctx: PluginContext | null,
+  input: PluginApiRequestInput,
+): Promise<PluginApiResponse> {
+  if (!ctx) {
+    return { status: 503, body: { error: "Plugin not initialized yet." } };
+  }
+  const accountKey =
+    typeof input.query.account === "string" ? input.query.account : undefined;
+  const recordingId =
+    typeof input.query.id === "string" ? input.query.id : undefined;
+  if (!recordingId) {
+    return { status: 400, body: { error: "Missing `id` query parameter." } };
+  }
+
+  // Synthesize a ToolRunContext-shaped object for getResolvedAccount —
+  // resolveOrError only consults companyId for the scope check; the
+  // other fields are populated for telemetry consistency.
+  const runCtxLike: ToolRunContext = {
+    companyId: input.companyId,
+    runId: input.actor.runId ?? `api-${input.routeKey}`,
+    agentId: input.actor.agentId ?? "",
+    projectId: "",
+  };
+  const r = await resolveOrError(ctx, runCtxLike, "recordings.audio", accountKey);
+  if (!r.ok) {
+    const status = r.error.includes("[ECOMPANY_NOT_ALLOWED]") ? 403 : 400;
+    return { status, body: { error: r.error } };
+  }
+  const engine = getEngineFor(input.companyId, r.resolved.accountKey);
+  try {
+    const audio = await engine.fetchRecordingAudio(r.resolved.scope, recordingId);
+    const base64 = Buffer.from(audio.bytes).toString("base64");
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: { contentType: audio.contentType, base64 },
+    };
+  } catch (err) {
+    const msg = (err as Error).message;
+    let status = 500;
+    if (msg.includes("[ESCOPE_VIOLATION]")) status = 403;
+    else if (msg.includes("[E3CX_NOT_FOUND]")) status = 404;
+    return { status, body: { error: msg } };
+  }
+}
 
 function errorResult(message: string): ToolResult {
   return { error: message };

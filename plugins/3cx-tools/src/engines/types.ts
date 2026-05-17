@@ -201,6 +201,44 @@ export interface NormalizedExtension {
   email?: string;
 }
 
+export interface NormalizedRecording {
+  id: string;
+  /** Internal-side extension on the call (e.g. "200"). For inbound, this
+   *  is the called extension; for outbound, the calling extension. */
+  extension: string;
+  /** Caller's number, best-effort E.164 when 3CX provides it. */
+  from: string;
+  /** ISO 8601 timestamp of the recording start. */
+  receivedAt: string;
+  durationSec: number;
+  /** DID the call entered the PBX on (inbound), if present. Bare digits as
+   *  returned by 3CX — no `+` prefix. Used by manual-mode scope filters
+   *  to match against the company's configured `dids`. */
+  fromDidNumber?: string;
+  /** DID the call exited the PBX on (outbound), if present. Same shape as
+   *  fromDidNumber. Usually empty since 3CX v20 doesn't always populate it. */
+  toDidNumber?: string;
+  /** MIME type the plugin will serve the audio bytes as. Typically "audio/x-wav". */
+  audioContentType: string;
+  /**
+   * Plugin-scoped URL the browser can GET to retrieve playable audio.
+   * The audio bytes come back base64-wrapped in a JSON envelope — the
+   * UI decodes to a Blob and feeds the resulting object URL to <audio>.
+   * See `apiRoutes.recordings.audio` on the manifest.
+   */
+  audioUrl: string;
+}
+
+export interface RecordingListOpts {
+  extension?: string;
+  /** ISO 8601. Lower bound on Recording.StartTime (inclusive). */
+  from?: string;
+  /** ISO 8601. Upper bound on Recording.StartTime (inclusive). */
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
 export interface HistoryOpts {
   since: string;
   until?: string;
@@ -271,6 +309,15 @@ export interface ThreeCxEngine {
   listCallHistory(filter: ScopeFilter, opts: HistoryOpts, exposeRecordings: boolean): Promise<{ calls: NormalizedCallRecord[]; nextCursor?: string }>;
   listDids(filter: ScopeFilter): Promise<NormalizedDid[]>;
   listExtensions(filter: ScopeFilter): Promise<NormalizedExtension[]>;
+  listRecordings(
+    filter: ScopeFilter,
+    opts: RecordingListOpts,
+    audioUrlBuilder: (recordingId: string) => string,
+  ): Promise<{ recordings: NormalizedRecording[]; nextCursor?: string }>;
+  fetchRecordingAudio(
+    filter: ScopeFilter,
+    recordingId: string,
+  ): Promise<{ contentType: string; bytes: Uint8Array }>;
 
   // ─── Mutations (Phase 2) ──────────────────────────────────────────
   clickToCall(filter: ScopeFilter, input: ClickToCallInput): Promise<ClickToCallResult>;

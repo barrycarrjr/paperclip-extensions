@@ -31,6 +31,8 @@ import type {
   NormalizedPbxEvent,
   NormalizedQueue,
   NormalizedQueueStatus,
+  NormalizedRecording,
+  RecordingListOpts,
   ScopeFilter,
   ThreeCxEngine,
 } from "../types.js";
@@ -42,6 +44,8 @@ import {
   filterExtensions,
   filterParkedCalls,
   filterQueues,
+  filterRecordings,
+  recordingInScope,
 } from "../filterApply.js";
 import { XapiClient } from "./xapiClient.js";
 import { openXapiWebSocket } from "./websocket.js";
@@ -67,6 +71,14 @@ const EP = {
   users: "/xapi/v1/Users",
   trunks: "/xapi/v1/Trunks",
   callHistory: "/xapi/v1/CallHistoryView",
+  // 3CX v20 XAPI's recordings collection — also the only API surface
+  // for voicemail-style recordings on v20 (there is no dedicated
+  // Voicemail entity in $metadata, and /callcontrol/voicemails is gated
+  // even for system_owners). For voicemail-only ingestion, use 3CX's
+  // VMEmailOptions and read from email instead.
+  recordings: "/xapi/v1/Recordings",
+  recordingDownload: (recId: number) =>
+    `/xapi/v1/Recordings/Pbx.DownloadRecording(recId=${recId})`,
   // XAPI mutation function endpoint (the only one in XAPI)
   dropCall: (callId: string) =>
     `/xapi/v1/ActiveCalls(${encodeURIComponent(callId)})/Pbx.DropCall`,
@@ -152,11 +164,32 @@ export class V20XapiEngine implements ThreeCxEngine {
   }
 
   async listAgents(filter: ScopeFilter, extension?: string): Promise<NormalizedAgent[]> {
-    const path = extension
-      ? `${EP.users}?$filter=Number eq '${encodeURIComponent(extension)}'`
-      : `${EP.users}?$filter=Type eq 'User'&$top=500`;
-    const data = await this.client.get<ODataList<RawUser>>(path);
-    const normalized = (data.value ?? []).map(toAgent);
+    // Single-extension lookups can use a $filter and don't need paging.
+    if (extension) {
+      const data = await this.client.get<ODataList<RawUser>>(
+        `${EP.users}?$filter=Number eq '${encodeURIComponent(extension)}'`,
+      );
+      const normalized = (data.value ?? []).map(toAgent);
+      return filterAgents(filter, normalized);
+    }
+    // Full-list mode paginates: 3CX rejects $top>100 on /Users (see
+    // listExtensions for the rationale). The previous "$filter=Type eq
+    // 'User'" was also incorrect — many Users records have no Type
+    // field, so the server-side filter drops them.
+    const PAGE = 100;
+    const all: RawUser[] = [];
+    let skip = 0;
+    for (;;) {
+      const page = await this.client.get<ODataList<RawUser>>(
+        `${EP.users}?$top=${PAGE}&$skip=${skip}`,
+      );
+      const batch = page.value ?? [];
+      all.push(...batch);
+      if (batch.length < PAGE) break;
+      skip += PAGE;
+      if (skip > 5000) break;
+    }
+    const normalized = all.map(toAgent);
     return filterAgents(filter, normalized);
   }
 
@@ -270,14 +303,149 @@ export class V20XapiEngine implements ThreeCxEngine {
   }
 
   async listExtensions(filter: ScopeFilter): Promise<NormalizedExtension[]> {
-    const data = await this.client.get<ODataList<RawUser>>(`${EP.users}?$top=500`);
-    const normalized: NormalizedExtension[] = (data.value ?? []).map((u) => ({
+    // 3CX v20 rejects $top > 100 on /Users with HTTP 400 (no documented
+    // limit in the OData metadata — confirmed empirically). Paginate via
+    // $skip with a 100-row page size. A 5000-row safety cap protects
+    // against runaway loops if the server gives us a never-shrinking
+    // page; real PBXs are nowhere near that.
+    const PAGE = 100;
+    const all: RawUser[] = [];
+    let skip = 0;
+    for (;;) {
+      const data = await this.client.get<ODataList<RawUser>>(
+        `${EP.users}?$top=${PAGE}&$skip=${skip}`,
+      );
+      const batch = data.value ?? [];
+      all.push(...batch);
+      if (batch.length < PAGE) break;
+      skip += PAGE;
+      if (skip > 5000) break;
+    }
+    const normalized: NormalizedExtension[] = all.map((u) => ({
       number: String(u.Number ?? ""),
       displayName: [u.FirstName, u.LastName].filter(Boolean).join(" ") || u.Number || "",
       type: mapExtensionType(u.Type),
       email: u.EmailAddress ?? undefined,
     }));
     return filterExtensions(filter, normalized);
+  }
+
+  // ─── Recordings (Phase 4) ────────────────────────────────────────
+  //
+  // /xapi/v1/Recordings holds call recordings on 3CX v20. When a user has
+  // "Record voicemail" enabled this includes voicemail-style recordings
+  // alongside ordinary call recordings — v20 XAPI doesn't expose a
+  // distinct voicemail collection at all (no Voicemail EntityType in the
+  // OData $metadata, confirmed against a live v20.0.8 install). The
+  // /callcontrol/voicemails path returns 403 even with the system_owners
+  // role, so OAuth clients can't reach voicemail-only inbox state. For
+  // voicemail-only access, configure VMEmailOptions per user in 3CX so
+  // voicemails are emailed and ingest via an inbox plugin.
+  //
+  // Audio bytes are fetched via the OData bound function:
+  //     GET /xapi/v1/Recordings/Pbx.DownloadRecording(recId=<Int32>)
+  // → audio/x-wav
+
+  async listRecordings(
+    filter: ScopeFilter,
+    opts: RecordingListOpts,
+    audioUrlBuilder: (recordingId: string) => string,
+  ): Promise<{ recordings: NormalizedRecording[]; nextCursor?: string }> {
+    const params = new URLSearchParams();
+    const filters: string[] = [];
+    if (opts.extension) {
+      // Caller-requested extension narrows further.
+      filters.push(
+        `(ToDn eq '${escapeODataString(opts.extension)}' or FromDn eq '${escapeODataString(opts.extension)}')`,
+      );
+    } else {
+      // Push the company's scope into the server-side filter so we don't
+      // paginate through irrelevant recordings (a busy PBX can have
+      // thousands; the client-side filter would discard most of them).
+      const scopeFilter = buildRecordingScopeFilter(filter);
+      if (scopeFilter) filters.push(scopeFilter);
+    }
+    // Date-range narrowing. StartTime is Edm.DateTimeOffset on 3CX v20,
+    // accepts full ISO 8601 timestamps directly in `$filter`.
+    if (opts.from) {
+      filters.push(`StartTime ge ${formatODataDateTime(opts.from)}`);
+    }
+    if (opts.to) {
+      filters.push(`StartTime le ${formatODataDateTime(opts.to)}`);
+    }
+    if (filters.length) params.set("$filter", filters.join(" and "));
+    const top = Math.min(200, Math.max(1, opts.limit ?? 50));
+    params.set("$top", String(top));
+    const skip = opts.cursor ? Number(opts.cursor) : 0;
+    if (skip > 0) params.set("$skip", String(skip));
+    params.set("$orderby", "StartTime desc");
+
+    const data = await this.client.get<ODataList<RawRecording>>(
+      `${EP.recordings}?${params.toString()}`,
+    );
+
+    const normalized: NormalizedRecording[] = (data.value ?? []).map((r) =>
+      toRecording(r, audioUrlBuilder),
+    );
+    const scoped = filterRecordings(filter, normalized);
+    const next =
+      data["@odata.nextLink"] || scoped.length === top
+        ? String(skip + top)
+        : undefined;
+    return { recordings: scoped, nextCursor: next };
+  }
+
+  async fetchRecordingAudio(
+    filter: ScopeFilter,
+    recordingId: string,
+  ): Promise<{ contentType: string; bytes: Uint8Array }> {
+    // Recording Ids are Int32 on v20 — fail fast on anything else.
+    const recId = Number(recordingId);
+    if (!Number.isInteger(recId) || recId <= 0) {
+      throw new Error(
+        `[E3CX_BAD_ID] Recording id "${recordingId}" is not a valid Recording id.`,
+      );
+    }
+
+    // 3CX v20 rejects /Recordings(<id>) with 404 even though the OData
+    // $metadata declares Id as the entity key. The only way to fetch a
+    // single Recording is via $filter=Id eq <id>; the bound
+    // DownloadRecording function works on the collection regardless.
+    let meta: RawRecording | undefined;
+    try {
+      const page = await this.client.get<ODataList<RawRecording>>(
+        `${EP.recordings}?$filter=Id eq ${recId}&$top=1`,
+      );
+      meta = page.value?.[0];
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("[E3CX_NOT_FOUND]") || msg.includes("[E3CX_HTTP_404]")) {
+        throw new Error(
+          `[E3CX_NOT_FOUND] Recording "${recordingId}" not found on the PBX.`,
+        );
+      }
+      throw err;
+    }
+    if (!meta) {
+      throw new Error(
+        `[E3CX_NOT_FOUND] Recording "${recordingId}" not found on the PBX.`,
+      );
+    }
+
+    const ownerExt = pickInternalExtension(meta);
+    if (
+      !recordingInScope(filter, {
+        extension: ownerExt,
+        fromDidNumber: meta?.FromDidNumber,
+        toDidNumber: meta?.ToDidNumber,
+      })
+    ) {
+      throw new Error(
+        `[ESCOPE_VIOLATION] Recording "${recordingId}" (ext="${ownerExt}", fromDid="${meta?.FromDidNumber ?? ""}", toDid="${meta?.ToDidNumber ?? ""}") is outside the company's scope.`,
+      );
+    }
+
+    return await this.client.getBytes(EP.recordingDownload(recId));
   }
 
   // ─── Mutations ───────────────────────────────────────────────────
@@ -693,6 +861,127 @@ interface RawDid {
   Number?: string;
   Description?: string;
   DestinationNumber?: string;
+}
+
+/** Raw shape of /xapi/v1/Recordings on 3CX v20. */
+interface RawRecording {
+  Id?: number;
+  RecordingUrl?: string;
+  StartTime?: string;
+  EndTime?: string;
+  CallType?: string;
+  /** 0 = internal extension; 1 = external (trunk). Observed on v20.0.8. */
+  FromDnType?: number;
+  FromDn?: string;
+  FromCallerNumber?: string;
+  FromDisplayName?: string;
+  FromDidNumber?: string;
+  ToDnType?: number;
+  ToDn?: string;
+  ToCallerNumber?: string;
+  ToDisplayName?: string;
+  ToDidNumber?: string;
+  Transcription?: string;
+  IsTranscribed?: boolean;
+}
+
+/**
+ * Pick the "owner" extension for a Recording — the internal DN side.
+ * Inbound calls have ToDnType=0 (internal-extension target), outbound
+ * have FromDnType=0 (internal-extension caller). Falls back to whichever
+ * side looks like a short numeric DN.
+ */
+function pickInternalExtension(r: RawRecording | undefined): string {
+  if (!r) return "";
+  if (r.ToDnType === 0 && r.ToDn) return r.ToDn;
+  if (r.FromDnType === 0 && r.FromDn) return r.FromDn;
+  if (r.ToDn && /^\d{2,5}$/.test(r.ToDn)) return r.ToDn;
+  if (r.FromDn && /^\d{2,5}$/.test(r.FromDn)) return r.FromDn;
+  return "";
+}
+
+/**
+ * Build a server-side OData $filter expression that narrows /Recordings
+ * to the company's scope in manual mode. Mirrors `filterRecordings`'s
+ * OR-of-attributes logic but pushes it into the query so we don't
+ * paginate through the whole PBX. Returns undefined when no narrowing
+ * is possible (single/native mode, or manual mode with no extensions
+ * AND no DIDs).
+ */
+function buildRecordingScopeFilter(filter: ScopeFilter): string | undefined {
+  if (filter.mode !== "manual") return undefined;
+  const clauses: string[] = [];
+  for (const ext of filter.extensions) {
+    clauses.push(`ToDn eq '${escapeODataString(ext)}'`);
+    clauses.push(`FromDn eq '${escapeODataString(ext)}'`);
+  }
+  for (const did of filter.dids) {
+    const bare = did.replace(/^\+/, "");
+    clauses.push(`FromDidNumber eq '${escapeODataString(bare)}'`);
+    clauses.push(`ToDidNumber eq '${escapeODataString(bare)}'`);
+  }
+  if (clauses.length === 0) return undefined;
+  return `(${clauses.join(" or ")})`;
+}
+
+function escapeODataString(s: string): string {
+  return s.replace(/'/g, "''");
+}
+
+/**
+ * OData v4 wants an unquoted literal for `Edm.DateTimeOffset` filters,
+ * e.g. `StartTime ge 2026-05-01T00:00:00Z`. Accept either a full ISO
+ * timestamp or a bare date — bare dates expand to midnight UTC. Anything
+ * already in the canonical shape is passed through untouched.
+ */
+function formatODataDateTime(iso: string): string {
+  const trimmed = iso.trim();
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00Z`;
+  // Fall back to whatever the caller passed; 3CX will reject if malformed.
+  return trimmed;
+}
+
+/**
+ * Map a 3CX Recording into the engine-neutral NormalizedRecording shape.
+ * `audioUrlBuilder` is injected so the engine stays free of host concerns.
+ */
+function toRecording(
+  r: RawRecording,
+  audioUrlBuilder: (recordingId: string) => string,
+): NormalizedRecording {
+  const id = String(r.Id ?? "");
+  const extension = pickInternalExtension(r);
+  // Caller-facing party: prefer the external side's caller number / name.
+  const externalIsTo = r.ToDnType === 1;
+  const fromNumber = externalIsTo
+    ? (r.ToCallerNumber ?? r.ToDn ?? "")
+    : (r.FromCallerNumber ?? r.FromDn ?? "");
+  const fromName = externalIsTo
+    ? (r.ToDisplayName ?? "")
+    : (r.FromDisplayName ?? "");
+  const from = fromName ? `${fromName} <${fromNumber}>` : fromNumber;
+  const receivedAt = r.StartTime ?? new Date().toISOString();
+  const durationSec =
+    r.StartTime && r.EndTime
+      ? Math.max(
+          0,
+          Math.floor(
+            (new Date(r.EndTime).getTime() - new Date(r.StartTime).getTime()) / 1000,
+          ),
+        )
+      : 0;
+  return {
+    id,
+    extension,
+    from,
+    receivedAt,
+    durationSec,
+    fromDidNumber: r.FromDidNumber || undefined,
+    toDidNumber: r.ToDidNumber || undefined,
+    audioContentType: "audio/x-wav",
+    audioUrl: audioUrlBuilder(id),
+  };
 }
 
 /** Normalize a DID to E.164 with `+` prefix. `15555550100` → `+15555550100`. */
