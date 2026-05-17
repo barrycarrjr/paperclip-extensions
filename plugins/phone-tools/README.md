@@ -132,6 +132,8 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- **v0.6.4** — Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.
+
 - **v0.6.3** — Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.
 
 - **v0.6.2** — DIY engine docs + recording semantics. New **Section L** in the in-Paperclip Setup walkthrough covers DIY end-to-end: stand up Jambonz, configure STT/TTS credentials, create the application with the right webhook URLs, configure the Paperclip-side account, provision a number, smoke-test. Includes a "Known DIY limits" panel that calls out what's deferred to v0.6.x (cost cap, inbound, warm-transfer, saved-assistant CRUD) and v0.7.x (streaming TTS, barge-in) so operators don't waste time chasing missing features. `recordingEnabled` field description rewritten: on DIY, it's a SIGNAL — the operator must enable "Record all calls" on the Jambonz Application; the plugin captures the URL from the call-status hook payload. The K (roadmap) section also updated since DIY itself is no longer a "v0.7.x" plan — it shipped in v0.6.0.

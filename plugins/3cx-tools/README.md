@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.5.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.5.2** — `pbx_parked_calls` rewritten against the **actual** 3CX v20 API shape (verified live against Carr Rock PBX 2026-05-17). The v0.5.0 implementation assumed numeric park-slot extensions (`8000-8009`) and fanned out per-slot `GET /callcontrol/<slot>/participants` — but 3CX's Shared Parking uses identifiers like `SP0`/`SP1`/`*888` that aren't extensions, so the v0.5.0 path returned 404 on every probe and yielded `[]`. New approach: single query to `/xapi/v1/ActiveCalls`, identify parked calls by matching the `Callee` field's first token against the slot list from `/xapi/v1/Parkings`. Slot identifiers (`SP0`, `*888`, etc.) are auto-discovered from `Parkings` — operators no longer need to configure anything. The `parkSlotRange` field is **removed** from the per-account schema (no existing config could have been using it usefully since the v0.5.0 implementation didn't work). `originalExtension` on `NormalizedParkedCall` is now always `undefined` — XAPI's ActiveCalls view of a parked call doesn't carry the previous-leg extension. Manual-mode scoping no longer filters parked calls (park slots are explicitly shared infrastructure on 3CX). Three new live-shape smoke tests + verified end-to-end against a real parked call on SP0.
 
 - **v0.5.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
