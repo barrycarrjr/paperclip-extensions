@@ -34,17 +34,16 @@ export function filterQueues(
 }
 
 export function filterParkedCalls(
-  scope: ScopeFilter,
+  _scope: ScopeFilter,
   parked: NormalizedParkedCall[],
 ): NormalizedParkedCall[] {
-  if (scope.mode !== "manual") return parked;
-  // A parked slot is in scope if the extension that parked it (or the
-  // pickup target) is in the company's extension range. Some 3CX configs
-  // don't expose `originalExtension` — when missing we fall back to
-  // including the slot if it's in any of the company's ranges, which
-  // happens implicitly in the API since manual-mode park slots are
-  // tied to extension groups.
-  return parked.filter((p) => extensionInScope(scope, p.originalExtension));
+  // Park slots on 3CX are shared infrastructure (the configured slots are
+  // literally called "Shared parking") — they don't belong to any one
+  // company in a manual-mode setup. The XAPI's ActiveCalls view of a
+  // parked call also doesn't carry the original-leg extension or DID, so
+  // there's no reliable field to scope on anyway. Surface all parked
+  // calls regardless of mode; the BLF UI works the same way.
+  return parked;
 }
 
 export function filterActiveCalls(

@@ -276,22 +276,28 @@ async function testHappyReadPath() {
   }
 }
 
-async function testParkedCallsReturnsEmptyWhen404OnEverySlot() {
-  // Default parkSlotRange (8000-8009) is probed; 3CX returns 404 on slots
-  // with no current participants. The engine should swallow 404s and return
-  // an empty list — NOT an error.
+async function testParkedCallsReturnsEmptyWhenNoActiveCalls() {
+  // Live PBX with parking slots configured but no calls anywhere. Engine
+  // should return [] cleanly — no errors, no crashes.
   const harness = await makeHarness({
     allowMutations: false,
     defaultAccount: ACCOUNT_KEY,
     accounts: [baseAccount],
   });
-  let participantsCalls = 0;
   const stub = stubFetch(async (url) => {
     if (url.endsWith("/connect/token"))
       return jsonResponse({ access_token: "tok", expires_in: 3600 });
-    if (url.includes("/callcontrol/") && url.endsWith("/participants")) {
-      participantsCalls += 1;
-      return new Response("Not Found", { status: 404 });
+    if (url.endsWith("/xapi/v1/Parkings")) {
+      return jsonResponse({
+        value: [
+          { Number: "SP0", Id: 139 },
+          { Number: "SP1", Id: 140 },
+          { Number: "*0", Id: 135 },
+        ],
+      });
+    }
+    if (url.endsWith("/xapi/v1/ActiveCalls")) {
+      return jsonResponse({ value: [] });
     }
     return new Response("not stubbed", { status: 404 });
   });
@@ -301,47 +307,54 @@ async function testParkedCallsReturnsEmptyWhen404OnEverySlot() {
       {},
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     )) as { error?: string; data?: { parked: unknown[] } };
-    if (result.data?.parked?.length === 0 && !result.error && participantsCalls === 10) {
-      ok(`pbx_parked_calls probes 10 default slots, returns [] when all 404 (calls=${participantsCalls})`);
+    if (result.data?.parked?.length === 0 && !result.error) {
+      ok(`pbx_parked_calls returns [] when ActiveCalls is empty`);
     } else {
-      fail(
-        "pbx_parked_calls 404-everywhere path",
-        JSON.stringify({ result, participantsCalls }),
-      );
+      fail("pbx_parked_calls empty ActiveCalls", JSON.stringify(result));
     }
   } finally {
     stub.restore();
   }
 }
 
-async function testParkedCallsReturnsNormalizedParticipant() {
-  // One park slot (8000) has a participant; the rest 404. Engine should
-  // normalize that participant into a NormalizedParkedCall with the right
-  // slot, callerNumber, and originalExtension.
+async function testParkedCallsRecognizesSharedParkingSlot() {
+  // Live-PBX-confirmed shape: a parked call appears in ActiveCalls with
+  // Callee = "<slot> <display>", Caller = "<id> <name> (<phone>)", and
+  // Status = "Talking". This test uses the exact shape observed on Carr
+  // Rock 3CX v20.0.x 2026-05-17.
   const harness = await makeHarness({
     allowMutations: false,
     defaultAccount: ACCOUNT_KEY,
     accounts: [baseAccount],
   });
-  const startedAt = new Date(Date.now() - 47_000).toISOString(); // parked 47s ago
+  const established = "2026-05-17T22:00:11Z";
+  const serverNow = "2026-05-17T22:00:58Z"; // 47s after established
   const stub = stubFetch(async (url) => {
     if (url.endsWith("/connect/token"))
       return jsonResponse({ access_token: "tok", expires_in: 3600 });
-    if (url.endsWith("/callcontrol/8000/participants")) {
-      return jsonResponse([
-        {
-          id: "p-abc",
-          callid: "call-abc",
-          dn: "8000",
-          party_caller_number: "+15551234567",
-          party_dn: "100",
-          status: "Connected",
-          start_time: startedAt,
-        },
-      ]);
+    if (url.endsWith("/xapi/v1/Parkings")) {
+      return jsonResponse({
+        value: [
+          { Number: "SP0", Id: 139 },
+          { Number: "SP1", Id: 140 },
+          { Number: "*888", Id: 138 },
+        ],
+      });
     }
-    if (url.includes("/callcontrol/") && url.endsWith("/participants")) {
-      return new Response("Not Found", { status: 404 });
+    if (url.endsWith("/xapi/v1/ActiveCalls")) {
+      return jsonResponse({
+        value: [
+          {
+            Id: 8,
+            Caller: "10000 Flowroute - M3 Printing (17175771023)",
+            Callee: "SP0 Shared parking",
+            Status: "Talking",
+            LastChangeStatus: established,
+            EstablishedAt: established,
+            ServerNow: serverNow,
+          },
+        ],
+      });
     }
     return new Response("not stubbed", { status: 404 });
   });
@@ -353,7 +366,7 @@ async function testParkedCallsReturnsNormalizedParticipant() {
     )) as {
       error?: string;
       data?: {
-        parked: { slot?: string; callerNumber?: string; originalExtension?: string; parkedSinceSec?: number }[];
+        parked: { slot?: string; callerNumber?: string; parkedSinceSec?: number; originalExtension?: string }[];
       };
     };
     const parked = result.data?.parked ?? [];
@@ -361,36 +374,51 @@ async function testParkedCallsReturnsNormalizedParticipant() {
     if (
       !result.error &&
       parked.length === 1 &&
-      first?.slot === "8000" &&
-      first?.callerNumber === "+15551234567" &&
-      first?.originalExtension === "100" &&
-      typeof first?.parkedSinceSec === "number" &&
-      first.parkedSinceSec >= 40 &&
-      first.parkedSinceSec <= 60
+      first?.slot === "SP0" &&
+      first?.callerNumber === "+17175771023" &&
+      first?.parkedSinceSec === 47 &&
+      first?.originalExtension === undefined
     ) {
-      ok(`pbx_parked_calls normalizes participant: slot=8000 caller=+15551234567 origExt=100 parkedSinceSec≈47`);
+      ok(`pbx_parked_calls normalizes SP0 parked call: caller=+17175771023 parkedSinceSec=47`);
     } else {
-      fail("pbx_parked_calls normalized shape", JSON.stringify(result));
+      fail("pbx_parked_calls SP0 normalized shape", JSON.stringify(result));
     }
   } finally {
     stub.restore();
   }
 }
 
-async function testParkedCallsEmptyRangeShortCircuits() {
-  // Operator explicitly cleared the range — engine should NOT fan out at all.
+async function testParkedCallsIgnoresNonParkedActiveCalls() {
+  // A regular ringing/talking call (Callee = an extension number, not a
+  // park slot) must NOT be reported as parked. Only calls whose Callee
+  // first-token matches a configured Parkings.Number count as parked.
   const harness = await makeHarness({
     allowMutations: false,
     defaultAccount: ACCOUNT_KEY,
-    accounts: [{ ...baseAccount, parkSlotRange: [] }],
+    accounts: [baseAccount],
   });
-  let participantsCalls = 0;
   const stub = stubFetch(async (url) => {
     if (url.endsWith("/connect/token"))
       return jsonResponse({ access_token: "tok", expires_in: 3600 });
-    if (url.includes("/callcontrol/") && url.endsWith("/participants")) {
-      participantsCalls += 1;
-      return jsonResponse([]);
+    if (url.endsWith("/xapi/v1/Parkings")) {
+      return jsonResponse({
+        value: [{ Number: "SP0", Id: 139 }],
+      });
+    }
+    if (url.endsWith("/xapi/v1/ActiveCalls")) {
+      return jsonResponse({
+        value: [
+          {
+            Id: 9,
+            Caller: "200 Carr, Barry (200)",
+            Callee: "307 Ramos, Christine",
+            Status: "Talking",
+            LastChangeStatus: "2026-05-17T22:00:00Z",
+            EstablishedAt: "2026-05-17T22:00:00Z",
+            ServerNow: "2026-05-17T22:00:30Z",
+          },
+        ],
+      });
     }
     return new Response("not stubbed", { status: 404 });
   });
@@ -400,13 +428,10 @@ async function testParkedCallsEmptyRangeShortCircuits() {
       {},
       { agentId: "a", runId: "r", companyId: COMPANY_A, projectId: "p" },
     )) as { error?: string; data?: { parked: unknown[] } };
-    if (result.data?.parked?.length === 0 && !result.error && participantsCalls === 0) {
-      ok("pbx_parked_calls with parkSlotRange=[] short-circuits (no HTTP probes)");
+    if (result.data?.parked?.length === 0 && !result.error) {
+      ok("pbx_parked_calls ignores ActiveCalls whose Callee isn't a park slot");
     } else {
-      fail(
-        "pbx_parked_calls empty-range short-circuit",
-        JSON.stringify({ result, participantsCalls }),
-      );
+      fail("pbx_parked_calls non-parked filter", JSON.stringify(result));
     }
   } finally {
     stub.restore();
@@ -815,9 +840,9 @@ async function main() {
   await testMutationsDisabled();
   await testScopeViolation();
   await testHappyReadPath();
-  await testParkedCallsReturnsEmptyWhen404OnEverySlot();
-  await testParkedCallsReturnsNormalizedParticipant();
-  await testParkedCallsEmptyRangeShortCircuits();
+  await testParkedCallsReturnsEmptyWhenNoActiveCalls();
+  await testParkedCallsRecognizesSharedParkingSlot();
+  await testParkedCallsIgnoresNonParkedActiveCalls();
   await testHangupUsesXapiPbxDropCall();
   await testParkRoutesToParkSlot();
   await testDidsNormalizedToE164();

@@ -68,6 +68,7 @@ const EP = {
   queues: "/xapi/v1/Queues",
   queue: (id: string) => `/xapi/v1/Queues(${encodeURIComponent(id)})`,
   activeCalls: "/xapi/v1/ActiveCalls",
+  parkings: "/xapi/v1/Parkings",
   users: "/xapi/v1/Users",
   trunks: "/xapi/v1/Trunks",
   callHistory: "/xapi/v1/CallHistoryView",
@@ -147,64 +148,36 @@ export class V20XapiEngine implements ThreeCxEngine {
     };
   }
 
-  async listParkedCalls(
-    filter: ScopeFilter,
-    parkSlots: string[],
-  ): Promise<NormalizedParkedCall[]> {
-    // Parked calls are NOT exposed via XAPI on 3CX v20 — the OData metadata
-    // only has CallParkingSettings (config), not a runtime parked-calls
-    // collection. Live parked-call enumeration goes through the Call Control
-    // API: a parked call appears as a participant of its park-slot extension.
-    // We fan out one GET per slot in parallel, normalize the participants
-    // we find, and apply the scope filter on top.
+  async listParkedCalls(filter: ScopeFilter): Promise<NormalizedParkedCall[]> {
+    // Parked calls live in /xapi/v1/ActiveCalls — they're not a separate
+    // collection. The fact that a call is parked is encoded in the Callee
+    // field, which 3CX populates as "<slot> <slot-name>" (e.g.
+    // "SP0 Shared parking"). The Status field on a parked call is just
+    // "Talking" — there's no "Parked" status flag — so we identify parked
+    // calls by matching the Callee prefix against the slot identifiers
+    // configured in /xapi/v1/Parkings.
     //
-    // If no slot range is configured, return [] rather than probing — the
-    // caller (worker) is responsible for defaulting parkSlots to the
-    // conventional "8000-8009" range, so an empty list here means the
-    // operator explicitly cleared the range.
-    if (!parkSlots || parkSlots.length === 0) return [];
+    // Slot discovery is auto: we fetch /xapi/v1/Parkings (caches in
+    // XapiClient at the standard cache TTL) and use its Number values as
+    // the matching prefixes. Operators do NOT need to configure a slot
+    // range — the plugin reads what 3CX has.
 
-    const responses = await Promise.all(
-      parkSlots.map(async (slot) => {
-        try {
-          const participants = await this.client.get<RawCcParticipant[]>(
-            EP.ccParticipants(slot),
-          );
-          return { slot, participants: participants ?? [] };
-        } catch (err) {
-          const msg = (err as Error).message ?? "";
-          // 404 on a slot that's not currently active is the common case —
-          // 3CX returns it when no participants are routed there. Treat as
-          // empty rather than failing the whole tool call.
-          if (msg.includes("[E3CX_HTTP_404]") || msg.includes("[E3CX_NOT_FOUND]")) {
-            return { slot, participants: [] as RawCcParticipant[] };
-          }
-          // Auth-style errors are operator-actionable — bubble them up so
-          // the agent sees a useful failure mode rather than a silent empty.
-          if (
-            msg.includes("[E3CX_HTTP_403]") ||
-            msg.includes("[E3CX_AUTH]") ||
-            msg.includes("[E3CX_CC_NOT_ENABLED]")
-          ) {
-            throw new Error(
-              `[E3CX_CC_NOT_ENABLED] /callcontrol/${slot}/participants returned ${msg}. ` +
-                `The Service Principal needs Call Control API access enabled AND the park-slot ` +
-                `extension(s) added to its Extension(s) selector.`,
-            );
-          }
-          // Anything else: log-and-skip the individual slot rather than fail
-          // the whole tool — the operator can still see the other slots.
-          return { slot, participants: [] as RawCcParticipant[] };
-        }
-      }),
-    );
+    const [slotConfig, calls] = await Promise.all([
+      this.client.getCached<ODataList<RawParkingSlot>>(EP.parkings),
+      this.client.get<ODataList<RawActiveCall>>(EP.activeCalls),
+    ]);
 
-    const now = Date.now();
+    const slotNumbers = (slotConfig.value ?? [])
+      .map((s) => s.Number)
+      .filter((n): n is string => typeof n === "string" && n.length > 0);
+    if (slotNumbers.length === 0) return [];
+
+    const serverNow = pickServerNow(calls.value);
     const normalized: NormalizedParkedCall[] = [];
-    for (const { slot, participants } of responses) {
-      for (const p of participants) {
-        normalized.push(toParkedCall(slot, p, now));
-      }
+    for (const call of calls.value ?? []) {
+      const slot = matchParkSlot(call.Callee, slotNumbers);
+      if (!slot) continue;
+      normalized.push(toParkedCall(slot, call, serverNow));
     }
 
     return filterParkedCalls(filter, normalized);
@@ -826,62 +799,52 @@ interface RawQueueAgent {
 }
 
 /**
- * Call Control API participant shape — what `GET /callcontrol/<ext>/participants`
- * returns. 3CX has historically used inconsistent field names across versions
- * and OData vs. Call Control API surfaces; we declare both lowercase_underscore
- * (Call Control convention) and PascalCase (XAPI/OData convention) variants
- * and pick whichever is populated at runtime in `toParkedCall`.
- *
- * Documented fields (best-effort against 3CX v20 docs + community samples):
- *   - id / Id                — participant id
- *   - callid / CallId        — call id
- *   - legid / LegId          — leg id
- *   - dn / Dn                — the DN the participant sits on (== slot extension here)
- *   - device_id              — for routed-from-extension cases
- *   - party_caller_id        — caller's display id (text)
- *   - party_caller_name      — caller's display name
- *   - party_caller_number    — caller's number (E.164-ish or extension)
- *   - party_dn / PartyDn     — the *other* leg's DN (the original-owning extension
- *                              for a parked call — the extension that parked it,
- *                              or the original ringing destination on inbound)
- *   - direction              — usually "Inbound" / "Outbound" / "Internal"
- *   - status                 — "Connected" / "Dialing" / "Ringing" / etc.
- *   - start_time / StartTime — ISO timestamp
- *
- * Everything is optional — the worst-case "unknown" shape produces a
- * NormalizedParkedCall with mostly-empty fields, which is better than crashing.
+ * Park-slot configuration shape — what `GET /xapi/v1/Parkings` returns
+ * (one entry per configured park slot). The `Number` field carries the
+ * dial code / slot identifier (e.g. `SP0`, `SP1`, `*0`, `*888`) that 3CX
+ * stamps into the `Callee` field on a parked ActiveCall. Confirmed
+ * against Carr Rock 3CX v20.0.x 2026-05-17.
  */
-interface RawCcParticipant {
-  id?: string;
-  Id?: string;
-  callid?: string;
-  CallId?: string;
-  legid?: string;
-  LegId?: string;
-  dn?: string;
-  Dn?: string;
-  device_id?: string;
-  party_caller_id?: string;
-  party_caller_name?: string;
-  party_caller_number?: string;
-  PartyCallerId?: string;
-  PartyCallerName?: string;
-  PartyCallerNumber?: string;
-  party_dn?: string;
-  PartyDn?: string;
-  direction?: string;
-  Direction?: string;
-  status?: string;
-  Status?: string;
-  start_time?: string;
-  StartTime?: string;
+interface RawParkingSlot {
+  Number?: string;
+  Id?: number;
 }
 
+/**
+ * ActiveCall shape — what `GET /xapi/v1/ActiveCalls` returns. Confirmed
+ * against Carr Rock 3CX v20.0.x 2026-05-17:
+ *   {
+ *     "Id": 8,
+ *     "Caller": "10000 Flowroute - M3 Printing (17175771023)",
+ *     "Callee": "SP0 Shared parking",
+ *     "Status": "Talking",
+ *     "LastChangeStatus": "2026-05-17T22:00:11Z",
+ *     "EstablishedAt": "2026-05-17T22:00:11Z",
+ *     "ServerNow": "2026-05-17T22:00:49.5850283Z"
+ *   }
+ *
+ * Caller format: "<segment_id> <display_name> (<phone_number>)" — the
+ * phone number is in parens, NOT E.164-prefixed (3CX strips the leading
+ * "+"). We extract via regex and re-prefix.
+ *
+ * Callee format for parked calls: "<slot_number> <slot_display_name>"
+ * — e.g. "SP0 Shared parking". For non-parked calls, Callee is just an
+ * extension number / queue extension / DID — no embedded slot.
+ *
+ * Older field names (CallId/CallerNumber/CalleeNumber/Extension/Queue/
+ * StartedAt/DurationSec/Direction) are kept best-effort for non-parked
+ * call shapes the engine sees elsewhere — the active live shape above is
+ * what listParkedCalls relies on.
+ */
 interface RawActiveCall {
-  Id?: string;
+  Id?: number | string;
   CallId?: string;
   Caller?: string;
   Callee?: string;
+  Status?: string;
+  LastChangeStatus?: string;
+  EstablishedAt?: string;
+  ServerNow?: string;
   CallerNumber?: string;
   CalleeNumber?: string;
   Extension?: string;
@@ -1206,43 +1169,90 @@ function toQueue(r: RawQueue): NormalizedQueue {
 }
 
 /**
- * Map a Call Control API participant (sitting on a park-slot extension's
- * /participants list) to the normalized parked-call shape.
+ * Map a parked ActiveCall into the normalized parked-call shape.
  *
- * Defensive about field-name variance — see the RawCcParticipant comment
- * for the catalogue of names 3CX has been observed to use. Anything we
- * can't extract falls back to a safe default (`"unknown"` / `0` /
- * undefined) rather than throwing — the operator deserves a partial
- * result over a hard failure on an unexpected payload shape.
+ * Confirmed call shape (see RawActiveCall comment for the live sample):
+ *   Caller = "<segment_id> <display_name> (<phone_number>)" — caller's
+ *     real phone is in parens, no E.164 prefix. We extract and re-prefix.
+ *   Callee = "<slot> <slot_display_name>" — slot identifier is the
+ *     first space-separated token, already passed in as `slot`.
+ *   EstablishedAt = ISO timestamp at which the call hit its current
+ *     leg (i.e. when the park happened) — use against ServerNow for
+ *     skew-free parked-since math.
+ *
+ * `originalExtension` (the extension that did the parking) is NOT
+ * available from /xapi/v1/ActiveCalls — 3CX doesn't expose the previous-
+ * leg history once the call moves into the park slot. Left undefined.
  */
 function toParkedCall(
   slot: string,
-  r: RawCcParticipant,
-  nowMs: number,
+  r: RawActiveCall,
+  serverNowMs: number,
 ): NormalizedParkedCall {
-  const startedAtRaw = r.start_time ?? r.StartTime;
   let parkedSinceSec = 0;
-  if (startedAtRaw) {
-    const startedMs = Date.parse(startedAtRaw);
-    if (Number.isFinite(startedMs)) {
-      parkedSinceSec = Math.max(0, Math.floor((nowMs - startedMs) / 1000));
+  if (r.EstablishedAt) {
+    const establishedMs = Date.parse(r.EstablishedAt);
+    if (Number.isFinite(establishedMs)) {
+      parkedSinceSec = Math.max(0, Math.floor((serverNowMs - establishedMs) / 1000));
     }
   }
-  const callerNumber =
-    r.party_caller_number ??
-    r.PartyCallerNumber ??
-    r.party_caller_id ??
-    r.PartyCallerId ??
-    r.party_caller_name ??
-    r.PartyCallerName ??
-    "unknown";
-  const originalExtension = r.party_dn ?? r.PartyDn ?? undefined;
+  const callerNumber = extractCallerNumber(r.Caller) ?? "unknown";
   return {
     slot,
     callerNumber,
     parkedSinceSec,
-    originalExtension,
+    originalExtension: undefined,
   };
+}
+
+/**
+ * Extract the parenthesized phone number from a 3CX `Caller` string and
+ * normalize to E.164. e.g.
+ *   "10000 Flowroute - M3 Printing (17175771023)" → "+17175771023"
+ *
+ * Returns undefined if no parenthesized digits are found (e.g. internal
+ * call with no PSTN segment).
+ */
+function extractCallerNumber(caller: string | undefined): string | undefined {
+  if (!caller) return undefined;
+  const m = caller.match(/\((\+?\d{6,15})\)/);
+  if (!m) return undefined;
+  return normalizeE164(m[1]);
+}
+
+/**
+ * Decide which park-slot Number (if any) the Callee field references.
+ * 3CX's Callee on a parked call is "<slot> <display_name>" — match by
+ * the first space-separated token to be tolerant of display-name variance.
+ *
+ * Returns the matched slot identifier verbatim (so the caller sees the
+ * same string 3CX uses, e.g. "SP0" or "*888"), or null when the call
+ * isn't parked.
+ */
+function matchParkSlot(callee: string | undefined, slotNumbers: string[]): string | null {
+  if (!callee) return null;
+  const firstToken = callee.split(/\s+/, 1)[0];
+  if (!firstToken) return null;
+  // Exact-match against the configured slot Numbers — both SP-style
+  // ("SP0") and dial-code-style ("*888") work the same way.
+  if (slotNumbers.includes(firstToken)) return firstToken;
+  return null;
+}
+
+/**
+ * Pick `ServerNow` from the first call in a page (3CX stamps it on every
+ * row consistently). Falls back to local clock if absent. Using ServerNow
+ * avoids clock-skew error in `parkedSinceSec` when the Paperclip host's
+ * clock drifts from the PBX.
+ */
+function pickServerNow(calls: RawActiveCall[] | undefined): number {
+  for (const c of calls ?? []) {
+    if (c.ServerNow) {
+      const t = Date.parse(c.ServerNow);
+      if (Number.isFinite(t)) return t;
+    }
+  }
+  return Date.now();
 }
 
 function toActiveCall(r: RawActiveCall): NormalizedActiveCall {
