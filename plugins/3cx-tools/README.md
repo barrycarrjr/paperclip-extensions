@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.4.9** — Dropped v18 support. The `pbxVersion` field is now `enum: ["20"]` (was `["20", "18"]`) — v18 was never implemented and would error with `[EENGINE_NOT_AVAILABLE]` if selected. Most v18 installs upgrade to v20 for free; if you're still on v18, upgrade before installing. README and roadmap cleaned up to match. No effect on existing v20 configs.
+
 - **v0.4.8** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.4.7** — Fix: the v0.4.6 extension dropdown only showed "Anyone" because `engine.listExtensions` hardcoded `$top=500` on `/xapi/v1/Users` and 3CX v20 rejects any `$top > 100` with **HTTP 400** (server cap not documented in the OData `$metadata`). The worker caught the 400 and returned an empty extensions list, leaving the dropdown bare. Both `listExtensions` and the all-extensions branch of `listAgents` now paginate with `$top=100&$skip=N` until the server returns a short page (with a 5000-row safety cap). Also dropped the broken `$filter=Type eq 'User'` from `listAgents` — many Users records have no `Type` field, so the server-side filter was silently excluding them.
@@ -206,7 +208,7 @@ Open `/instance/settings/plugins/3cx-tools` and fill in the settings form.
 - **Identifier** — short stable ID agents pass to tools (e.g. `main`).
 - **Display name** — free-form label for this settings page.
 - **PBX base URL** — fully qualified, scheme included (e.g. `https://pbx.example.com`). No trailing path.
-- **3CX version** — `20` (current). `18` is on the roadmap; selecting it returns `[EENGINE_NOT_AVAILABLE]`.
+- **3CX version** — `20` (only supported value). v18 is not supported; upgrade the PBX (v20 is a free upgrade for v18 licensees).
 - **XAPI client_id** — paste the Paperclip secret UUID, NOT the raw client_id.
 - **XAPI client_secret** — paste the Paperclip secret UUID, NOT the raw secret.
 - **Multi-company mode** — `single` / `manual` / `native` (see below).
@@ -299,7 +301,7 @@ Every error follows `[ECODE_<...>] human message` so skills can pattern-match.
 | `EDISABLED` | Tool is a mutation and `allowMutations` is off, or `maxClickToCallPerDay` is 0. |
 | `ESCOPE_VIOLATION` | Mutation targets an extension/call outside the calling company's manual-mode scope. |
 | `ECONCURRENCY_LIMIT` | Per-(company, day, account) click-to-call cap reached. |
-| `EENGINE_NOT_AVAILABLE` | `pbxVersion` is set to `18` (not yet implemented). |
+| `EENGINE_NOT_AVAILABLE` | `pbxVersion` is set to a value other than `20`. Only v20 is supported. |
 
 ### 3CX upstream
 
@@ -375,9 +377,9 @@ pnpm --filter paperclipai exec tsx cli/src/index.ts plugin reinstall 3cx-tools
 
 ## Roadmap
 
-- **v0.4** — v18 Call Control engine (only if a v18-locked operator needs it; most v18 installs upgrade for free).
-- **v0.4** — `pbx_trunk_status` for SIP-trunk registration health.
-- **v0.5** — bridge with `phone-tools`: `pbx_transfer_call` accepting a `phone-tools` callId for AI→human hand-off.
+- **v0.5** — `pbx_trunk_status` for SIP-trunk registration health.
+- **v0.5** — `pbx_parked_calls` real implementation (currently returns `[]` — see [plugin-plans/10c-3cx-parked-calls.md](../../plugin-plans/10c-3cx-parked-calls.md)).
+- **v0.6** — bridge with `phone-tools`: `pbx_transfer_call` accepting a `phone-tools` callId for AI→human hand-off.
 
 ## Out of scope
 

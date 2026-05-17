@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.4.8";
+const PLUGIN_VERSION = "0.4.9";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -145,11 +145,11 @@ const accountItemSchema = {
     },
     pbxVersion: {
       type: "string",
-      enum: ["20", "18"],
+      enum: ["20"],
       default: "20",
       title: "3CX version",
       description:
-        "v0.1.0 supports v20 (XAPI). v18 (Call Control API) ships in a future release; selecting it now returns [EENGINE_NOT_AVAILABLE].",
+        "3CX v20 (XAPI). Older versions are not supported — upgrade the PBX before installing.",
     },
     clientIdRef: {
       type: "string",

@@ -80,7 +80,7 @@ export async function getResolvedAccount(
 
   if ((account.pbxVersion ?? "20") !== "20") {
     throw new Error(
-      `[EENGINE_NOT_AVAILABLE] 3CX v18 (Call Control API) engine ships in a future release. Use v20 (XAPI) or upgrade the PBX.`,
+      `[EENGINE_NOT_AVAILABLE] Only 3CX v20 is supported. Upgrade the PBX (v20 is a free upgrade from v18).`,
     );
   }
 
