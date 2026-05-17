@@ -7,6 +7,7 @@
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import type { PluginContext } from "@paperclipai/plugin-sdk";
 import {
   createDiyEngine,
   type DiyEngine,
@@ -19,26 +20,61 @@ import {
   type SayVerb,
 } from "./verbBuilder.js";
 import { verifyJambonzSignature } from "./jambonzClient.js";
+import { createConversationStore } from "./conversationStore.js";
 import type { AssistantConfig } from "../types.js";
 
-const baseOpts: DiyEngineOptions = {
-  jambonzApiUrl: "https://jambonz.test",
-  jambonzApiKey: "test-key",
-  jambonzAccountSid: "acc-1",
-  jambonzApplicationSid: "app-1",
-  webhookSecret: null, // signature checks pass when null (dev-mode opt-out)
-  hostBaseUrl: "https://paperclip.test",
-  pluginId: "phone-tools",
-  accountKey: "main",
-  llmProvider: "anthropic",
-  llmApiKey: "test-llm-key",
-  ttsVendor: "google",
-  ttsVoice: "en-US-Wavenet-D",
-  ttsLanguage: "en-US",
-  sttVendor: "deepgram",
-  sttLanguage: "en-US",
-  recordingEnabled: false,
-};
+interface ScopeKeyLike {
+  scopeKind: string;
+  scopeId?: string;
+  namespace?: string;
+  stateKey: string;
+}
+
+/**
+ * Minimal in-memory ctx.state stub used across the DIY engine tests.
+ * Matches the same shape cost-cap.test.ts uses, so the mock is consistent
+ * across the plugin's test suite.
+ */
+function fakeCtx(): PluginContext {
+  const store = new Map<string, unknown>();
+  function key(k: ScopeKeyLike): string {
+    return `${k.scopeKind}::${k.scopeId ?? ""}::${k.namespace ?? "default"}::${k.stateKey}`;
+  }
+  return {
+    state: {
+      get: async (k: ScopeKeyLike) => store.get(key(k)) ?? null,
+      set: async (k: ScopeKeyLike, value: unknown) => {
+        store.set(key(k), value);
+      },
+      delete: async (k: ScopeKeyLike) => {
+        store.delete(key(k));
+      },
+    },
+  } as unknown as PluginContext;
+}
+
+function makeOpts(overrides: Partial<DiyEngineOptions> = {}): DiyEngineOptions {
+  return {
+    ctx: fakeCtx(),
+    jambonzApiUrl: "https://jambonz.test",
+    jambonzApiKey: "test-key",
+    jambonzAccountSid: "acc-1",
+    jambonzApplicationSid: "app-1",
+    webhookSecret: null, // signature checks pass when null (dev-mode opt-out)
+    hostBaseUrl: "https://paperclip.test",
+    pluginId: "phone-tools",
+    accountKey: "main",
+    llmProvider: "anthropic",
+    llmApiKey: "test-llm-key",
+    ttsVendor: "google",
+    ttsVoice: "en-US-Wavenet-D",
+    ttsLanguage: "en-US",
+    sttVendor: "deepgram",
+    sttLanguage: "en-US",
+    recordingEnabled: false,
+    ...overrides,
+  };
+}
 
 const assistant: AssistantConfig = {
   name: "TestAssistant",
@@ -160,7 +196,7 @@ describe("DiyEngine — outbound call lifecycle", () => {
       }
       return new Response("not stubbed", { status: 404 });
     }) as typeof fetch;
-    engine = createDiyEngine(baseOpts);
+    engine = createDiyEngine(makeOpts());
   });
 
   it("startOutboundCall calls Jambonz and returns the engine sid", async () => {
@@ -370,5 +406,194 @@ describe("DiyEngine — outbound call lifecycle", () => {
   // Restore fetch after each test
   it("teardown: restores global fetch", () => {
     globalThis.fetch = origFetch;
+  });
+});
+
+describe("ConversationStore — persistence across engine recreation", () => {
+  it("upserting through one engine surfaces in a second engine sharing ctx.state", async () => {
+    const ctx = fakeCtx();
+    // First engine writes state for a call.
+    const store1 = createConversationStore(ctx, "main");
+    await store1.upsert({
+      callSid: "call-A",
+      direction: "outbound",
+      from: "+15551234567",
+      to: "+15555550199",
+      numberId: "+15551234567",
+      startedAt: "2026-05-17T20:00:00Z",
+      endedAt: null,
+      assistant,
+      accountKey: "main",
+      history: [{ role: "assistant", content: "Hi" }],
+      transcript: null,
+      status: "in-progress",
+      endReason: null,
+      durationSec: null,
+      costUsd: 0,
+      recordingUrl: null,
+      metadata: {},
+    });
+    // Second engine instantiated against the same ctx — should see it.
+    const store2 = createConversationStore(ctx, "main");
+    const found = await store2.get("call-A");
+    assert.ok(found);
+    assert.equal(found!.history.length, 1);
+    assert.equal(found!.history[0].content, "Hi");
+  });
+
+  it("appendTurn persists across reads", async () => {
+    const ctx = fakeCtx();
+    const store = createConversationStore(ctx, "main");
+    await store.upsert({
+      callSid: "call-B",
+      direction: "outbound",
+      from: null,
+      to: null,
+      numberId: null,
+      startedAt: "2026-05-17T20:00:00Z",
+      endedAt: null,
+      assistant,
+      accountKey: "main",
+      history: [],
+      transcript: null,
+      status: "in-progress",
+      endReason: null,
+      durationSec: null,
+      costUsd: 0,
+      recordingUrl: null,
+      metadata: {},
+    });
+    await store.appendTurn("call-B", { role: "assistant", content: "Hello" });
+    await store.appendTurn("call-B", { role: "user", content: "Hi back" });
+    // Fresh handle reading the same ctx — should see both turns.
+    const store2 = createConversationStore(ctx, "main");
+    const reread = await store2.get("call-B");
+    assert.equal(reread!.history.length, 2);
+    assert.equal(reread!.history[1].content, "Hi back");
+  });
+
+  it("list returns calls sorted newest-first by startedAt", async () => {
+    const ctx = fakeCtx();
+    const store = createConversationStore(ctx, "main");
+    const mk = (sid: string, startedAt: string) => ({
+      callSid: sid,
+      direction: "outbound" as const,
+      from: null,
+      to: null,
+      numberId: null,
+      startedAt,
+      endedAt: null,
+      assistant,
+      accountKey: "main",
+      history: [],
+      transcript: null,
+      status: "in-progress" as const,
+      endReason: null,
+      durationSec: null,
+      costUsd: 0,
+      recordingUrl: null,
+      metadata: {},
+    });
+    await store.upsert(mk("c-1", "2026-05-17T18:00:00Z"));
+    await store.upsert(mk("c-2", "2026-05-17T20:00:00Z"));
+    await store.upsert(mk("c-3", "2026-05-17T19:00:00Z"));
+    const list = await store.list();
+    assert.deepEqual(list.map((c) => c.callSid), ["c-2", "c-3", "c-1"]);
+  });
+
+  it("drop removes both the entry and its index reference", async () => {
+    const ctx = fakeCtx();
+    const store = createConversationStore(ctx, "main");
+    await store.upsert({
+      callSid: "call-D",
+      direction: "outbound",
+      from: null,
+      to: null,
+      numberId: null,
+      startedAt: "2026-05-17T20:00:00Z",
+      endedAt: null,
+      assistant,
+      accountKey: "main",
+      history: [],
+      transcript: null,
+      status: "ended",
+      endReason: null,
+      durationSec: 30,
+      costUsd: 0,
+      recordingUrl: null,
+      metadata: {},
+    });
+    await store.drop("call-D");
+    const found = await store.get("call-D");
+    assert.equal(found, undefined);
+    const list = await store.list();
+    assert.equal(list.length, 0);
+  });
+
+  it("gc drops terminal entries older than the threshold; active calls stay", async () => {
+    const ctx = fakeCtx();
+    const store = createConversationStore(ctx, "main");
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const justNow = new Date().toISOString();
+    const old = {
+      callSid: "old-ended",
+      direction: "outbound" as const,
+      from: null,
+      to: null,
+      numberId: null,
+      startedAt: tenMinAgo,
+      endedAt: tenMinAgo,
+      assistant,
+      accountKey: "main",
+      history: [],
+      transcript: null,
+      status: "ended" as const,
+      endReason: null,
+      durationSec: 60,
+      costUsd: 0,
+      recordingUrl: null,
+      metadata: {},
+    };
+    const recent = { ...old, callSid: "recent-ended", startedAt: justNow, endedAt: justNow };
+    const active = { ...old, callSid: "active", status: "in-progress" as const, endedAt: null };
+    await store.upsert(old);
+    await store.upsert(recent);
+    await store.upsert(active);
+    // GC threshold: drop terminal entries older than 5 minutes.
+    const dropped = await store.gc(5 * 60 * 1000);
+    assert.equal(dropped, 1);
+    const remaining = (await store.list()).map((c) => c.callSid).sort();
+    assert.deepEqual(remaining, ["active", "recent-ended"]);
+  });
+
+  it("two accounts maintain separate index namespaces", async () => {
+    const ctx = fakeCtx();
+    const a = createConversationStore(ctx, "account-A");
+    const b = createConversationStore(ctx, "account-B");
+    const base = {
+      direction: "outbound" as const,
+      from: null,
+      to: null,
+      numberId: null,
+      startedAt: "2026-05-17T20:00:00Z",
+      endedAt: null,
+      assistant,
+      history: [],
+      transcript: null,
+      status: "in-progress" as const,
+      endReason: null,
+      durationSec: null,
+      costUsd: 0,
+      recordingUrl: null,
+      metadata: {},
+    };
+    await a.upsert({ ...base, callSid: "shared-sid", accountKey: "account-A" });
+    await b.upsert({ ...base, callSid: "shared-sid", accountKey: "account-B" });
+    const fromA = await a.get("shared-sid");
+    const fromB = await b.get("shared-sid");
+    assert.equal(fromA?.accountKey, "account-A");
+    assert.equal(fromB?.accountKey, "account-B");
+    assert.equal((await a.list()).length, 1);
+    assert.equal((await b.list()).length, 1);
   });
 });

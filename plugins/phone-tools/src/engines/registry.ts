@@ -154,6 +154,7 @@ export async function getResolvedAccount(
       );
     }
     engine = createDiyEngine({
+      ctx,
       jambonzApiUrl: account.jambonzApiUrl!,
       jambonzApiKey,
       jambonzAccountSid: account.jambonzAccountSid!,
@@ -244,6 +245,7 @@ export async function getDiyEngineForAccount(
   if (!jambonzApiKey || !llmApiKey) return null;
 
   const engine = createDiyEngine({
+    ctx,
     jambonzApiUrl: account.jambonzApiUrl!,
     jambonzApiKey,
     jambonzAccountSid: account.jambonzAccountSid!,

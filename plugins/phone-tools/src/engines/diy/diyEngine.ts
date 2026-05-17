@@ -24,6 +24,7 @@
  *     return [ENOT_SUPPORTED] for now.
  */
 
+import type { PluginContext } from "@paperclipai/plugin-sdk";
 import type {
   AssistantConfig,
   ListCallsFilter,
@@ -60,6 +61,8 @@ import {
 import { buildHangupVerbs, buildTurnVerbs, type JambonzVerb } from "./verbBuilder.js";
 
 export interface DiyEngineOptions {
+  /** Plugin host context, used for persistent conversation state via ctx.state. */
+  ctx: PluginContext;
   /** Jambonz instance base URL, e.g. https://jambonz.example.com */
   jambonzApiUrl: string;
   jambonzApiKey: string;
@@ -99,7 +102,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
     applicationSid: opts.jambonzApplicationSid,
     webhookSecret: opts.webhookSecret,
   };
-  const store = createConversationStore();
+  const store = createConversationStore(opts.ctx, opts.accountKey);
   const llmModel = opts.llmModelOverride ?? defaultModelFor(opts.llmProvider);
 
   function callHookUrl(callSid: string): string {
@@ -168,11 +171,11 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
         recordingUrl: null,
         metadata: input.metadata ?? {},
       };
-      store.upsert(state);
+      await store.upsert(state);
       // Also stash under the provisional sid so Jambonz hooks that fire
       // with the provisional reference can find it. Jambonz typically
       // replaces with the real sid on the first hook.
-      store.upsert({ ...state, callSid: provisionalSid });
+      await store.upsert({ ...state, callSid: provisionalSid });
 
       return { callId: result.sid, status: "queued" };
     },
@@ -185,9 +188,9 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
         if (!msg.includes("[EJAMBONZ_HTTP_404]")) throw err;
         // 404 = already ended on Jambonz side. Treat as success.
       }
-      const cur = store.get(callId);
+      const cur = await store.get(callId);
       if (cur && cur.status !== "ended") {
-        store.patch(callId, {
+        await store.patch(callId, {
           status: "ended",
           endedAt: new Date().toISOString(),
           endReason: reason ?? "force-ended",
@@ -196,7 +199,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
     },
 
     async getCallStatus(callId: string): Promise<NormalizedCallStatus> {
-      const state = store.get(callId);
+      const state = await store.get(callId);
       if (!state) {
         throw new Error(`[ECALL_NOT_FOUND] DIY engine has no record of call "${callId}".`);
       }
@@ -220,7 +223,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
       callId: string,
       format: TranscriptFormat,
     ): Promise<NormalizedTranscript> {
-      const state = store.get(callId);
+      const state = await store.get(callId);
       if (!state) {
         throw new Error(`[ECALL_NOT_FOUND] DIY engine has no record of call "${callId}".`);
       }
@@ -243,7 +246,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
       callId: string,
       _expiresInSec: number,
     ): Promise<{ url: string; expiresAt: string }> {
-      const state = store.get(callId);
+      const state = await store.get(callId);
       if (!state?.recordingUrl) {
         throw new Error(
           `[ENOT_AVAILABLE] No recording URL for call "${callId}". Either recording is off or Jambonz hasn't posted the recording event yet.`,
@@ -260,8 +263,8 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
     ): Promise<{ calls: NormalizedCallSummary[]; nextCursor?: string }> {
       const sinceMs = filter.since ? Date.parse(filter.since) : 0;
       const untilMs = filter.until ? Date.parse(filter.until) : Infinity;
-      const matches = store
-        .list()
+      const all = await store.list();
+      const matches = all
         .filter((s) => {
           const startMs = Date.parse(s.startedAt);
           if (!Number.isFinite(startMs)) return true;
@@ -350,7 +353,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
       // create a state shell. For v0.6.0 we don't yet support inbound on
       // DIY at the full-conversation level — we just emit call.received
       // and Jambonz-side rule handles answering.
-      const state = store.get(callSid);
+      const state = await store.get(callSid);
       if (!state) {
         // Inbound cold start — Jambonz hit us without prior context.
         // Return a polite hangup; inbound is a v0.6.x slice.
@@ -365,11 +368,11 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
 
       // First turn — speak the firstMessage and gather the caller's reply.
       const firstMessage = state.assistant.firstMessage ?? "Hi, how can I help?";
-      store.patch(callSid, { status: "in-progress" });
+      await store.patch(callSid, { status: "in-progress" });
 
       // Record the assistant's opening line in conversation history so the
       // subsequent LLM call has it for context.
-      store.appendTurn(callSid, { role: "assistant", content: firstMessage });
+      await store.appendTurn(callSid, { role: "assistant", content: firstMessage });
 
       const verbs = buildTurnVerbs({
         spokenLine: firstMessage,
@@ -392,7 +395,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
       if (!(await verifyJambonzSignature(opts.webhookSecret, rawBody, signature))) {
         return { ok: false, status: 401, reason: "signature mismatch" };
       }
-      const state = store.get(callSid);
+      const state = await store.get(callSid);
       if (!state) {
         return {
           ok: true,
@@ -405,7 +408,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
         // Empty input — caller didn't say anything during the gather window.
         // Politely prompt once more before giving up.
         const reprompt = "Sorry, I didn't catch that. Could you say it again?";
-        store.appendTurn(callSid, { role: "assistant", content: reprompt });
+        await store.appendTurn(callSid, { role: "assistant", content: reprompt });
         return {
           ok: true,
           verbs: buildTurnVerbs({
@@ -420,8 +423,8 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
         };
       }
 
-      store.appendTurn(callSid, { role: "user", content: callerText });
-      const updated = store.get(callSid)!;
+      await store.appendTurn(callSid, { role: "user", content: callerText });
+      const updated = (await store.get(callSid))!;
 
       let llmReply: string;
       try {
@@ -456,7 +459,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
         };
       }
 
-      store.appendTurn(callSid, { role: "assistant", content: trimmed });
+      await store.appendTurn(callSid, { role: "assistant", content: trimmed });
 
       // End-of-conversation heuristic: if the LLM's reply contains a
       // terminal goodbye phrase, hang up after speaking. Crude but
@@ -503,7 +506,7 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
       if (!(await verifyJambonzSignature(opts.webhookSecret, rawBody, signature))) {
         return { ok: false, status: 401, reason: "signature mismatch" };
       }
-      const state = store.get(callSid);
+      const state = await store.get(callSid);
       if (!state) return { ok: true, event: null };
 
       const status = mapJambonzStatus(payload?.call_status);
@@ -512,10 +515,10 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
       if (typeof payload?.duration === "number") patch.durationSec = payload.duration;
       if (payload?.termination_reason) patch.endReason = payload.termination_reason;
       if (payload?.recording_url) patch.recordingUrl = payload.recording_url;
-      store.patch(callSid, patch);
+      await store.patch(callSid, patch);
 
       // Build the matching NormalizedPhoneEvent for the dispatcher to fan out.
-      const updated = store.get(callSid)!;
+      const updated = (await store.get(callSid))!;
       if (
         status === "ended" ||
         status === "failed" ||
