@@ -12,6 +12,8 @@ per-provider `allowedCompanies`, generation gated by a cost switch.
 
 ## Recent changes
 
+- **v0.2.15** — Removed `stability` from the `Provider kind` enum. Stability AI's hosted API was a stub that never shipped; Replicate covers the same models (SDXL, SD3, Stable Image Core/Ultra) plus FLUX and everything else, so the option was misleading. `local` remains as a placeholder for self-hosted ComfyUI / Automatic1111 endpoints. Existing configs using `kind: "stability"` will need to switch to `kind: "replicate"` and pick a Stability model slug (e.g. `stability-ai/sdxl`).
+
 - **v0.2.14** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.2.13** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -94,7 +96,7 @@ the API token, save. Copy the secret's UUID.
 | Field | Example | Notes |
 |---|---|---|
 | `Identifier` | `replicate-main` | Stable ID agents pass. |
-| `Provider kind` | `replicate` | or `openai` / `stability` / `local` |
+| `Provider kind` | `replicate` | or `openai` / `local` |
 | `API key` | (secret UUID) | Required for replicate / openai. |
 | `Default model` | `black-forest-labs/flux-schnell` (Replicate) or `gpt-image-1` (OpenAI) | Override per call. |
 | `Default model params` | `{}` | e.g. `{ "guidance_scale": 3.5 }` for Flux. |
@@ -237,7 +239,7 @@ as an `image` layer.
 | `[ECOMPOSE]` / `[ERESIZE]` / `[EUPSCALE]` | Local jimp pipeline error. |
 | `[EREPLICATE_<status>]` | Replicate API error (with status code). |
 | `[EOPENAI_<status>]` | OpenAI API error. |
-| `[EPROVIDER_KIND_UNSUPPORTED]` | Used a provider kind not yet wired (stability / local). |
+| `[EPROVIDER_KIND_UNSUPPORTED]` | Used the `local` provider kind (self-hosted endpoint stub — not yet wired). |
 | `[EDOWNLOAD_<status>]` | Failed to download a generated image's binary. |
 
 ## Cost tracking
@@ -266,5 +268,5 @@ each provider to a specific company.
 ## Versioning
 
 `0.1.0` — initial release. 5 tools across local composition / generation.
-Replicate + OpenAI providers wired. Stability / local stubs return
-`[EPROVIDER_KIND_UNSUPPORTED]`.
+Replicate + OpenAI providers wired. The `local` kind (self-hosted ComfyUI /
+Automatic1111) is a stub that returns `[EPROVIDER_KIND_UNSUPPORTED]`.

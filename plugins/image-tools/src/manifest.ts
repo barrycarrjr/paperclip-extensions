@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "image-tools";
-const PLUGIN_VERSION = "0.2.14";
+const PLUGIN_VERSION = "0.2.15";
 
 const providerItemSchema = {
   type: "object",
@@ -30,17 +30,17 @@ const providerItemSchema = {
     },
     kind: {
       type: "string",
-      enum: ["replicate", "openai", "stability", "local"],
+      enum: ["replicate", "openai", "local"],
       title: "Provider kind",
       description:
-        "What the API endpoint speaks. v0.1.0 ships full support for Replicate (recommended) and OpenAI (DALL-E 3 / gpt-image-1). 'stability' and 'local' are stubs — code paths land in v0.2+.",
+        "What the API endpoint speaks. Fully supported: Replicate (recommended — hosts FLUX, SDXL, Stability's models, and dozens of others) and OpenAI (DALL-E 3 / gpt-image-1). 'local' is a stub for self-hosted endpoints (ComfyUI / Automatic1111); code path lands in a later release.",
     },
     apiKeyRef: {
       type: "string",
       format: "secret-ref",
       title: "API key (UUID of paperclip secret)",
       description:
-        "Required for replicate/openai/stability. Get a Replicate token at replicate.com/account/api-tokens, or an OpenAI key at platform.openai.com/api-keys. Create a paperclip secret first; never paste the raw key here. Leave blank for kind=local.",
+        "Required for replicate/openai. Get a Replicate token at replicate.com/account/api-tokens, or an OpenAI key at platform.openai.com/api-keys. Create a paperclip secret first; never paste the raw key here. Leave blank for kind=local.",
     },
     endpointUrl: {
       type: "string",

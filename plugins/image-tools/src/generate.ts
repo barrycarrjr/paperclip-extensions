@@ -5,8 +5,8 @@
  *   - Replicate (recommended): predictions API, polling for completion.
  *   - OpenAI: images.generate / images.edit.
  *
- * Other kinds (stability, local) accept the call but throw [EPROVIDER_KIND_UNSUPPORTED]
- * — implement when a skill needs them.
+ * The 'local' kind accepts the call but throws [EPROVIDER_KIND_UNSUPPORTED]
+ * — implement when a skill needs self-hosted (ComfyUI / Automatic1111) generation.
  */
 import { writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -40,7 +40,7 @@ export async function generateImages(
   if (kind === "replicate") return generateReplicate(resolved, outputDir, options);
   if (kind === "openai") return generateOpenAI(resolved, outputDir, options);
   throw new Error(
-    `[EPROVIDER_KIND_UNSUPPORTED] image_generate is not implemented for kind="${kind}" in v0.1.0.`,
+    `[EPROVIDER_KIND_UNSUPPORTED] image_generate is not implemented for kind="${kind}". Supported: 'replicate', 'openai'.`,
   );
 }
 
@@ -228,7 +228,7 @@ export async function editImage(
   if (kind === "openai") return editOpenAI(resolved, outputDir, opts);
   if (kind === "replicate") return editReplicate(resolved, outputDir, opts);
   throw new Error(
-    `[EPROVIDER_KIND_UNSUPPORTED] image_edit is not implemented for kind="${kind}" in v0.1.0.`,
+    `[EPROVIDER_KIND_UNSUPPORTED] image_edit is not implemented for kind="${kind}". Supported: 'replicate', 'openai'.`,
   );
 }
 

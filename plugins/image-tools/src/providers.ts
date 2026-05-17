@@ -1,7 +1,7 @@
 import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { assertCompanyAccess } from "./companyAccess.js";
 
-export type ProviderKind = "replicate" | "openai" | "stability" | "local";
+export type ProviderKind = "replicate" | "openai" | "local";
 
 export interface ConfigProvider {
   key?: string;
