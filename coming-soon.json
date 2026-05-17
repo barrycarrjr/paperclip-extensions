@@ -2,12 +2,6 @@
   "$comment": "Plugin ideas that aren't built yet. The release pipeline merges these into dist-pcplugins/index.json with comingSoon: true. The Paperclip Plugin Manager renders them with a 'Coming soon' badge and the install endpoint rejects them server-side. Add an entry below to surface a new idea in the host UI — required fields are `id`, `displayName`, and `description`. Everything else is optional. When a stub becomes a real plugin (a `plugins/<id>/` folder ships with the same id), remove its entry here — the built plugin takes precedence either way.",
   "plugins": [
     {
-      "id": "home-assistant-tools",
-      "displayName": "Home Assistant",
-      "description": "First-class smart-home control — lights, locks, thermostat, cameras, sensors — exposed as agent tools. Currently reachable via a skill, but no MCP tools.",
-      "categories": ["automation", "connector"]
-    },
-    {
       "id": "sms-tools",
       "displayName": "SMS Tools",
       "description": "Two-way SMS/MMS via 3CX, Twilio, or Vonage. Distinct from phone-tools (voice) — for quick confirmations, reminders, and customer follow-ups.",
