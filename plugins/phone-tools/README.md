@@ -197,8 +197,8 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 | Capability | Why preview |
 |---|---|
-| Inbound calls (webhook → `plugin.phone-tools.call.received` event) | Needs `webhookSecretRef` populated, Vapi Server URL set, and a real DID routed to Vapi. Outbound is the verified path today. |
-| `phone_call_end` (force-hangup) | Code path exists; not in regular smoke. |
+| Inbound calls (webhook → `plugin.phone-tools.call.received` event) | Engine emits the event; dispatcher fans out to allowed companies; signature verification works. Operator setup is manual today: populate `webhookSecretRef`, set Vapi's Org → Server URL to `https://<host>/api/plugins/phone-tools/webhooks/vapi`, and route a DID inbound on Vapi. The "which assistant answers which DID" mapping UI lands in v0.6.x. |
+| `phone_call_end` (force-hangup) | Fully implemented and registered, gated by `allowMutations`. Not exercised by the smoke script (which lets calls end naturally), so coverage in CI is lighter than for the outbound path — but the tool works. |
 | 3CX SIP-trunk routing | Needs Vapi-side BYO SIP config; quickstart uses Vapi's provisioned number, which carries fresh-VoIP / pooled-number reputation. The plugin's Setup tab walks you through it. |
 
 ## Future versions (planned)
