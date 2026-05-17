@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.6.1";
+const PLUGIN_VERSION = "0.6.2";
 
 const accountItemSchema = {
   type: "object",
@@ -109,7 +109,7 @@ const accountItemSchema = {
       default: false,
       title: "Enable call recording",
       description:
-        "When true, the engine records the audio and the recording URL is available via phone_call_recording_url. CONSENT NOTICE: many jurisdictions require an audible disclosure ('this call may be recorded') at the start. The plugin does not inject this — your assistant's firstMessage must include it. Default false to be conservative.",
+        "When true, the engine records the audio and the recording URL is available via phone_call_recording_url. ENGINE BEHAVIOUR: on Vapi this enables recording on the call itself; on the DIY engine this is a SIGNAL — you must ALSO enable 'Record all calls' on the Jambonz Application (Jambonz Portal → Applications → your application → Recording → Record all calls). The plugin doesn't emit a record verb because the right Jambonz syntax varies by version; configuring at the Application level works on every version and is what we capture from the call-status hook (recording_url). CONSENT NOTICE: many jurisdictions require an audible disclosure ('this call may be recorded') at the start. The plugin does not inject this — your assistant's firstMessage must include it. Default false to be conservative.",
     },
     maxConcurrentCalls: {
       type: "number",
@@ -258,6 +258,7 @@ The setup splits into eleven sections — read them in order or jump to whicheve
 | **[I](#i-multi-llc-portfolio-rollup)** — Multi-LLC portfolio rollup | Cross-company campaign dashboard at HQ | For multi-LLC operators | ~1 min |
 | **[J](#j-troubleshooting)** — Troubleshooting | Every \`[E*]\` error code with cause + fix | Reference | — |
 | **[K](#k-whats-planned-next)** — What's planned next | v0.6.x roadmap | Reference | — |
+| **[L](#l-diy-engine-jambonz--llm-instead-of-vapi)** — DIY engine (Jambonz + LLM) | Self-host the whole stack: Jambonz for SIP/RTP/STT/TTS, Anthropic or OpenAI for the brain. No Vapi dependency. | Optional alternative to A–B | ~30 min |
 
 ---
 
@@ -785,11 +786,107 @@ Every error code you might hit, in order of "how often does this happen during s
 
 | Version | What lands |
 |---|---|
-| **v0.6.x** | Inbound routes UI on the Phone tab (DID → assistant mapping, business hours, voicemail-drop fallback); SSE-backed live counters replacing the 3s poll on the campaign detail view |
-| **v0.7.x** | DIY engine — Jambonz + Deepgram (STT) + Claude/GPT (LLM) + ElevenLabs (TTS, with Qwen-local fallback). Same \`PhoneEngine\` interface so it slots in without touching skills or wizards |
-| **Later** | DTMF mid-call, voicemail-drop, mid-call function tools, deeper 3CX Call Control API integration, cross-plugin transfer (\`phone-tools\` → \`pbx_transfer_call\` on a 3CX-known callId for human-initiated mid-call handoffs) |
+| **v0.6.x** | DIY engine: cost-cap integration (so DIY calls respect the daily cap the way Vapi calls do), saved-assistant CRUD (today DIY assistants must be passed inline), real inbound routing (today inbound on DIY returns a polite hangup — needs DID→assistant mapping UI), mid-call tool calls including warm-transfer-to-human |
+| **v0.7.x** | Streaming TTS + barge-in via Jambonz WebSocket session API (replaces the verb-based protocol the v0.6.0 DIY engine uses) |
+| **Later** | DTMF mid-call, voicemail-drop, deeper 3CX Call Control API integration, cross-plugin transfer (\`phone-tools\` → \`pbx_transfer_call\` on a 3CX-known callId for human-initiated mid-call handoffs) |
 
 For the full feature roadmap + recent-changes log, see the [plugin folder README](README.md).
+
+---
+
+# L. DIY engine: Jambonz + LLM instead of Vapi
+
+The DIY engine replaces Vapi as the brain-and-media layer. Jambonz (self-hosted) handles SIP / RTP / STT / TTS; a provider-neutral LLM (Anthropic or OpenAI, plain HTTP) handles the conversation logic. **Audio and transcripts stay on infrastructure you control.** No per-minute orchestration markup.
+
+**Choose this path when:** you want to eliminate Vapi's $0.05/min markup at scale, you're handling sensitive calls where the transcript must not leave your stack, or you already run Jambonz for other voice workloads.
+
+**Prereqs:** a Jambonz install (self-hosted; ~$10/mo droplet is enough for low-volume), STT credentials (Deepgram recommended, ~$0.0043/min), TTS credentials (Google Cloud TTS for low-cost, or ElevenLabs for higher voice quality), and an Anthropic or OpenAI API key.
+
+### L1. Stand up Jambonz
+
+Spin up a Jambonz install — Docker Compose template at [jambonz/jambonz-installer](https://github.com/jambonz/jambonz-installer) is the path of least resistance. You need:
+- HTTPS access to the Jambonz Portal (e.g. \`https://jambonz.example.com\`)
+- A Jambonz Account SID (Portal → Settings → Account)
+- A Jambonz API key (Portal → Settings → API Keys → Create)
+
+Keep the Account SID and API key handy — you'll paste them into Paperclip in step L4.
+
+### L2. Configure STT + TTS credentials on Jambonz
+
+In the Jambonz Portal → **Credentials**:
+
+- **STT credential**: add a Deepgram credential (recommended) or Google STT credential. The plugin defaults the STT vendor to \`deepgram\`; change \`diySttVendor\` on the account if you use Google or AWS.
+- **TTS credential**: add a Google Cloud TTS credential (cheap, good enough for most use cases) or ElevenLabs (premium voice quality). The plugin defaults the TTS vendor to \`google\`; change \`diyTtsVendor\` if you use ElevenLabs.
+
+The vendor names you use in the plugin config MUST match the credential names Jambonz expects (e.g. \`google\` not \`google-cloud-tts\`).
+
+### L3. Create the Jambonz Application
+
+In the Jambonz Portal → **Applications** → **Add Application**:
+
+- **Application name**: anything (e.g. "Paperclip phone-tools")
+- **Calling webhook URL**: \`https://<paperclip-host>/api/plugins/phone-tools/api/diy/jambonz/call\` (the plugin extracts per-call routing from query params the engine adds when placing a call)
+- **Calling webhook method**: POST
+- **Call status webhook URL**: \`https://<paperclip-host>/api/plugins/phone-tools/api/diy/jambonz/status\` — same as above, status-only
+- **Call status webhook method**: POST
+- **Speech recognizer**: pick the STT credential from L2
+- **Speech synthesizer**: pick the TTS credential from L2
+- **Record all calls**: tick this ONLY if you want call recording. The plugin's \`recordingEnabled\` field is a signal that this should be on; the actual recording is configured here. The recording URL flows back to Paperclip via the call-status hook payload.
+
+Save. Copy the **Application SID** — you'll paste it into Paperclip in step L4.
+
+### L4. Configure a DIY account in Paperclip
+
+\`/instance/settings/plugins/phone-tools\` → **Configuration** tab → **+ Add item** under "Phone accounts":
+
+| Field | What to enter |
+|---|---|
+| **Identifier** | Stable short ID, e.g. \`diy-main\` |
+| **Engine** | Switch to \`diy\` — the DIY-specific fields below appear |
+| **Jambonz API URL** | Your Jambonz HTTPS URL (e.g. \`https://jambonz.example.com\`) |
+| **Jambonz API key** | Paperclip secret holding the API key from L1. Create the secret on the company's Secrets page first. |
+| **Jambonz Account SID** | The Account SID from L1 |
+| **Jambonz Application SID** | The Application SID from L3 |
+| **Paperclip host base URL** | Public URL of this Paperclip instance (e.g. \`https://paperclip.example.com\`) — Jambonz needs to reach the plugin's per-turn callback URLs |
+| **DIY LLM provider** | \`anthropic\` (recommended) or \`openai\` |
+| **DIY LLM API key** | Paperclip secret holding the chosen provider's API key |
+| **DIY LLM model** (optional) | Override the default. Defaults: Anthropic → \`claude-haiku-4-5-20251001\`; OpenAI → \`gpt-4o-mini\`. |
+| **DIY TTS vendor** | Match the L2 credential (\`google\` / \`elevenlabs\` / …) |
+| **DIY TTS voice** | Voice ID for that vendor (e.g. \`en-US-Wavenet-D\` for Google, an ElevenLabs voice ID) |
+| **DIY STT vendor** | Match the L2 credential (\`deepgram\` / \`google\` / …) |
+| **Allowed companies** | Tick the company that owns this account |
+
+Save. The DIY-specific fields are hidden when \`engine\` is \`vapi\`, so Vapi accounts don't see them.
+
+### L5. Provision a phone number on Jambonz
+
+In the Jambonz Portal → **Phone Numbers** → **Add Phone Number**:
+
+- **Number**: the E.164 of a DID you have routed to Jambonz (via your carrier or your own SIP trunk to 3CX)
+- **Carrier**: the Jambonz carrier the number routes through
+- **Application**: pick the Application created in L3
+
+Save. The plugin's \`phone_number_list\` tool will surface this number; pass its E.164 as \`numberId\` to \`phone_call_make\` (DIY uses the E.164 as the from-number; there's no Vapi-style phone-number UUID).
+
+### L6. Smoke-test outbound
+
+From an agent or the **Place call** modal on the Assistant Phone tab, place a call to your verified test number. Walk through one or two conversation turns to confirm the LLM + TTS + STT chain works end-to-end.
+
+If the call connects but the AI doesn't speak: check the Jambonz call log — the TTS credential may be wrong. If the AI speaks but the gather doesn't capture: check the STT credential.
+
+### L7. Operator-level monitoring
+
+Recent calls (with transcript / status / cost) appear in the same Phone tab as Vapi calls — the engine field tells you which path each call took. \`engine: "diy"\` in event payloads, \`engineKind: "diy"\` on tool results.
+
+### Known DIY limits (today, v0.6.x roadmap)
+
+- **Inbound calls** return a polite hangup. Outbound is the verified path. Inbound needs a DID→assistant mapping UI that lands in v0.6.x.
+- **Saved-assistant CRUD** isn't supported on DIY — pass \`AssistantConfig\` inline at call time. Saved-assistant storage for DIY lands in v0.6.x.
+- **Warm transfer to a human** (the Vapi \`transferCall\` tool) isn't wired on DIY. Caller asks for a person → AI explains the AI can't transfer today. Lands in v0.6.x.
+- **Cost cap** (per-assistant daily cap from section C) doesn't enforce on DIY calls. Use \`maxConcurrentCalls\` as the safety bound until cost-cap integration lands in v0.6.x.
+- **No barge-in.** Caller can't interrupt the AI mid-TTS. Lands when the engine switches to Jambonz's WebSocket session API in v0.7.x.
+
+The Vapi engine path is unchanged by any of this — Vapi accounts work exactly as before.
 `;
 
 // `setupInstructions` is recognised by the host's manifest validator
