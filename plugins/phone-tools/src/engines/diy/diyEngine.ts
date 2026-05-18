@@ -132,7 +132,12 @@ export function createDiyEngine(opts: DiyEngineOptions): DiyEngine {
     engineKind: "diy",
 
     async startOutboundCall(input: StartCallInput): Promise<StartCallResult> {
-      const assistant = resolveAssistant(input.assistant);
+      const resolved = resolveAssistant(input.assistant);
+      // Per-call firstMessage override (e.g. wizard placeholder substituted
+      // with the caller's `reason`). See StartCallInput.firstMessageOverride.
+      const assistant = input.firstMessageOverride
+        ? { ...resolved, firstMessage: input.firstMessageOverride }
+        : resolved;
       const fromNumber = input.numberId; // For DIY, numberId is the E.164 directly.
       if (!fromNumber) {
         throw new Error(

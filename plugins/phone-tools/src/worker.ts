@@ -16,6 +16,10 @@ import {
 import { handleAssistantsApi } from "./api/assistants-routes.js";
 import { handleCampaignsApi } from "./api/campaigns-routes.js";
 import { handleOperatorPhoneApi } from "./api/operator-phone-routes.js";
+import {
+  handleVerifiedCallersApi,
+  readVerifiedCachedNumbers,
+} from "./api/verified-callers-routes.js";
 import { handleDiyJambonzApi } from "./api/diy-jambonz-routes.js";
 import { recordSpend } from "./assistants/cost-cap.js";
 import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
@@ -1182,6 +1186,11 @@ const plugin = definePlugin({
             assistant: {},
             metadata: { type: "object" },
             idempotencyKey: { type: "string" },
+            reason: {
+              type: "string",
+              description:
+                "Short phrase describing why you're calling (e.g. \"getting a price on a golf cart\", \"confirming Friday's 2pm appointment\"). The wizard's default firstMessage contains a `{the reason for call}` placeholder that gets substituted with this string at call-initiation time, so the assistant opens with your specific purpose. Omit to drop the placeholder sentence from the greeting.",
+            },
           },
           required: ["to"],
         },
@@ -1197,6 +1206,7 @@ const plugin = definePlugin({
           assistant?: string | AssistantConfig;
           metadata?: Record<string, unknown>;
           idempotencyKey?: string;
+          reason?: string;
         };
         if (!p.to) return { error: "[EINVALID_INPUT] `to` is required" };
 
@@ -1281,12 +1291,34 @@ const plugin = definePlugin({
             }
           }
 
+          // Compute the per-call firstMessage override. If the caller passed
+          // `reason`, look up the calling agent's stored firstMessage template
+          // and substitute the `{the reason for call}` placeholder. If no
+          // reason but the saved template still has the placeholder, strip
+          // the placeholder sentence so the engine doesn't speak it literally.
+          let firstMessageOverride: string | undefined;
+          if (runCtx.agentId) {
+            const { readPhoneConfig } = await import("./assistants/cost-cap.js");
+            const { substituteCallReason } = await import("./assistants/compose.js");
+            const phoneConfig = await readPhoneConfig(ctx, runCtx.agentId);
+            const savedFirstMessage = phoneConfig?.firstMessage;
+            if (savedFirstMessage && savedFirstMessage.includes("{the reason for call}")) {
+              firstMessageOverride = substituteCallReason(savedFirstMessage, p.reason);
+            } else if (p.reason && savedFirstMessage) {
+              // Operator edited the template to a fixed greeting but the
+              // caller still wants to convey a reason — leave the saved
+              // firstMessage as-is (operator's intent wins).
+              firstMessageOverride = undefined;
+            }
+          }
+
           const start = await r.resolved.engine.startOutboundCall({
             to: p.to,
             numberId,
             assistant: assistantSpec,
             metadata: p.metadata,
             idempotencyKey: p.idempotencyKey,
+            firstMessageOverride,
           });
           trackOutbound(r.resolved.accountKey, start.callId);
           await track(ctx, runCtx, "phone_call_make", r.resolved.accountKey, {
@@ -2747,7 +2779,12 @@ const plugin = definePlugin({
       return { status: 503, body: { error: "phone-tools worker not initialised yet" } };
     }
     const ctx = webhookCtx;
-    const handlers = [handleAssistantsApi, handleCampaignsApi, handleOperatorPhoneApi];
+    const handlers = [
+      handleAssistantsApi,
+      handleCampaignsApi,
+      handleOperatorPhoneApi,
+      handleVerifiedCallersApi,
+    ];
     for (const handle of handlers) {
       const result = await handle(ctx, input);
       if (result) return result;

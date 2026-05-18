@@ -18,6 +18,7 @@ import {
 } from "../assistants/cost-cap.js";
 import { getResolvedAccount } from "../engines/registry.js";
 import type { AssistantConfig, ResolvedAccount } from "../engines/types.js";
+import { readVerifiedCachedNumbers } from "./verified-callers-routes.js";
 
 function ok(body: unknown): PluginApiResponse {
   return { status: 200, body };
@@ -61,6 +62,46 @@ async function resolveAccountFor(
   );
 }
 
+/**
+ * Translate a wizard-side caller-ID dropdown value into something the
+ * engine can use:
+ *   - "personal:PNxxxx" — a verified personal caller ID. For DIY
+ *     (jambonz), look up the E.164 from the local cache and return
+ *     it; jambonz forwards whatever From we set. For Vapi, fall back
+ *     to the account's defaultNumberId and log — Vapi only dials from
+ *     numbers it manages.
+ *   - anything else — pass through as-is.
+ */
+async function resolveEngineCallerId(
+  ctx: PluginContext,
+  resolved: ResolvedAccount,
+  callerIdNumberId: string | undefined,
+): Promise<string | undefined> {
+  if (!callerIdNumberId || !callerIdNumberId.startsWith("personal:")) {
+    return callerIdNumberId;
+  }
+  const sid = callerIdNumberId.slice("personal:".length);
+  const cached = await readVerifiedCachedNumbers(ctx, resolved.accountKey);
+  const match = cached.find((n) => n.sid === sid);
+
+  if (resolved.account.engine === "diy") {
+    if (!match) {
+      throw new Error(
+        `[EVERIFIED_CALLER_MISSING] Verified personal caller "${sid}" not in local cache. Refresh from Twilio first.`,
+      );
+    }
+    return match.e164;
+  }
+
+  // Vapi (default). Drop the personal caller ID — Vapi can't use it
+  // and we don't want to fail the call outright. Fall back to the
+  // account's defaultNumberId.
+  ctx.logger?.warn?.(
+    `phone-tools: Vapi account cannot honour verified personal caller "${match?.e164 ?? sid}" — falling back to defaultNumberId`,
+  );
+  return resolved.account.defaultNumberId;
+}
+
 function readBodyAsObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return {};
   return body as Record<string, unknown>;
@@ -98,6 +139,8 @@ function asWizardAnswers(value: unknown): AssistantWizardAnswers | null {
     tasks: Array.isArray(v.tasks) ? v.tasks.filter((t): t is string => typeof t === "string") : [],
     customTasks: typeof v.customTasks === "string" ? v.customTasks : "",
     phoneEnabled: v.phoneEnabled !== false,
+    emailEnabled: v.emailEnabled === true,
+    calendarEnabled: v.calendarEnabled === true,
     voice: typeof v.voice === "string" ? v.voice : "alloy",
     callerIdNumberId: typeof v.callerIdNumberId === "string" ? v.callerIdNumberId : "",
   };
@@ -387,12 +430,29 @@ async function placeTestCall(
     return badRequest((err as Error).message);
   }
 
+  let resolvedNumberId: string | undefined;
   try {
+    resolvedNumberId = await resolveEngineCallerId(ctx, resolved, config.callerIdNumberId);
+  } catch (err) {
+    return badRequest((err as Error).message);
+  }
+
+  try {
+    // Test calls have no reason — strip the `{the reason for call}` clause
+    // if the saved firstMessage template contains it, so the engine doesn't
+    // speak the placeholder literally.
+    const { substituteCallReason } = await import("../assistants/compose.js");
+    const firstMessageOverride =
+      config.firstMessage && config.firstMessage.includes("{the reason for call}")
+        ? substituteCallReason(config.firstMessage, undefined)
+        : undefined;
+
     const result = await resolved.engine.startOutboundCall({
       to,
-      numberId: config.callerIdNumberId,
+      numberId: resolvedNumberId,
       assistant: config.vapiAssistantId,
       metadata: { paperclip_assistant_id: agentId, paperclip_test_call: "true" },
+      firstMessageOverride,
     });
     await ctx.state.set(
       { scopeKind: "instance", stateKey: `call-agent:${result.callId}` },
@@ -463,16 +523,33 @@ async function placeCall(
     return badRequest((err as Error).message);
   }
 
+  let resolvedNumberId: string | undefined;
   try {
+    resolvedNumberId = await resolveEngineCallerId(ctx, resolved, config.callerIdNumberId);
+  } catch (err) {
+    return badRequest((err as Error).message);
+  }
+
+  try {
+    // Use `objective` as the per-call reason. If the saved firstMessage
+    // template has `{the reason for call}`, substitute it with the objective
+    // (or strip the clause when no objective was given).
+    const { substituteCallReason } = await import("../assistants/compose.js");
+    const firstMessageOverride =
+      config.firstMessage && config.firstMessage.includes("{the reason for call}")
+        ? substituteCallReason(config.firstMessage, objective)
+        : undefined;
+
     const result = await resolved.engine.startOutboundCall({
       to,
-      numberId: config.callerIdNumberId,
+      numberId: resolvedNumberId,
       assistant: config.vapiAssistantId,
       metadata: {
         paperclip_assistant_id: agentId,
         paperclip_objective: objective ?? "",
         paperclip_callee_name: asString(body.calleeName) ?? "",
       },
+      firstMessageOverride,
     });
     await ctx.state.set(
       { scopeKind: "instance", stateKey: `call-agent:${result.callId}` },
@@ -500,7 +577,26 @@ async function listNumbers(
     const filtered = !allow || allow.length === 0
       ? numbers
       : numbers.filter((n) => allow.includes(n.id));
-    return ok({ numbers: filtered });
+
+    // Merge verified personal caller IDs cached locally. The dropdown
+    // id for a personal number is `personal:<twilio-sid>` so the
+    // outbound-call path can route it differently from an engine-side
+    // phoneNumber UUID. Engine-owned numbers stay first; personals
+    // append at the bottom so existing wizards don't shuffle.
+    const verified = await readVerifiedCachedNumbers(ctx, resolved.accountKey);
+    const verifiedAsDropdown = verified.map((v) => ({
+      id: `personal:${v.sid}`,
+      e164: v.e164,
+      label: v.label ?? "Personal verified",
+      sipTrunk: null,
+      personal: true as const,
+    }));
+
+    return ok({
+      numbers: [...filtered, ...verifiedAsDropdown],
+      engine: resolved.account.engine ?? "vapi",
+      twilioConfigured: !!(resolved.account.twilioAccountSid && resolved.account.twilioAuthTokenRef),
+    });
   } catch (err) {
     return serverError(`Failed to list numbers: ${(err as Error).message}`);
   }

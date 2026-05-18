@@ -99,8 +99,20 @@ export function createVapiEngine(opts: VapiEngineOptions): PhoneEngine {
       if (input.numberId) body.phoneNumberId = input.numberId;
       if (typeof input.assistant === "string") {
         body.assistantId = input.assistant;
+        // Per-call firstMessage override: Vapi's `assistantOverrides` is
+        // applied on top of the saved assistant for this single call. Used
+        // for the `{the reason for call}` substitution flow — see
+        // StartCallInput.firstMessageOverride.
+        if (input.firstMessageOverride) {
+          body.assistantOverrides = { firstMessage: input.firstMessageOverride };
+        }
       } else {
-        body.assistant = mapAssistantConfigToVapi(input.assistant, false, opts.engineConfig);
+        // Inline config — if a firstMessageOverride is set, prefer it over
+        // whatever the inline config carries (caller-supplied per-call wins).
+        const inline = input.firstMessageOverride
+          ? { ...input.assistant, firstMessage: input.firstMessageOverride }
+          : input.assistant;
+        body.assistant = mapAssistantConfigToVapi(inline, false, opts.engineConfig);
       }
       if (input.idempotencyKey) {
         body.metadata = {

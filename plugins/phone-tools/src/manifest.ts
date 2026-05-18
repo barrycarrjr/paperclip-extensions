@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.7.1";
+const PLUGIN_VERSION = "0.7.4";
 
 const accountItemSchema = {
   type: "object",
@@ -34,6 +34,8 @@ const accountItemSchema = {
     "maxConcurrentCalls",
     "federalDncListUrl",
     "federalDncRefreshHours",
+    "twilioAccountSid",
+    "twilioAuthTokenRef",
     "allowedCompanies",
   ],
   properties: {
@@ -131,6 +133,20 @@ const accountItemSchema = {
       title: "Federal DNC refresh interval (hours)",
       description:
         "How long the cached federal DNC list may live before refresh. Default 24h (matches the FTC's daily update cadence). Stale-on-error: if a refresh fails, the previous cached set is reused and the dial proceeds against the older list rather than skipping the check.",
+    },
+    twilioAccountSid: {
+      type: "string",
+      title: "Twilio Account SID (verified caller IDs)",
+      description:
+        "Optional. Twilio Account SID used ONLY for the 'Verified Caller ID' flow on the assistant wizard — letting an operator add their cell phone (or any other number they personally own) as the From shown on outbound calls. Independent of Vapi's own Twilio: Vapi uses its own sub-account internally; verified caller IDs have to live in your own Twilio account. Find it at console.twilio.com → top-right account dropdown. Starts with 'AC'. Leave blank to disable the verified-personal-caller flow for this account.",
+    },
+    twilioAuthTokenRef: {
+      type: "string",
+      format: "secret-ref",
+      title: "Twilio Auth Token",
+      description:
+        "Paperclip secret holding the Twilio Auth Token paired with the Account SID above. Required if Twilio Account SID is set. Used to call the Twilio REST API on the operator's behalf for the OutgoingCallerIds resource (start verification + list verified numbers).",
+      "x-paperclip-showWhen": { twilioAccountSid: { not: "" } },
     },
     allowedCompanies: {
       type: "array",
@@ -1788,6 +1804,40 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
     },
+    // ─── v0.7.x: Verified personal caller IDs via Twilio ──────────
+    {
+      routeKey: "verified-callers.list",
+      method: "GET",
+      path: "/accounts/verified-callers",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "verified-callers.request",
+      method: "POST",
+      path: "/accounts/verified-callers/request",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "verified-callers.refresh",
+      method: "POST",
+      path: "/accounts/verified-callers/refresh",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "verified-callers.delete",
+      method: "DELETE",
+      path: "/accounts/verified-callers/:sid",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+
     // ─── v0.6.0: DIY engine Jambonz application hooks ──────────────
     {
       routeKey: "diy.jambonz.call",

@@ -79,6 +79,19 @@ export interface StartCallInput {
   assistant: string | AssistantConfig;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
+  /**
+   * Per-call override for the assistant's firstMessage. The plugin uses
+   * this to substitute the wizard-generated `{the reason for call}`
+   * placeholder with the per-call `reason` agents pass to
+   * `phone_call_make` — so the agent's opening line is tailored to why
+   * it's calling without mutating the saved assistant.
+   *
+   * Engines apply it on top of the saved assistant config (Vapi via
+   * `assistantOverrides.firstMessage`; DIY by setting it on the in-memory
+   * call state before the first turn). Leave undefined to use the saved
+   * firstMessage verbatim.
+   */
+  firstMessageOverride?: string;
 }
 
 export interface StartCallResult {
@@ -343,6 +356,24 @@ export interface ConfigAccount {
    * useful and just hammers the source URL.
    */
   federalDncRefreshHours?: number;
+  // ─── Twilio creds for verified personal caller IDs ────────────
+  /**
+   * Twilio Account SID, used only for the "Verified Caller ID" flow
+   * (POST /Accounts/{AccountSid}/OutgoingCallerIds.json). Lets the
+   * operator add their cell phone (or any other number they own but
+   * don't have routed through Vapi/Jambonz) as an outbound caller ID
+   * on calls placed by their assistant. Independent of the Vapi key
+   * — Vapi uses its own Twilio sub-account internally; for verified
+   * caller IDs the operator needs to use their *own* Twilio account
+   * directly. Optional: leave empty to disable the verified-caller
+   * flow for this account.
+   */
+  twilioAccountSid?: string;
+  /**
+   * Paperclip secret reference holding the Twilio Auth Token paired
+   * with `twilioAccountSid`. Required if `twilioAccountSid` is set.
+   */
+  twilioAuthTokenRef?: string;
 }
 
 export interface InstanceConfig {
