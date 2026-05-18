@@ -401,6 +401,27 @@ async function setPhoneConfig(
         : existing?.transferIssueAssigneeAgentId,
   };
   await writePhoneConfig(ctx, agentId, next);
+
+  // Declare the agent as `phone`-capable in the host's agent-capabilities
+  // registry so other agents (e.g. a CoS routing tasks) can discover via
+  // `paperclipFindAgentsByCapability`. The host convention: write to
+  // plugin_state at scope=agent, namespace=capabilities, key=<capability>.
+  // Revoke if the operator disabled phone on this agent.
+  const capabilityScope = {
+    scopeKind: "agent" as const,
+    scopeId: agentId,
+    namespace: "capabilities",
+    stateKey: "phone",
+  };
+  if (next.vapiAssistantId && next.enabled !== false) {
+    await ctx.state.set(capabilityScope, {
+      declaredAt: new Date().toISOString(),
+      vapiAssistantId: next.vapiAssistantId,
+    });
+  } else {
+    await ctx.state.delete(capabilityScope);
+  }
+
   return ok({ config: next });
 }
 
