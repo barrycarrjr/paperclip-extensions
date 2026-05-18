@@ -146,7 +146,13 @@ export function composeAssistant(answers: AssistantWizardAnswers): ComposedAssis
 - Check you have what you need to complete the task — at minimum the phone number, and whatever specifics the call requires (an appointment time to confirm, a question to ask, a price range to negotiate).
 - If anything required is missing or ambiguous, do NOT place the call with a hallucinated number or made-up details. Post one comment on the issue listing every gap (e.g. "I need the phone number for ACME Carts, and a target budget for the quote"), reassign the issue back to the reporter, and wait.
 - Batch all questions in one round — multiple round-trips of one question each wastes ${principal}'s time.
-- This only applies when missing info would cause a wrong outcome (wrong number, wrong person, wrong commitment). Tone and minor style choices don't count.`;
+- This only applies when missing info would cause a wrong outcome (wrong number, wrong person, wrong commitment). Tone and minor style choices don't count.
+
+How to call \`phone_call_make\`:
+- You already have a saved voice assistant on the engine side — the plugin tracks it per-agent. **Do NOT pass an inline \`assistant\` object.** Just omit the \`assistant\` parameter and the plugin will use your saved Vapi assistant automatically (voice, model, tools, and safety preambles are all already wired into it).
+- If the per-call situation needs a tailored first line or a specific reference prompt, use the \`reason\` parameter for the spoken opening line. Custom system-prompt context is handled by the operator-side flow, not the agent-side tool call.
+- Always pass the \`to\` number in E.164 format (e.g. \`+15551234567\`). \`from\` is optional — the plugin falls back to the account's default caller-ID number when omitted.
+- Calls cost money and almost always require approval. Draft the call, then wait — the operator will approve or reject. Do not re-trigger the tool with a different idempotencyKey if an approval is pending; that just creates a duplicate draft.`;
 
   const callingStyle = `\n\nCalling style:
 - Speak in short, natural sentences. You are on a phone call, not in a chat.

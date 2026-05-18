@@ -1297,28 +1297,84 @@ const plugin = definePlugin({
           // reason but the saved template still has the placeholder, strip
           // the placeholder sentence so the engine doesn't speak it literally.
           let firstMessageOverride: string | undefined;
+          let systemPromptOverride: string | undefined;
+          let effectiveAssistantSpec: string | AssistantConfig = assistantSpec;
+
           if (runCtx.agentId) {
             const { readPhoneConfig } = await import("./assistants/cost-cap.js");
             const { substituteCallReason } = await import("./assistants/compose.js");
             const phoneConfig = await readPhoneConfig(ctx, runCtx.agentId);
-            const savedFirstMessage = phoneConfig?.firstMessage;
-            if (savedFirstMessage && savedFirstMessage.includes("{the reason for call}")) {
-              firstMessageOverride = substituteCallReason(savedFirstMessage, p.reason);
-            } else if (p.reason && savedFirstMessage) {
-              // Operator edited the template to a fixed greeting but the
-              // caller still wants to convey a reason — leave the saved
-              // firstMessage as-is (operator's intent wins).
-              firstMessageOverride = undefined;
+
+            // Auto-swap inline assistant → saved assistant + per-call overrides.
+            //
+            // LLM agents tooling-into `phone_call_make` tend to satisfy the
+            // schema by constructing a fresh inline `assistant` config every
+            // time (a guess at the shape), which is missing the engine-side
+            // pieces the saved assistant already has — voice, model, tools
+            // (endCall / addToDnc / transferCall), preambles. Vapi rejects
+            // these inline configs as malformed.
+            //
+            // When the calling agent already has a saved Vapi assistant
+            // projection (which every phone-capable agent does), use THAT
+            // as the engine assistant and pass the inline config's
+            // firstMessage / systemPrompt as per-call overrides. This preserves
+            // the LLM's per-call intent (its tailored opening line, its
+            // task-specific context) while restoring the engine-side
+            // machinery the saved assistant brings.
+            if (
+              typeof assistantSpec === "object" &&
+              phoneConfig?.vapiAssistantId
+            ) {
+              const inline = assistantSpec as AssistantConfig;
+              effectiveAssistantSpec = phoneConfig.vapiAssistantId;
+              if (inline.firstMessage) {
+                firstMessageOverride = inline.firstMessage;
+              }
+              if (inline.systemPrompt) {
+                const {
+                  PHONE_SAFETY_PREAMBLE,
+                  PHONE_DNC_PREAMBLE,
+                  PHONE_TRANSFER_PREAMBLE,
+                } = await import("./engines/vapi/vapiEngine.js");
+                const transferPreamble = phoneConfig.transferTarget
+                  ? PHONE_TRANSFER_PREAMBLE
+                  : "";
+                systemPromptOverride =
+                  PHONE_SAFETY_PREAMBLE +
+                  PHONE_DNC_PREAMBLE +
+                  transferPreamble +
+                  inline.systemPrompt;
+              }
+              ctx.logger?.info?.(
+                `phone_call_make: swapped inline assistant for saved Vapi assistant ${phoneConfig.vapiAssistantId} (agent ${runCtx.agentId}); injecting first-message + system-prompt as per-call overrides`,
+              );
+            }
+
+            // Standard reason-substitution path (runs against the saved
+            // firstMessage template). Only applies when a `reason` was passed
+            // AND we haven't already set firstMessageOverride from the inline
+            // swap above.
+            if (!firstMessageOverride) {
+              const savedFirstMessage = phoneConfig?.firstMessage;
+              if (savedFirstMessage && savedFirstMessage.includes("{the reason for call}")) {
+                firstMessageOverride = substituteCallReason(savedFirstMessage, p.reason);
+              } else if (p.reason && savedFirstMessage) {
+                // Operator edited the template to a fixed greeting but the
+                // caller still wants to convey a reason — leave the saved
+                // firstMessage as-is (operator's intent wins).
+                firstMessageOverride = undefined;
+              }
             }
           }
 
           const start = await r.resolved.engine.startOutboundCall({
             to: p.to,
             numberId,
-            assistant: assistantSpec,
+            assistant: effectiveAssistantSpec,
             metadata: p.metadata,
             idempotencyKey: p.idempotencyKey,
             firstMessageOverride,
+            systemPromptOverride,
           });
           trackOutbound(r.resolved.accountKey, start.callId);
           await track(ctx, runCtx, "phone_call_make", r.resolved.accountKey, {
