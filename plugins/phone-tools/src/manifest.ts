@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "phone-tools";
-const PLUGIN_VERSION = "0.6.4";
+const PLUGIN_VERSION = "0.7.0";
 
 const accountItemSchema = {
   type: "object",
@@ -1813,17 +1813,17 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   ],
   ui: {
     slots: [
+      // ─── AI Calls navigation root ───
+      // ONE sidebar item replacing the v0.5.x Assistants + Campaigns
+      // standalone entries. Renders a collapsible group with all five
+      // AI-call surfaces (Assistants, Campaigns, Inbound routes, DNC
+      // list, Audit log). Sibling of the 3cx-tools Phone group — the
+      // two render side-by-side in the rail.
       {
         type: "sidebar",
-        id: "assistants-sidebar",
-        displayName: "Assistants",
-        exportName: "AssistantsSidebarItem",
-      },
-      {
-        type: "sidebar",
-        id: "campaigns-sidebar",
-        displayName: "Campaigns",
-        exportName: "CampaignsSidebarItem",
+        id: "ai-calls-sidebar",
+        displayName: "AI Calls",
+        exportName: "AiCallsSidebarItem",
       },
       {
         type: "detailTab",
@@ -1838,6 +1838,27 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         displayName: "Campaigns",
         exportName: "CampaignsPage",
         routePath: "campaigns",
+      },
+      {
+        type: "page",
+        id: "phone-inbound-routes",
+        displayName: "Inbound routes",
+        exportName: "InboundRoutesPage",
+        routePath: "phone-inbound-routes",
+      },
+      {
+        type: "page",
+        id: "phone-dnc",
+        displayName: "DNC list",
+        exportName: "DncListPage",
+        routePath: "phone-dnc",
+      },
+      {
+        type: "page",
+        id: "phone-audit-log",
+        displayName: "Audit log",
+        exportName: "AuditLogPage",
+        routePath: "phone-audit-log",
       },
     ],
   },

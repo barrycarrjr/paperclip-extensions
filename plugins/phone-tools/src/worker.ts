@@ -2402,6 +2402,133 @@ const plugin = definePlugin({
       },
     );
 
+    // ─── Phone-section data channels (used by Phone-IA pages) ──────
+
+    async function pickPhoneAccountKey(companyId: string): Promise<string | null> {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = config.accounts ?? [];
+      const match = accounts.find((a) => {
+        const allowed = a.allowedCompanies ?? [];
+        return allowed.includes("*") || allowed.includes(companyId);
+      });
+      return match?.key ?? null;
+    }
+
+    // ── phone.inbound-routes ───────────────────────────────────────
+    // Lists allow-listed inbound numbers per account, paired with the
+    // account-level defaultAssistantId (and assistant display name when
+    // the engine can resolve it). Per-DID mapping lands in v0.6.x.
+    ctx.data.register("phone.inbound-routes", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { routes: [] };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = (config.accounts ?? []).filter((a) => {
+        const allowed = a.allowedCompanies ?? [];
+        return allowed.includes("*") || allowed.includes(companyId);
+      });
+      const routes: Array<{
+        numberId: string;
+        e164: string;
+        label?: string;
+        assistantId?: string;
+        assistantName?: string;
+        engine: "vapi" | "diy";
+        accountKey: string;
+      }> = [];
+      for (const account of accounts) {
+        try {
+          const resolved = await getResolvedAccount(
+            ctx,
+            { agentId: "", runId: "data-inbound-routes", companyId, projectId: "" } as ToolRunContext,
+            "phone.inbound-routes",
+            account.key,
+          );
+          const numbers = await resolved.engine.listNumbers();
+          let assistantName: string | undefined;
+          if (account.defaultAssistantId) {
+            try {
+              const all = await resolved.engine.listAssistants();
+              assistantName = all.find((a) => a.id === account.defaultAssistantId)?.name;
+            } catch {
+              /* assistant listing may fail on DIY (not supported) — fall back to id */
+            }
+          }
+          for (const n of numbers) {
+            const allowed = account.allowedNumbers ?? [];
+            if (allowed.length > 0 && !allowed.includes(n.id)) continue;
+            routes.push({
+              numberId: n.id,
+              e164: n.e164,
+              label: n.label ?? undefined,
+              assistantId: account.defaultAssistantId ?? undefined,
+              assistantName,
+              engine: resolved.engine.engineKind,
+              accountKey: account.key ?? "",
+            });
+          }
+        } catch (err) {
+          ctx.logger.warn?.("phone-tools: inbound-routes account failed", {
+            account: account.key,
+            err: (err as Error).message,
+          });
+        }
+      }
+      return { routes };
+    });
+
+    // ── phone.dnc-list ─────────────────────────────────────────────
+    // Account-local DNC entries + federal DNC cache status.
+    ctx.data.register("phone.dnc-list", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { entries: [], totalCount: 0, federalCacheStatus: null };
+      const accountKey = await pickPhoneAccountKey(companyId);
+      if (!accountKey) return { entries: [], totalCount: 0, federalCacheStatus: null };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const account = (config.accounts ?? []).find((a) => a.key === accountKey);
+      if (!account) return { entries: [], totalCount: 0, federalCacheStatus: null };
+      try {
+        const list = await readDncList(ctx, accountKey);
+        let federalCacheStatus = null;
+        if (account.federalDncListUrl) {
+          const { readFederalDncCache, isCacheStale } = await import("./campaigns/federalDnc.js");
+          const cache = await readFederalDncCache(ctx, accountKey, account.federalDncListUrl);
+          if (cache) {
+            federalCacheStatus = {
+              sourceUrl: cache.sourceUrl,
+              refreshedAt: cache.refreshedAt,
+              count: cache.count,
+              stale: isCacheStale(cache, account.federalDncRefreshHours ?? 24),
+            };
+          }
+        }
+        return {
+          entries: list.entries,
+          totalCount: list.entries.length,
+          federalCacheStatus,
+        };
+      } catch (err) {
+        return { entries: [], totalCount: 0, federalCacheStatus: null, error: (err as Error).message };
+      }
+    });
+
+    // ── phone.audit-log ────────────────────────────────────────────
+    ctx.data.register("phone.audit-log", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { entries: [] };
+      const accountKey = await pickPhoneAccountKey(companyId);
+      if (!accountKey) return { entries: [] };
+      try {
+        const since = typeof params.since === "string"
+          ? params.since
+          : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const until = typeof params.until === "string" ? params.until : new Date().toISOString();
+        const entries = await readAuditRange(ctx, accountKey, since, until);
+        return { entries };
+      } catch (err) {
+        return { entries: [], error: (err as Error).message };
+      }
+    });
+
     ctx.logger.info("phone-tools: tool registration complete");
   },
 

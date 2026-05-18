@@ -5,8 +5,10 @@
  * Paperclip host can mount them.
  */
 
-export { AssistantsSidebarItem } from "./AssistantsSidebarItem.js";
+export { AiCallsSidebarItem } from "./AiCallsSidebarItem.js";
 export { AgentPhoneTab } from "./AgentPhoneTab.js";
-export { CampaignsSidebarItem } from "./CampaignsSidebarItem.js";
 export { CampaignsPage } from "./CampaignsPage.js";
 export { PortfolioRollup } from "./PortfolioRollup.js";
+export { InboundRoutesPage } from "./InboundRoutesPage.js";
+export { DncListPage } from "./DncListPage.js";
+export { AuditLogPage } from "./AuditLogPage.js";

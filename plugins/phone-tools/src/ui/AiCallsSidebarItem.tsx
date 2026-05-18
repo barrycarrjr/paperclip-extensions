@@ -39,9 +39,9 @@ export function AiCallsSidebarItem(_props: PluginSidebarProps) {
     <SectionHeader title="🎙️ AI Calls" persistKey="ai-calls:root" defaultOpen>
       <NavLink href={`${prefix}/assistants`} label="Assistants" icon="🤖" />
       <NavLink href={`${prefix}/campaigns`} label="Campaigns" icon="📋" />
-      <NavLink href={`${prefix}/phone/inbound-routes`} label="Inbound routes" icon="📥" />
-      <NavLink href={`${prefix}/phone/dnc`} label="DNC list" icon="🚫" />
-      <NavLink href={`${prefix}/phone/audit-log`} label="Audit log" icon="📜" />
+      <NavLink href={`${prefix}/phone-inbound-routes`} label="Inbound routes" icon="📥" />
+      <NavLink href={`${prefix}/phone-dnc`} label="DNC list" icon="🚫" />
+      <NavLink href={`${prefix}/phone-audit-log`} label="Audit log" icon="📜" />
     </SectionHeader>
   );
 }
