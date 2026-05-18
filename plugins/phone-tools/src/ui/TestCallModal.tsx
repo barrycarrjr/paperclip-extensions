@@ -7,6 +7,7 @@ interface TestCallModalProps {
   operatorPhone: string | null;
   existingCallId?: string;
   onClose: () => void;
+  onCallEnded?: () => void;
 }
 
 interface CallStatus {
@@ -16,6 +17,8 @@ interface CallStatus {
   costUsd?: number | null;
   endedAt?: string | null;
   endReason?: string | null;
+  to?: string | null;
+  from?: string | null;
 }
 
 interface TranscriptTurn {
@@ -25,10 +28,24 @@ interface TranscriptTurn {
 }
 
 interface TranscriptResp {
-  transcript: { format: string; turns?: TranscriptTurn[]; text?: string };
+  // Shape returned by /assistants/:agentId/calls/:callId/transcript,
+  // which forwards engine.getCallTranscript(callId, "structured"). See
+  // NormalizedTranscript in engines/types.ts — the structured turns live
+  // under `.structured`, not `.turns`.
+  transcript: {
+    callId?: string;
+    transcript?: string;
+    structured?: TranscriptTurn[];
+  };
 }
 
 const POLL_INTERVAL_MS = 3000;
+// Vapi often takes 5–15s after a call ends to flush the structured
+// transcript into `artifact.messages`. Keep polling for a grace window
+// so the modal actually shows the transcript instead of stopping right
+// at "ended" with an empty body.
+const TERMINAL_GRACE_MS = 30_000;
+const TERMINAL_STATES = new Set(["ended", "failed", "no-answer", "busy", "canceled"]);
 
 export function TestCallModal({
   assistantName,
@@ -37,6 +54,7 @@ export function TestCallModal({
   operatorPhone,
   existingCallId,
   onClose,
+  onCallEnded,
 }: TestCallModalProps) {
   const [phone, setPhone] = useState(operatorPhone ?? "");
   const [callId, setCallId] = useState<string | null>(existingCallId ?? null);
@@ -45,6 +63,10 @@ export function TestCallModal({
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const graceTimerRef = useRef<number | null>(null);
+  const endedNotifiedRef = useRef(false);
+  const onCallEndedRef = useRef(onCallEnded);
+  onCallEndedRef.current = onCallEnded;
 
   useEffect(() => {
     if (!callId) return;
@@ -70,7 +92,7 @@ export function TestCallModal({
         const tRes = await fetch(transcriptUrl.toString(), { credentials: "include" });
         if (tRes.ok) {
           const tBody = (await tRes.json()) as TranscriptResp;
-          if (!cancelled) setTurns(tBody.transcript?.turns ?? []);
+          if (!cancelled) setTurns(tBody.transcript?.structured ?? []);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
@@ -80,17 +102,39 @@ export function TestCallModal({
     pollRef.current = window.setInterval(poll, POLL_INTERVAL_MS) as unknown as number;
     return () => {
       cancelled = true;
-      if (pollRef.current) window.clearInterval(pollRef.current);
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      if (graceTimerRef.current) {
+        window.clearTimeout(graceTimerRef.current);
+        graceTimerRef.current = null;
+      }
     };
   }, [callId, agentId, companyId]);
 
-  // Stop polling once the call ends.
+  // When the call reaches a terminal state, keep polling for a short
+  // grace window so Vapi has time to flush `artifact.messages` (the
+  // structured transcript). Stop afterwards regardless. Also fire the
+  // parent's `onCallEnded` once so the Recent calls list can refresh.
   useEffect(() => {
-    if (status?.status && ["ended", "failed", "no-answer", "busy", "canceled"].includes(status.status) && pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
+    if (!status?.status || !TERMINAL_STATES.has(status.status)) return;
+    if (!endedNotifiedRef.current) {
+      endedNotifiedRef.current = true;
+      onCallEndedRef.current?.();
     }
+    if (graceTimerRef.current) return;
+    graceTimerRef.current = window.setTimeout(() => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      graceTimerRef.current = null;
+    }, TERMINAL_GRACE_MS) as unknown as number;
   }, [status?.status]);
+
+  const isTerminal = !!status?.status && TERMINAL_STATES.has(status.status);
+  const stillFetchingTranscript = isTerminal && turns.length === 0 && graceTimerRef.current !== null;
 
   async function startCall() {
     setError(null);
@@ -127,9 +171,20 @@ export function TestCallModal({
     }
   }
 
+  // Derive the modal title. For a freshly placed call we have the
+  // operator's typed `phone`; for an existingCallId opened from the
+  // Recent calls list we don't, so fall back to whatever the engine
+  // reports as the destination.
+  const displayTo = phone || status?.to || "";
+  const modalTitle = !callId
+    ? `Test ${assistantName} on your phone`
+    : existingCallId
+      ? `Call ${displayTo || callId}`
+      : `Test call to ${displayTo}`;
+
   return (
     <Backdrop onClose={onClose}>
-      <Modal title={callId ? `Test call to ${phone}` : `Test ${assistantName} on your phone`} onClose={onClose}>
+      <Modal title={modalTitle} onClose={onClose}>
         {!callId ? (
           <div style={stack}>
             <div style={field}>
@@ -160,7 +215,11 @@ export function TestCallModal({
             <div style={{ border: "1px solid var(--border)", padding: 10, maxHeight: 320, overflow: "auto", fontSize: 13 }}>
               {turns.length === 0 ? (
                 <p style={{ color: "var(--muted-foreground)", margin: 0 }}>
-                  Waiting for transcript… (this can take 5–10s after the call connects)
+                  {!isTerminal
+                    ? "Waiting for transcript… (this can take 5–10s after the call connects)"
+                    : stillFetchingTranscript
+                      ? "Call ended. Waiting for the engine to finish writing the transcript…"
+                      : "Call ended. No transcript was produced for this call."}
                 </p>
               ) : (
                 turns.map((turn, i) => (

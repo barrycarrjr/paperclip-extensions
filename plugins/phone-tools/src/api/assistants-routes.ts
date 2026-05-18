@@ -163,6 +163,8 @@ export async function handleAssistantsApi(
       return listCalls(ctx, input);
     case "assistants.calls.place":
       return placeCall(ctx, input);
+    case "assistants.calls.describe-attachments":
+      return describeCallAttachments(ctx, input);
     case "assistants.calls.status":
       return getCallStatus(ctx, input);
     case "assistants.calls.transcript":
@@ -504,6 +506,11 @@ async function placeCall(
   const to = asString(body.to);
   if (!to) return badRequest("Missing 'to' phone number.");
   const objective = asString(body.objective);
+  // Per-call reference context (e.g. facts extracted from operator-attached
+  // images). This goes into the assistant's system prompt for this call only,
+  // NOT into firstMessage — so the assistant knows the info but doesn't
+  // recite it aloud as part of its opening line.
+  const additionalContext = asString(body.additionalContext);
 
   const config = await readPhoneConfig(ctx, agentId);
   if (!config?.vapiAssistantId) {
@@ -540,6 +547,31 @@ async function placeCall(
         ? substituteCallReason(config.firstMessage, objective)
         : undefined;
 
+    // Build a per-call system prompt override when `additionalContext` is
+    // present. We must re-include the same preambles the engine bakes in
+    // at assistant-create time (safety, DNC, transfer if enabled), since
+    // assistantOverrides.model.messages REPLACES the saved messages for
+    // this call rather than appending to them. Without re-including them,
+    // we'd accidentally strip the safety rails for this single call.
+    let systemPromptOverride: string | undefined;
+    if (additionalContext && config.systemPrompt) {
+      const {
+        PHONE_SAFETY_PREAMBLE,
+        PHONE_DNC_PREAMBLE,
+        PHONE_TRANSFER_PREAMBLE,
+      } = await import("../engines/vapi/vapiEngine.js");
+      const transferPreamble = config.transferTarget ? PHONE_TRANSFER_PREAMBLE : "";
+      const referenceBlock =
+        `\n\nREFERENCE INFORMATION FOR THIS CALL (do NOT recite this verbatim to the caller; ` +
+        `use it only when the conversation calls for it):\n${additionalContext}`;
+      systemPromptOverride =
+        PHONE_SAFETY_PREAMBLE +
+        PHONE_DNC_PREAMBLE +
+        transferPreamble +
+        config.systemPrompt +
+        referenceBlock;
+    }
+
     const result = await resolved.engine.startOutboundCall({
       to,
       numberId: resolvedNumberId,
@@ -550,6 +582,7 @@ async function placeCall(
         paperclip_callee_name: asString(body.calleeName) ?? "",
       },
       firstMessageOverride,
+      systemPromptOverride,
     });
     await ctx.state.set(
       { scopeKind: "instance", stateKey: `call-agent:${result.callId}` },
@@ -558,6 +591,72 @@ async function placeCall(
     return created({ callId: result.callId, status: result.status });
   } catch (err) {
     return serverError(`Failed to start call: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Take a batch of operator-uploaded images, hand them to the host's vision LLM,
+ * and return a single text block describing what the model saw. The PlaceCall
+ * modal calls this *before* `placeCall` so the extracted facts can be
+ * concatenated onto the operator's typed objective — Vapi only takes text in
+ * its assistant prompts, so this is the bridge between an attached photo and
+ * the actual outbound call.
+ *
+ * Stays plugin-LLM-agnostic because the actual provider call lives in
+ * `ctx.ai.complete` (host-side).
+ */
+async function describeCallAttachments(
+  ctx: PluginContext,
+  input: PluginApiRequestInput,
+): Promise<PluginApiResponse> {
+  const agentId = input.params.agentId;
+  if (!agentId) return badRequest("Missing agentId.");
+  const body = readBodyAsObject(input.body);
+
+  const rawImages = Array.isArray(body.images) ? body.images : [];
+  if (rawImages.length === 0) {
+    return badRequest("At least one image is required.");
+  }
+  const objective = asString(body.objective) ?? "";
+
+  const images: Array<{ mediaType: string; base64: string; name?: string }> = [];
+  for (const raw of rawImages) {
+    if (!raw || typeof raw !== "object") {
+      return badRequest("Each image must be an object with mediaType + base64.");
+    }
+    const r = raw as Record<string, unknown>;
+    const mediaType = typeof r.mediaType === "string" ? r.mediaType : "";
+    const base64 = typeof r.base64 === "string" ? r.base64 : "";
+    const name = typeof r.name === "string" ? r.name : undefined;
+    if (!mediaType.startsWith("image/") || !base64) {
+      return badRequest("Each image needs a valid mediaType (image/*) and base64 payload.");
+    }
+    images.push({ mediaType, base64, name });
+  }
+
+  // Phrase the prompt so the model returns a compact, call-ready fact sheet
+  // rather than a chatty description. The operator's objective (if any) is
+  // included so the model knows what's worth pulling out.
+  const system =
+    "You extract call-relevant facts from images that an operator has attached " +
+    "to an outbound phone call dispatch. Respond in a tight bulleted list of " +
+    "concrete facts: model numbers, prices, condition notes, contact info, " +
+    "addresses, dates, decision-maker names, anything the caller might need to " +
+    "reference live. No preamble, no sign-off, no speculation.";
+  const prompt = objective
+    ? `Operator's stated objective for the call:\n${objective}\n\nExtract every fact from the attached image(s) the caller might need during this call.`
+    : "Extract every fact from the attached image(s) the caller might need during an outbound phone call.";
+
+  try {
+    const result = await ctx.ai.complete({
+      prompt,
+      system,
+      images,
+      maxTokens: 800,
+    });
+    return ok({ text: result.text, modelUsed: result.modelUsed });
+  } catch (err) {
+    return serverError((err as Error).message);
   }
 }
 

@@ -92,6 +92,16 @@ export interface StartCallInput {
    * firstMessage verbatim.
    */
   firstMessageOverride?: string;
+  /**
+   * Per-call FULL system prompt override. The caller is responsible for
+   * including any required safety/DNC/transfer preambles — engines apply
+   * this verbatim as the assistant's system message for this single call
+   * and DO NOT re-add preambles. Used for per-call reference context like
+   * "extracted facts from images" that the assistant should know about
+   * but not recite. Leave undefined to use the saved assistant's system
+   * prompt unchanged.
+   */
+  systemPromptOverride?: string;
 }
 
 export interface StartCallResult {

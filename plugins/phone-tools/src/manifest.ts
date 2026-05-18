@@ -937,6 +937,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "ui.detailTab.register",
     "ui.page.register",
     "issues.create",
+    "ai.complete",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -1626,6 +1627,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       routeKey: "assistants.calls.place",
       method: "POST",
       path: "/assistants/:agentId/calls",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      routeKey: "assistants.calls.describe-attachments",
+      method: "POST",
+      path: "/assistants/:agentId/calls/describe-attachments",
       auth: "board",
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },

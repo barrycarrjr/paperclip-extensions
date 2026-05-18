@@ -21,6 +21,12 @@
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.427.0"
   },
+  "pnpm": {
+    "overrides": {
+      "@paperclipai/plugin-sdk": "file:../../vendor/sdk/plugin-sdk.tgz",
+      "@paperclipai/shared": "file:../../vendor/sdk/shared.tgz"
+    }
+  },
   "devDependencies": {
     "@types/node": "^24.6.0",
     "@types/react": "^19.0.8",

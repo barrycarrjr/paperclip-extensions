@@ -80,6 +80,7 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
   const [testCallOpen, setTestCallOpen] = useState(false);
   const [warmTransferOpen, setWarmTransferOpen] = useState(false);
   const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const [recentCallsRefreshKey, setRecentCallsRefreshKey] = useState(0);
 
   if (status.loading) {
     return <p style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Loading phone capability…</p>;
@@ -188,7 +189,12 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
         />
       )}
 
-      <RecentCallsList agentId={agentId} companyId={host.companyId ?? ""} />
+      <RecentCallsList
+        agentId={agentId}
+        companyId={host.companyId ?? ""}
+        refreshKey={recentCallsRefreshKey}
+        onSelectCall={(id) => setActiveCallId(id)}
+      />
 
       {placeCallOpen && (
         <PlaceCallModal
@@ -211,6 +217,7 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
           companyId={host.companyId ?? ""}
           operatorPhone={operatorPhone?.e164 ?? null}
           onClose={() => setTestCallOpen(false)}
+          onCallEnded={() => setRecentCallsRefreshKey((k) => k + 1)}
         />
       )}
       {activeCallId && (
@@ -221,6 +228,7 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
           operatorPhone={null}
           existingCallId={activeCallId}
           onClose={() => setActiveCallId(null)}
+          onCallEnded={() => setRecentCallsRefreshKey((k) => k + 1)}
         />
       )}
       {warmTransferOpen && config && (
@@ -317,11 +325,29 @@ const smallSecondaryButton: React.CSSProperties = {
   cursor: "pointer",
 };
 
-function RecentCallsList({ agentId, companyId }: { agentId: string; companyId: string }) {
+function RecentCallsList({
+  agentId,
+  companyId,
+  refreshKey,
+  onSelectCall,
+}: {
+  agentId: string;
+  companyId: string;
+  refreshKey: number;
+  onSelectCall: (callId: string) => void;
+}) {
   const calls = usePluginData<{ calls: Array<Record<string, unknown>> }>(
     "assistants.recent-calls",
     { companyId, agentId },
   );
+  // Re-fetch when the parent bumps `refreshKey` (e.g. after a test call
+  // ends) so the just-completed call shows up without a page reload.
+  // `calls.refresh` is stable across renders (it's bridge-issued) and
+  // calling it during a render-cycle effect is safe.
+  useEffect(() => {
+    if (refreshKey > 0) calls.refresh?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
   if (calls.loading) {
     return <p style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Loading recent calls…</p>;
   }
@@ -346,18 +372,39 @@ function RecentCallsList({ agentId, companyId }: { agentId: string; companyId: s
           const to = String(call.to ?? "—");
           const cost = typeof call.costUsd === "number" ? call.costUsd : null;
           const duration = typeof call.durationSec === "number" ? call.durationSec : null;
+          // Prefer startedAt; fall back to endedAt if the engine didn't supply
+          // a startedAt (some terminal states fill only the end timestamp).
+          const tsRaw =
+            typeof call.startedAt === "string"
+              ? call.startedAt
+              : typeof call.endedAt === "string"
+                ? call.endedAt
+                : null;
+          const tsDisplay = tsRaw ? formatCallTimestamp(tsRaw) : "—";
           return (
             <div
               key={id}
+              role="button"
+              tabIndex={0}
+              onClick={() => id && onSelectCall(id)}
+              onKeyDown={(e) => {
+                if (id && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  onSelectCall(id);
+                }
+              }}
+              title={tsRaw ? `View transcript • ${new Date(tsRaw).toLocaleString()}` : "View transcript and status for this call"}
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr auto auto auto",
+                gridTemplateColumns: "auto 1fr auto auto auto",
                 gap: 12,
                 fontSize: 13,
                 padding: "6px 12px",
                 borderBottom: "1px solid var(--border)",
+                cursor: id ? "pointer" : "default",
               }}
             >
+              <span style={{ color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{tsDisplay}</span>
               <span style={{ fontFamily: "monospace" }}>{to}</span>
               <span style={{ color: "var(--muted-foreground)" }}>{status}</span>
               <span style={{ color: "var(--muted-foreground)" }}>
@@ -370,6 +417,25 @@ function RecentCallsList({ agentId, companyId }: { agentId: string; companyId: s
       </div>
     </div>
   );
+}
+
+/**
+ * Compact timestamp for the Recent calls list. "Today" calls show just the
+ * time (HH:mm); older calls fall back to MMM d, HH:mm. Tooltip on the row
+ * carries the full locale-formatted date for precision when needed.
+ */
+function formatCallTimestamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${date} ${time}`;
 }
 
 const primaryButtonStyle: React.CSSProperties = {
