@@ -20,10 +20,16 @@ import { V20XapiEngine } from "./engines/v20Xapi/v20XapiEngine.js";
 import type {
   ConfigAccount,
   InstanceConfig,
+  NormalizedCallRecord,
   NormalizedPbxEvent,
   ResolvedAccount,
   ScopeFilter,
 } from "./engines/types.js";
+import {
+  ingestAccount,
+  listConfiguredAccounts,
+  queryCache,
+} from "./callHistoryCache.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -83,6 +89,147 @@ function asBool(v: unknown): boolean | undefined {
 function todayUtcDate(): string {
   const d = new Date();
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Run one ingest pass for an account: instantiate the engine, page
+ * through Recordings, hand pages to the cache module.
+ *
+ * Returns the cache module's outcome — used by the scheduled job for
+ * logging and by the setup backfill for fire-and-forget warnings.
+ */
+async function runIngestForAccount(
+  ctx: PluginContext,
+  account: ConfigAccount,
+): Promise<{ accountKey: string; newlyIngested: number; totalCached: number }> {
+  // Resolve credentials directly (no per-call runCtx — this is a
+  // background job, not a tool invocation). Skip the per-(company,
+  // account) cache and build the client fresh.
+  if (!account.clientIdRef || !account.clientSecretRef || !account.pbxBaseUrl) {
+    throw new Error(
+      `[ECONFIG] account "${account.key}" is missing credentials; skipping.`,
+    );
+  }
+  const [clientId, clientSecret] = await Promise.all([
+    ctx.secrets.resolve(account.clientIdRef),
+    ctx.secrets.resolve(account.clientSecretRef),
+  ]);
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      `[ECONFIG] account "${account.key}" credentials did not resolve.`,
+    );
+  }
+  const client = new XapiClient({
+    ctx,
+    accountKey: account.key,
+    pbxBaseUrl: account.pbxBaseUrl,
+    clientId,
+    clientSecret,
+  });
+  const engine = new V20XapiEngine(client);
+
+  // The Recordings tool uses an audio-url builder so the browser can
+  // play the audio via the plugin's proxy route. The ingest job doesn't
+  // need that — we only care about call metadata. Pass a no-op stub.
+  const audioUrlBuilder = (_recordingId: string) => "";
+  const singleScope: ScopeFilter = { mode: "single" };
+
+  return ingestAccount(
+    ctx,
+    account,
+    async (cursor) => {
+      const page = await engine.listRecordings(
+        singleScope,
+        { limit: 200, cursor },
+        audioUrlBuilder,
+      );
+      return {
+        recordings: page.recordings.map((r) => ({
+          id: r.id,
+          extension: r.extension,
+          from: r.from,
+          receivedAt: r.receivedAt,
+          durationSec: r.durationSec,
+          fromDidNumber: r.fromDidNumber,
+          toDidNumber: r.toDidNumber,
+        })),
+        nextCursor: page.nextCursor,
+      };
+    },
+    (r) => recordingToCallRecord(r),
+  );
+}
+
+/**
+ * Map a Recording's metadata into NormalizedCallRecord shape so the
+ * Call history page can render it like any other call.
+ *
+ * Direction heuristic (3CX v20's Recordings rows don't always populate
+ * fromDidNumber / toDidNumber, so we use field-pattern matching):
+ *   - `from` looks PSTN (10+ digits) and ≠ `extension` → inbound
+ *   - `from` equals `extension`, AND `toDidNumber` is set OR there's no
+ *     other internal party → outbound (caller IS the extension dialing out)
+ *   - both are short / both look like extensions → internal
+ * Explicit DID hints (fromDidNumber / toDidNumber) still override when
+ * 3CX provided them.
+ *
+ * All recorded calls were, by definition, answered — disposition is
+ * hardcoded "answered". Missed / abandoned calls won't have recordings
+ * and so aren't in the cache. Documented limitation of this data source.
+ */
+function recordingToCallRecord(r: {
+  id: string;
+  extension: string;
+  from: string;
+  receivedAt: string;
+  durationSec: number;
+  fromDidNumber?: string;
+  toDidNumber?: string;
+}): NormalizedCallRecord {
+  const endedAt = new Date(
+    Date.parse(r.receivedAt) + r.durationSec * 1000,
+  ).toISOString();
+
+  const fromDigits = (r.from ?? "").replace(/\D/g, "");
+  const extDigits = (r.extension ?? "").replace(/\D/g, "");
+  const fromIsPstn = fromDigits.length >= 10;
+  const fromIsExtension = fromDigits.length > 0 && fromDigits === extDigits;
+
+  let direction: "inbound" | "outbound" | "internal";
+  if (r.fromDidNumber) {
+    direction = "inbound";
+  } else if (r.toDidNumber) {
+    direction = "outbound";
+  } else if (fromIsPstn && !fromIsExtension) {
+    direction = "inbound";
+  } else if (fromIsExtension) {
+    // Caller IS the internal extension — placing an outbound call.
+    direction = "outbound";
+  } else {
+    direction = "internal";
+  }
+
+  // For outbound calls the "to" side is the external destination
+  // (toDidNumber when present); for inbound it's the called extension.
+  let toNumber: string;
+  if (direction === "outbound") {
+    toNumber = r.toDidNumber ?? "";
+  } else {
+    toNumber = r.extension ?? "";
+  }
+
+  return {
+    callId: r.id,
+    fromNumber: r.from ?? r.fromDidNumber ?? "",
+    toNumber,
+    extension: r.extension,
+    queue: undefined,
+    startedAt: r.receivedAt,
+    endedAt,
+    durationSec: r.durationSec,
+    direction,
+    disposition: "answered",
+  };
 }
 
 /**
@@ -730,12 +877,253 @@ const plugin = definePlugin({
       },
     );
 
-    // ─── UI getData handlers (for the Recordings page + sidebar) ──
+    // ─── UI getData handlers (for the Phone pages + sidebar) ──────
 
-    // Sidebar visibility: returns true when the calling company is in any
-    // account's allowedCompanies list. The Recordings sidebar item reads
-    // this via usePluginData("recordings.sidebar-visible") and hides
-    // itself for companies without PBX access.
+    // Phone-section sidebar visibility — same allow-list gate as the
+    // legacy recordings.sidebar-visible (kept below for compatibility).
+    // The PhoneSidebarItem renders only when the company has access to
+    // at least one 3cx-tools account.
+    ctx.data.register("phone.sidebar-visible", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { visible: false };
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = config.accounts ?? [];
+      const visible = accounts.some((a) => {
+        const allowed = a.allowedCompanies ?? [];
+        return allowed.includes("*") || allowed.includes(companyId);
+      });
+      return { visible };
+    });
+
+    // Pick the first-allowed account for a company. Helper used by every
+    // page that doesn't need a per-account picker (parked / active /
+    // queues / etc.) — they all just want "the account the company has
+    // access to" and fall over to multi-account UX only when needed.
+    async function pickAccountKey(companyId: string): Promise<string | null> {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const accounts = config.accounts ?? [];
+      const match = accounts.find((a) => {
+        const allowed = a.allowedCompanies ?? [];
+        return allowed.includes("*") || allowed.includes(companyId);
+      });
+      return match?.key ?? null;
+    }
+
+    function runCtxFor(companyId: string, channel: string): ToolRunContext {
+      return { companyId, runId: `ui-${channel}`, agentId: "", projectId: "" };
+    }
+
+    /**
+     * First space-separated token of a Caller/Callee display string.
+     * 3CX returns these as "<token> <display>" — for internal legs the
+     * token IS the extension; for external legs it's a 3CX-internal
+     * segment id. Used to cross-reference ActiveCalls against the
+     * Agents list.
+     */
+    function firstToken(s: string | undefined): string | undefined {
+      if (!s) return undefined;
+      const t = s.split(/\s+/, 1)[0];
+      return t || undefined;
+    }
+
+    // ── phone.parked-calls ─────────────────────────────────────────
+    ctx.data.register("phone.parked-calls", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { parked: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.parked-calls"), "phone.parked-calls", accountKey ?? undefined);
+      if (!r.ok) return { parked: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const parked = await engine.listParkedCalls(r.resolved.scope);
+        return { parked };
+      } catch (err) {
+        return { parked: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.active-calls ─────────────────────────────────────────
+    ctx.data.register("phone.active-calls", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { calls: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.active-calls"), "phone.active-calls", accountKey ?? undefined);
+      if (!r.ok) return { calls: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const calls = await engine.listActiveCalls(r.resolved.scope);
+        return { calls };
+      } catch (err) {
+        return { calls: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.queues ───────────────────────────────────────────────
+    ctx.data.register("phone.queues", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { queues: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.queues"), "phone.queues", accountKey ?? undefined);
+      if (!r.ok) return { queues: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const queues = await engine.listQueues(r.resolved.scope);
+        return { queues };
+      } catch (err) {
+        return { queues: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.agents ───────────────────────────────────────────────
+    ctx.data.register("phone.agents", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { agents: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.agents"), "phone.agents", accountKey ?? undefined);
+      if (!r.ok) return { agents: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        // Single-mode scope so the page sees every PBX agent (same as
+        // phone.extensions). 3CX v20's Users payload doesn't populate
+        // IsInCall / CurrentCallSec / Status-while-on-call reliably, so
+        // we cross-reference ActiveCalls and enrich each agent whose
+        // extension shows up on a live call. Lets the page show
+        // "busy" / "on call" / "in call for" without 3CX's data.
+        const [agents, active] = await Promise.all([
+          engine.listAgents({ mode: "single" }),
+          engine.listActiveCalls({ mode: "single" }),
+        ]);
+        // Map extension → first matching active call (longest duration
+        // wins if an ext is on multiple legs).
+        const byExt = new Map<string, { durationSec: number }>();
+        for (const c of active) {
+          const candidates = [
+            firstToken(c.fromNumber),
+            firstToken(c.toNumber),
+            c.extension,
+          ].filter((v): v is string => !!v);
+          for (const ext of candidates) {
+            const prior = byExt.get(ext);
+            if (!prior || c.durationSec > prior.durationSec) {
+              byExt.set(ext, { durationSec: c.durationSec });
+            }
+          }
+        }
+        const enriched = agents.map((a) => {
+          const onCall = byExt.get(a.extension);
+          if (!onCall) return a;
+          return {
+            ...a,
+            inCall: true,
+            currentCallSec: onCall.durationSec,
+            // Bump presence to "busy" so the pill reads correctly when
+            // 3CX hasn't already labeled the agent in-call.
+            presence: a.presence === "available" ? ("busy" as const) : a.presence,
+          };
+        });
+        return { agents: enriched };
+      } catch (err) {
+        return { agents: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.call-history ─────────────────────────────────────────
+    // Reads from the local cache populated by the `ingest-call-history`
+    // scheduled job. The XAPI's CallHistoryView is broken on v20 (see
+    // callHistoryCache.ts header comment), so we cache from Recordings
+    // instead and serve filtered slices instantly.
+    ctx.data.register("phone.call-history", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { calls: [] };
+      const accountKey = await pickAccountKey(companyId);
+      if (!accountKey) return { calls: [], error: "No 3cx-tools account configured for this company." };
+      const since = typeof params.since === "string" ? params.since : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const until = typeof params.until === "string" ? params.until : undefined;
+      const directionParam = typeof params.direction === "string" ? params.direction : "any";
+      const direction = directionParam === "any" ? undefined : (directionParam as "inbound" | "outbound" | "internal");
+      const queue = typeof params.queue === "string" ? params.queue : undefined;
+      const limit = typeof params.limit === "number" ? params.limit : 200;
+      try {
+        const result = await queryCache(ctx, accountKey, { since, until, direction, queue, limit });
+        return {
+          calls: result.calls,
+          totalCached: result.totalCached,
+          lastIngestAt: result.lastIngestAt,
+        };
+      } catch (err) {
+        return { calls: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.daily-report ─────────────────────────────────────────
+    ctx.data.register("phone.daily-report", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { stats: null };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.daily-report"), "phone.daily-report", accountKey ?? undefined);
+      if (!r.ok) return { stats: null, error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const stats = await engine.getTodayStats(r.resolved.scope);
+        return { stats };
+      } catch (err) {
+        return { stats: null, error: (err as Error).message };
+      }
+    });
+
+    // ── phone.dids ─────────────────────────────────────────────────
+    ctx.data.register("phone.dids", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { dids: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.dids"), "phone.dids", accountKey ?? undefined);
+      if (!r.ok) return { dids: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const dids = await engine.listDids(r.resolved.scope);
+        return { dids };
+      } catch (err) {
+        return { dids: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.extensions ───────────────────────────────────────────
+    ctx.data.register("phone.extensions", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { extensions: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.extensions"), "phone.extensions", accountKey ?? undefined);
+      if (!r.ok) return { extensions: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        // Use single-mode scope so the page sees every PBX extension,
+        // not just the calling company's range — matches what the
+        // existing recordings.pbx-extensions channel does.
+        const extensions = await engine.listExtensions({ mode: "single" });
+        return { extensions };
+      } catch (err) {
+        return { extensions: [], error: (err as Error).message };
+      }
+    });
+
+    // ── phone.trunks ───────────────────────────────────────────────
+    ctx.data.register("phone.trunks", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) return { trunks: [] };
+      const accountKey = await pickAccountKey(companyId);
+      const r = await resolveOrError(ctx, runCtxFor(companyId, "phone.trunks"), "phone.trunks", accountKey ?? undefined);
+      if (!r.ok) return { trunks: [], error: r.error };
+      const engine = getEngineFor(companyId, r.resolved.accountKey);
+      try {
+        const trunks = await engine.listTrunks(r.resolved.scope);
+        return { trunks };
+      } catch (err) {
+        return { trunks: [], error: (err as Error).message };
+      }
+    });
+
+    // ── Legacy recordings sidebar visibility (kept for upgrade paths
+    //    where an old cached UI bundle still references the old name).
     ctx.data.register("recordings.sidebar-visible", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
       if (!companyId) return { visible: false };
@@ -1090,6 +1478,45 @@ const plugin = definePlugin({
 
     // ─── Phase 3: WebSocket lifecycle ─────────────────────────────
     void openWebSocketsForAllAccounts(ctx);
+
+    // ─── Call history cache ingest (per-account) ──────────────────
+    ctx.jobs.register("ingest-call-history", async () => {
+      const accounts = await listConfiguredAccounts(ctx);
+      for (const account of accounts) {
+        if (!account.key) continue;
+        try {
+          const result = await runIngestForAccount(ctx, account);
+          ctx.logger.info?.("ingest-call-history: ok", result);
+        } catch (err) {
+          ctx.logger.warn?.("ingest-call-history: account failed", {
+            account: account.key,
+            error: (err as Error).message,
+          });
+        }
+      }
+    });
+
+    // Kick a backfill on setup so a freshly-installed plugin doesn't
+    // wait 5 minutes for the first cron tick. Fire-and-forget; errors
+    // bubble through the same warn path.
+    void (async () => {
+      try {
+        const accounts = await listConfiguredAccounts(ctx);
+        for (const account of accounts) {
+          if (!account.key) continue;
+          await runIngestForAccount(ctx, account).catch((err) =>
+            ctx.logger.warn?.("ingest-call-history: backfill failed", {
+              account: account.key,
+              error: (err as Error).message,
+            }),
+          );
+        }
+      } catch (err) {
+        ctx.logger.warn?.("ingest-call-history: setup-backfill failed", {
+          error: (err as Error).message,
+        });
+      }
+    })();
   },
 
   async onConfigChanged() {

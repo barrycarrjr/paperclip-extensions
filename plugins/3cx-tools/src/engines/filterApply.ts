@@ -47,17 +47,28 @@ export function filterParkedCalls(
 }
 
 export function filterActiveCalls(
-  scope: ScopeFilter,
+  _scope: ScopeFilter,
   calls: NormalizedActiveCall[],
 ): NormalizedActiveCall[] {
-  if (scope.mode !== "manual") return calls;
-  return calls.filter(
-    (c) =>
-      extensionInScope(scope, c.extension) ||
-      queueInScope(scope, c.queue) ||
-      didInScope(scope, c.toNumber) ||
-      didInScope(scope, c.fromNumber),
-  );
+  // 3CX v20's ActiveCalls payload is too thin to scope reliably in
+  // manual mode: the only fields are Caller/Callee (display strings)
+  // and EstablishedAt — there's no DID-the-caller-dialed and no
+  // extension-the-call-belongs-to. Trying to match on first-token of
+  // Caller/Callee strips inbound-on-DID legs and DID-routed calls
+  // because the visible token is a 3CX-internal segment id, not the
+  // company-scoped extension. Surface all active calls regardless of
+  // mode (same reasoning as filterParkedCalls — call infrastructure
+  // is shared in a single-PBX setup). Operators on a multi-tenant
+  // PBX who need strict scoping can rely on the per-DID Routes UI
+  // (v0.6.x roadmap) instead.
+  return calls;
+}
+
+/** First space-separated token of a Caller/Callee display string. */
+function firstToken(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  const t = s.split(/\s+/, 1)[0];
+  return t || undefined;
 }
 
 export function filterAgents(
@@ -73,13 +84,25 @@ export function filterCallHistory(
   calls: NormalizedCallRecord[],
 ): NormalizedCallRecord[] {
   if (scope.mode !== "manual") return calls;
-  return calls.filter(
-    (c) =>
+  return calls.filter((c) => {
+    // 3CX v20's CallHistoryView populates Caller/Callee as display strings
+    // ("200 Carr, Barry" or "10000 Flowroute - M3 Printing (17175771023)")
+    // rather than separate extension/DID fields. The mapper does its best
+    // to extract the parenthesized number into fromNumber/toNumber, but
+    // for internal-extension legs the first space-separated token IS the
+    // extension. Match against both the normalized fields AND the
+    // first-token form so internal calls aren't dropped.
+    const fromFirst = firstToken(c.fromNumber);
+    const toFirst = firstToken(c.toNumber);
+    return (
       extensionInScope(scope, c.extension) ||
+      extensionInScope(scope, fromFirst) ||
+      extensionInScope(scope, toFirst) ||
       queueInScope(scope, c.queue) ||
       didInScope(scope, c.toNumber) ||
-      didInScope(scope, c.fromNumber),
-  );
+      didInScope(scope, c.fromNumber)
+    );
+  });
 }
 
 export function filterDids(

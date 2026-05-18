@@ -201,6 +201,20 @@ export interface NormalizedExtension {
   email?: string;
 }
 
+export interface NormalizedTrunk {
+  id: string;
+  /** Friendly name of the trunk (Display Name in 3CX admin). */
+  name: string;
+  /** Trunk provider (Flowroute, Vonage, …) when 3CX exposes it. */
+  provider?: string;
+  /** SIP registration status — true when 3CX considers the trunk in service. */
+  registered: boolean;
+  /** Configured simultaneous-call limit, when 3CX exposes it. */
+  channels?: number;
+  /** Primary DID associated with the trunk, when 3CX exposes it. */
+  number?: string;
+}
+
 export interface NormalizedRecording {
   id: string;
   /** Internal-side extension on the call (e.g. "200"). For inbound, this
@@ -309,6 +323,7 @@ export interface ThreeCxEngine {
   listCallHistory(filter: ScopeFilter, opts: HistoryOpts, exposeRecordings: boolean): Promise<{ calls: NormalizedCallRecord[]; nextCursor?: string }>;
   listDids(filter: ScopeFilter): Promise<NormalizedDid[]>;
   listExtensions(filter: ScopeFilter): Promise<NormalizedExtension[]>;
+  listTrunks(filter: ScopeFilter): Promise<NormalizedTrunk[]>;
   listRecordings(
     filter: ScopeFilter,
     opts: RecordingListOpts,

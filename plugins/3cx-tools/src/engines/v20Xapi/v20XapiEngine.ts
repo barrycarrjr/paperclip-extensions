@@ -27,6 +27,7 @@ import type {
   NormalizedDayStats,
   NormalizedDid,
   NormalizedExtension,
+  NormalizedTrunk,
   NormalizedParkedCall,
   NormalizedPbxEvent,
   NormalizedQueue,
@@ -184,7 +185,10 @@ export class V20XapiEngine implements ThreeCxEngine {
   }
 
   async listActiveCalls(filter: ScopeFilter): Promise<NormalizedActiveCall[]> {
-    const data = await this.client.getCached<ODataList<RawActiveCall>>(EP.activeCalls);
+    // Active calls are live state — fetch un-cached so a 2-3s page poll
+    // sees the call the same second it lands on the PBX. The
+    // `getCached` 8-second TTL was masking new calls for up to 8s.
+    const data = await this.client.get<ODataList<RawActiveCall>>(EP.activeCalls);
     const normalized = (data.value ?? []).map(toActiveCall);
     return filterActiveCalls(filter, normalized);
   }
@@ -262,46 +266,88 @@ export class V20XapiEngine implements ThreeCxEngine {
     opts: HistoryOpts,
     exposeRecordings: boolean,
   ): Promise<{ calls: NormalizedCallRecord[]; nextCursor?: string }> {
-    // Field names confirmed against 3CX v20 swagger + forum examples: the
-    // CallHistoryView entity uses SegmentStartTime / SegmentEndTime, with
-    // OData v4 date() filter syntax (`date(SegmentStartTime) ge 2026-05-03`).
-    // Source/destination DNs are SrcDn / DstDn, NOT CallerNumber/CalleeNumber.
+    // 3CX v20's CallHistoryView OData implementation is broken in two ways
+    // confirmed against Carr Rock 3CX v20.0.x 2026-05-17:
+    //   - $filter on SegmentStartTime returns HTTP 500 ("SegmentStartTime
+    //     ge 2026-05-17T04:00:00Z") and `date(SegmentStartTime) ge ...`
+    //     returns empty
+    //   - $orderby=SegmentStartTime desc is silently ignored — the response
+    //     comes back in some other order (oldest-ish first, observed)
+    // Workaround: pull a large unsorted page, sort + date-filter client-side.
+    // Real production PBXs need a smarter pagination strategy here, but the
+    // typical "Today / Yesterday / Last 7 days" preset usage on Barry's
+    // setup (a few hundred segments per day across the portfolio) fits
+    // inside one $top=2000 page.
+    //
+    // Field names: SegmentStartTime / SegmentEndTime / SrcDn / DstDn
+    // (NOT CallerNumber/CalleeNumber).
     const params = new URLSearchParams();
     const filters: string[] = [];
-    const sinceDate = opts.since.length >= 10 ? opts.since.slice(0, 10) : opts.since;
-    filters.push(`date(SegmentStartTime) ge ${sinceDate}`);
-    if (opts.until) {
-      const untilDate = opts.until.slice(0, 10);
-      filters.push(`date(SegmentStartTime) le ${untilDate}`);
-    }
     if (opts.extension) {
       filters.push(`(SrcDn eq '${opts.extension}' or DstDn eq '${opts.extension}')`);
     }
     if (filters.length) params.set("$filter", filters.join(" and "));
-    const top = Math.min(500, Math.max(1, opts.limit ?? 100));
-    params.set("$top", String(top));
+    const requestTop = 2000;
+    params.set("$top", String(requestTop));
     const skip = opts.cursor ? Number(opts.cursor) : 0;
     if (skip > 0) params.set("$skip", String(skip));
-    params.set("$orderby", "SegmentStartTime desc");
+    // 3CX silently ignores $orderby=SegmentStartTime desc on this endpoint
+    // (returns oldest-first regardless). $orderby=SegmentId desc DOES work
+    // on most v20 installs — SegmentId is monotonically increasing so
+    // sorting by it desc gets us newest-first.
+    params.set("$orderby", "SegmentId desc");
+    params.set("$count", "true");
 
     const data = await this.client.get<ODataList<RawCallRecord>>(
       `${EP.callHistory}?${params.toString()}`,
     );
-    const calls = (data.value ?? []).map((r) => toCallRecord(r, exposeRecordings));
-    // Direction filter applied client-side because OData filtering on Direction
-    // requires knowing 3CX's exact enum casing on this install.
+    const rawRows = data.value ?? [];
+    console.log(
+      JSON.stringify({
+        debug: "listCallHistory.raw",
+        odataCount: data["@odata.count"],
+        rawCount: rawRows.length,
+        firstRawId: rawRows[0]?.SegmentId,
+        firstRawTime: rawRows[0]?.SegmentStartTime,
+        lastRawId: rawRows[rawRows.length - 1]?.SegmentId,
+        lastRawTime: rawRows[rawRows.length - 1]?.SegmentStartTime,
+      }),
+    );
+    const calls = rawRows.map((r) => toCallRecord(r, exposeRecordings));
+
+    // Client-side date narrowing — the only reliable form on this API.
+    const sinceMs = opts.since ? Date.parse(opts.since) : 0;
+    const untilMs = opts.until ? Date.parse(opts.until) : Infinity;
+    const dateFiltered = calls.filter((c) => {
+      const t = Date.parse(c.startedAt);
+      return Number.isFinite(t) && t >= sinceMs && t <= untilMs;
+    });
+
     const directionFiltered = opts.direction
-      ? calls.filter((c) => c.direction === opts.direction)
-      : calls;
+      ? dateFiltered.filter((c) => c.direction === opts.direction)
+      : dateFiltered;
     const queueFiltered = opts.queue
       ? directionFiltered.filter((c) => c.queue === opts.queue)
       : directionFiltered;
     const scopeFiltered = filterCallHistory(filter, queueFiltered);
+
+    // Sort newest-first client-side. 3CX's $orderby on this endpoint is
+    // silently ignored, so we can't rely on the server's order.
+    scopeFiltered.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+
+    // Cap to the operator's requested limit AFTER filtering (the limit is
+    // a display preference, not a fetch optimization, given the API can't
+    // filter server-side).
+    const displayLimit = Math.min(1000, Math.max(1, opts.limit ?? 100));
+    const trimmed = scopeFiltered.slice(0, displayLimit);
+
+    // Pagination: only offer a nextCursor if we actually hit the server's
+    // page cap AND haven't already filtered to the requested limit.
     const next =
-      data["@odata.nextLink"] || scopeFiltered.length === top
-        ? String(skip + top)
+      rawRows.length === requestTop && trimmed.length === displayLimit
+        ? String(skip + requestTop)
         : undefined;
-    return { calls: scopeFiltered, nextCursor: next };
+    return { calls: trimmed, nextCursor: next };
   }
 
   async listDids(filter: ScopeFilter): Promise<NormalizedDid[]> {
@@ -354,6 +400,28 @@ export class V20XapiEngine implements ThreeCxEngine {
       email: u.EmailAddress ?? undefined,
     }));
     return filterExtensions(filter, normalized);
+  }
+
+  async listTrunks(_filter: ScopeFilter): Promise<NormalizedTrunk[]> {
+    // /xapi/v1/Trunks is a config-level enumeration on 3CX v20. Field names
+    // verified against the live OData $metadata 2026-05-17: provider lives at
+    // Gateway.Name, registration is the boolean IsOnline, channel cap is
+    // SimultaneousCalls, and the carrier-facing DID is ExternalNumber. The
+    // legacy guesses (ProviderName / RegistrationStatus / SimCalls / Channels)
+    // are retained as fallbacks so older or non-v20 installs still degrade
+    // gracefully instead of regressing.
+    const data = await this.client.getCached<ODataList<RawTrunk>>(EP.trunks);
+    return (data.value ?? []).map((t) => ({
+      id: String(t.Id ?? t.Number ?? t.Name ?? ""),
+      name: t.Name ?? t.Number ?? String(t.Id ?? ""),
+      provider: t.Gateway?.Name ?? t.ProviderName ?? t.Provider ?? undefined,
+      registered:
+        typeof t.IsOnline === "boolean"
+          ? t.IsOnline
+          : trunkStatusOk(t.RegistrationStatus ?? t.Status),
+      channels: t.SimultaneousCalls ?? t.SimCalls ?? t.Channels ?? undefined,
+      number: t.ExternalNumber ?? t.AuthID ?? t.Number ?? undefined,
+    }));
   }
 
   // ─── Recordings (Phase 4) ────────────────────────────────────────
@@ -867,6 +935,12 @@ interface RawUser {
   IsInCall?: boolean;
 }
 
+function trunkStatusOk(s: string | undefined): boolean {
+  if (!s) return false;
+  const v = s.toLowerCase();
+  return v.includes("registered") || v.includes("online") || v.includes("inservice") || v === "ok";
+}
+
 interface RawCallRecord {
   /** Per the 3CX v20 swagger/forum examples, the canonical fields are these.
    *  Older docs / swagger excerpts still reference CallId, etc. — accept both. */
@@ -905,15 +979,39 @@ interface RawDayStats {
   slaTargetSec?: number;
 }
 
+/**
+ * 3CX v20 Trunks entity shape. Used by listDids (extracts DidNumbers),
+ * listTrunks (extracts registration status + channel info), and
+ * indirectly by getTodayStats fallbacks.
+ *
+ * Field names vary across 3CX versions and across the OData vs internal
+ * representations. The normalizer accepts whichever variant is
+ * populated and falls back to undefined for missing fields.
+ */
 interface RawTrunk {
-  Number?: string;
+  Id?: number | string;
   /** Top-level `Name` may be absent on v20 trunks; the human-friendly
    *  display name lives at `Gateway.Name`. We accept both for resilience. */
   Name?: string;
+  Number?: string;
   Gateway?: { Name?: string; Type?: string };
   /** v20 returns a plain `string[]` of E.164 (or bare) DIDs. Older
    *  swaggers reference an object array; we accept both for robustness. */
   DidNumbers?: Array<string | RawDid>;
+  // listTrunks fields — names verified against the live v20 OData $metadata
+  // (`Pbx.Trunk` entity extends `Pbx.DN`) 2026-05-17:
+  IsOnline?: boolean;
+  SimultaneousCalls?: number;
+  ExternalNumber?: string;
+  AuthID?: string;
+  // Legacy/fallback names from earlier swagger excerpts — retained so non-v20
+  // engines (or older installs) still populate the normalized shape:
+  ProviderName?: string;
+  Provider?: string;
+  RegistrationStatus?: string;
+  Status?: string;
+  SimCalls?: number;
+  Channels?: number;
 }
 
 interface RawDid {
@@ -1256,20 +1354,73 @@ function pickServerNow(calls: RawActiveCall[] | undefined): number {
 }
 
 function toActiveCall(r: RawActiveCall): NormalizedActiveCall {
-  const startedAt = r.StartedAt ?? new Date().toISOString();
+  // Confirmed live shape (Carr Rock 3CX v20.0.x):
+  //   Caller / Callee = "<segment_id> <display_name> (<phone_or_ext>)"
+  //   EstablishedAt = ISO timestamp of current leg
+  //   ServerNow = ISO timestamp at fetch time (skew-free)
+  //   Status = "Talking" / "Routing" / "Ringing" / etc.
+  // Older field names (CallId, CallerNumber, Extension, Queue, StartedAt,
+  // DurationSec, Direction) are kept as fallback for any 3CX version that
+  // happens to populate them, but the live v20 shape doesn't.
+  const startedAt = r.EstablishedAt ?? r.StartedAt ?? new Date().toISOString();
+  const serverNowMs = r.ServerNow ? Date.parse(r.ServerNow) : Date.now();
+  const establishedMs = Date.parse(startedAt);
   const dur =
-    r.DurationSec ??
-    Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+    typeof r.DurationSec === "number"
+      ? r.DurationSec
+      : Number.isFinite(establishedMs)
+        ? Math.max(0, Math.floor((serverNowMs - establishedMs) / 1000))
+        : 0;
+
+  const callerNum = extractCallerNumber(r.Caller);
+  const calleeNum = extractCallerNumber(r.Callee);
+
+  // "From" / "To" prefer the parenthesized number if 3CX provided one;
+  // otherwise fall back to the leading-token (extension number) so the
+  // wallboard shows ext-to-ext internal calls usefully.
+  const fromDisplay =
+    callerNum ??
+    firstToken(r.Caller) ??
+    r.CallerNumber ??
+    r.Caller ??
+    "";
+  const toDisplay =
+    calleeNum ??
+    firstToken(r.Callee) ??
+    r.CalleeNumber ??
+    r.Callee ??
+    "";
+
+  // Direction heuristic: a 10+digit caller (PSTN) implies inbound;
+  // a 10+digit callee implies outbound; both <5 digits = internal.
+  // 3CX doesn't populate r.Direction on the live payload, so this is the
+  // best we can do without consulting the trunks table.
+  let direction = mapDirection(r.Direction);
+  if (!r.Direction) {
+    const callerLong = callerNum && callerNum.replace(/\D/g, "").length >= 10;
+    const calleeLong = calleeNum && calleeNum.replace(/\D/g, "").length >= 10;
+    if (callerLong && !calleeLong) direction = "inbound";
+    else if (!callerLong && calleeLong) direction = "outbound";
+    else direction = "internal";
+  }
+
   return {
     callId: String(r.CallId ?? r.Id ?? ""),
-    fromNumber: r.CallerNumber ?? r.Caller ?? "",
-    toNumber: r.CalleeNumber ?? r.Callee ?? "",
+    fromNumber: fromDisplay,
+    toNumber: toDisplay,
     extension: r.Extension,
     queue: r.Queue,
     startedAt,
     durationSec: dur,
-    direction: mapDirection(r.Direction),
+    direction,
   };
+}
+
+/** First space-separated token of a Caller/Callee display string. */
+function firstToken(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  const t = s.split(/\s+/, 1)[0];
+  return t || undefined;
 }
 
 function toAgent(r: RawUser): NormalizedAgent {

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.5.3";
+const PLUGIN_VERSION = "0.6.0";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -316,6 +316,16 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "api.routes.register",
     "ui.sidebar.register",
     "ui.page.register",
+    "jobs.schedule",
+  ],
+  jobs: [
+    {
+      jobKey: "ingest-call-history",
+      displayName: "Ingest call history from 3CX",
+      description:
+        "Polls /xapi/v1/Recordings (the only XAPI surface with reliably-current call metadata on v20) every 5 minutes, normalizes each row to NormalizedCallRecord shape, and merges into the local cache keyed by account. The Call history page reads from this cache, so the operator sees their calls without round-tripping XAPI per request.",
+      schedule: "*/5 * * * *",
+    },
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -746,11 +756,61 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   ],
   ui: {
     slots: [
+      // ─── Phone navigation root ───
+      // ONE sidebar item that renders the entire collapsible Phone tree
+      // (Live / History / Directory). Replaces the v0.5.x top-level
+      // "Recordings" entry.
       {
         type: "sidebar",
-        id: "recordings-sidebar",
-        displayName: "Recordings",
-        exportName: "RecordingsSidebarItem",
+        id: "phone-sidebar",
+        displayName: "Phone",
+        exportName: "PhoneSidebarItem",
+      },
+
+      // ─── Phone → Live ───
+      {
+        type: "page",
+        id: "phone-active-calls",
+        displayName: "Active calls",
+        exportName: "ActiveCallsPage",
+        routePath: "phone-active-calls",
+      },
+      {
+        type: "page",
+        id: "phone-parked-calls",
+        displayName: "Parked calls",
+        exportName: "ParkedCallsPage",
+        routePath: "phone-parked-calls",
+      },
+      {
+        type: "page",
+        id: "phone-queues",
+        displayName: "Queues",
+        exportName: "QueuesPage",
+        routePath: "phone-queues",
+      },
+      {
+        type: "page",
+        id: "phone-agents",
+        displayName: "Agents",
+        exportName: "AgentsPage",
+        routePath: "phone-agents",
+      },
+      {
+        type: "page",
+        id: "phone-wallboard",
+        displayName: "Wallboard",
+        exportName: "WallboardPage",
+        routePath: "phone-wallboard",
+      },
+
+      // ─── Phone → History ───
+      {
+        type: "page",
+        id: "phone-call-history",
+        displayName: "Call history",
+        exportName: "CallHistoryPage",
+        routePath: "phone-call-history",
       },
       {
         type: "page",
@@ -758,6 +818,36 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         displayName: "Recordings",
         exportName: "RecordingsPage",
         routePath: "recordings",
+      },
+      {
+        type: "page",
+        id: "phone-daily-report",
+        displayName: "Daily report",
+        exportName: "DailyReportPage",
+        routePath: "phone-daily-report",
+      },
+
+      // ─── Phone → Directory ───
+      {
+        type: "page",
+        id: "phone-dids",
+        displayName: "DIDs",
+        exportName: "DidsPage",
+        routePath: "phone-dids",
+      },
+      {
+        type: "page",
+        id: "phone-extensions",
+        displayName: "Extensions",
+        exportName: "ExtensionsPage",
+        routePath: "phone-extensions",
+      },
+      {
+        type: "page",
+        id: "phone-trunks",
+        displayName: "Trunks",
+        exportName: "TrunksPage",
+        routePath: "phone-trunks",
       },
     ],
   },
