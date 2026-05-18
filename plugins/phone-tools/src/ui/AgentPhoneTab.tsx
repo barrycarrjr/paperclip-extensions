@@ -46,6 +46,8 @@ interface OperatorPhone {
 export function AgentPhoneTab(_props: PluginDetailTabProps) {
   const host = useHostContext();
   const agentId = host.entityId ?? "";
+  const companyPrefix = host.companyPrefix ? `/${host.companyPrefix}` : "";
+  const editUrl = agentId ? `${companyPrefix}/assistants/${agentId}/edit` : null;
   const status = usePluginData<PhoneStatus>("assistants.agent-phone-status", {
     companyId: host.companyId,
     agentId,
@@ -100,14 +102,29 @@ export function AgentPhoneTab(_props: PluginDetailTabProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {!config && (
-        <div style={{ padding: 12, border: "1px solid var(--border)", fontSize: 13 }}>
-          Phone capability isn't configured for {assistantName} yet. Use the Assistant Builder
-          wizard or the Configuration tab to set voice, caller ID, and a daily cap.
+        <div style={{ padding: 12, border: "1px solid var(--border)", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <span>
+            Phone capability isn't configured for {assistantName} yet. Use the Assistant Builder
+            wizard to set voice, caller ID, and a daily cap.
+          </span>
+          {editUrl && (
+            <a href={editUrl} style={smallSecondaryButton}>
+              Open in editor
+            </a>
+          )}
         </div>
       )}
 
       {config && (
         <div style={{ display: "grid", gap: 12, padding: 16, border: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <strong style={{ fontSize: 13 }}>Phone configuration</strong>
+            {editUrl && (
+              <a href={editUrl} style={smallSecondaryButton}>
+                ✎ Edit assistant
+              </a>
+            )}
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", rowGap: 6, fontSize: 13 }}>
             <span style={{ color: "var(--muted-foreground)" }}>Voice</span>
             <span>{config.voice ?? "—"}</span>
