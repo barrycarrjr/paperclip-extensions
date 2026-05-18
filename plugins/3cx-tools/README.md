@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.6.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.6.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.6.1** — Fix: SIP Trunks page (added in v0.6.0) rendered every trunk as **provider `—`, status `unregistered`, channels `—`** regardless of actual PBX state. The v0.6.0 normalizer guessed at the field names on `/xapi/v1/Trunks` (`ProviderName` / `RegistrationStatus` / `SimCalls`) but the real `Pbx.Trunk` entity on v20 (verified live against the OData `$metadata` 2026-05-17) uses `Gateway.Name`, `IsOnline` (Edm.Boolean), `SimultaneousCalls`, and `ExternalNumber` for the carrier-facing DID. The mapper now reads the correct names first and keeps the old guesses as legacy fallbacks so non-v20 engines still degrade gracefully. The `RawTrunk` shape adds `IsOnline`, `SimultaneousCalls`, and `ExternalNumber`. No agent-facing tool changes — only the operator UI was reading these fields.

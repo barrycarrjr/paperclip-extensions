@@ -27,7 +27,7 @@ const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
   "phone-tools":
-    "Setup-tab documentation in the manifest now covers all v0.5.x features across 11 sectioned walkthroughs — warm transfer, campaigns, federal DNC, audit export, predictive pacing, portfolio rollup — with time-to-complete and required-vs-optional indicators. Closes the gap where the in-Paperclip Setup tab only documented v0.1.0 onboarding. Pure docs change.",
+    "Verified personal caller IDs API via Twilio's OutgoingCallerIds (list/start-verification/delete) so agents can place calls from a verified personal number. Per-call reason substitution with a universal preflight rule plus a dedicated Gather Info task. Assistant editing UI in the Agent Phone tab.",
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";
