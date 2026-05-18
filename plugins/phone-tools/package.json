@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-phone-tools",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Paperclip plugin that lets agents make and receive AI-driven phone calls. Engine-pluggable: Vapi.ai (managed) or DIY (self-hosted Jambonz + Anthropic/OpenAI via plain HTTP). Multi-account, per-account company isolation, mutations gated.",
   "type": "module",
   "private": true,

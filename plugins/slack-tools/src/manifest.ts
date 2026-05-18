@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.4.18";
+const PLUGIN_VERSION = "0.4.19";
 
 const workspaceItemSchema = {
   type: "object",
