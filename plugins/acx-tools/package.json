@@ -1,7 +1,7 @@
 {
-  "name": "paperclip-plugin-social-poster",
-  "version": "0.4.0",
-  "description": "Paperclip plugin that posts to Facebook Pages, Instagram Business, and X (Twitter) via their public APIs. Encrypted credentials, brand-variant guardrails, optional scheduling.",
+  "name": "paperclip-plugin-acx-tools",
+  "version": "0.1.0",
+  "description": "Paperclip plugin that exposes Audible/ACX audiobook publishing operations as agent tools. Validates audio files against ACX technical specs, manages the pending/published/error folder pipeline, and submits to ACX.",
   "type": "module",
   "private": true,
   "exports": {
@@ -17,7 +17,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "^2026.427.0"
+    "@paperclipai/plugin-sdk": "^2026.427.0",
+    "music-metadata": "^10.0.0",
+    "sharp": "^0.33.0"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
@@ -26,5 +28,5 @@
     "typescript": "^5.7.3"
   },
   "license": "MIT",
-  "author": "Barry Carr & Tony Allard"
+  "author": "BookZeta"
 }

@@ -1,0 +1,16 @@
+import esbuild from "esbuild";
+import { createPluginBundlerPresets } from "@paperclipai/plugin-sdk/bundlers";
+
+const { esbuild: presets } = createPluginBundlerPresets();
+
+const REQUIRE_BANNER =
+  "import { createRequire as __pcCreateRequire } from 'node:module';" +
+  "const require = __pcCreateRequire(import.meta.url);";
+
+await Promise.all([
+  esbuild.build({
+    ...presets.worker,
+    banner: { ...(presets.worker.banner ?? {}), js: REQUIRE_BANNER },
+  }),
+  esbuild.build(presets.manifest),
+]);

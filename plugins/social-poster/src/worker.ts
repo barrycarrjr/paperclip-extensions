@@ -37,11 +37,30 @@ interface XAccount {
   allowedCompanies?: string[];
 }
 
+interface TiktokAccount {
+  name?: string;
+  key?: string;
+  accessToken?: string;
+  brandVariant?: "standard" | "kids";
+  allowedCompanies?: string[];
+}
+
+interface ThreadsAccount {
+  name?: string;
+  key?: string;
+  threadsUserId?: string;
+  accessToken?: string;
+  brandVariant?: "standard" | "kids";
+  allowedCompanies?: string[];
+}
+
 interface InstanceConfig {
   allowPublish?: boolean;
   facebookPages?: FacebookPage[];
   instagramAccounts?: InstagramAccount[];
   xAccounts?: XAccount[];
+  tiktokAccounts?: TiktokAccount[];
+  threadsAccounts?: ThreadsAccount[];
 }
 
 const FB_GRAPH = "https://graph.facebook.com/v19.0";
@@ -414,6 +433,140 @@ async function postX(
   };
 }
 
+async function postTiktok(
+  ctx: PluginContext,
+  config: InstanceConfig,
+  runCtx: ToolRunContext,
+  params: { account?: string; video_url?: string; text?: string },
+): Promise<ToolResult> {
+  if (!params.account) return { error: "account is required" };
+  if (!params.video_url) return { error: "video_url is required" };
+
+  const cfg = findByKey(config.tiktokAccounts, params.account);
+  if (!cfg) return { error: `TikTok account "${params.account}" not configured.` };
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "post_to_tiktok",
+      resourceLabel: `social-poster TikTok account "${params.account}"`,
+      resourceKey: params.account,
+      allowedCompanies: cfg.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
+  if (!cfg.accessToken) return { error: "TikTok accessToken is required." };
+  if ((cfg.brandVariant ?? "standard") === "kids" && params.text) {
+    const v = violatesKidsGuardrail(params.text);
+    if (v) return { error: v };
+  }
+
+  const token = await ctx.secrets.resolve(cfg.accessToken);
+  const url = "https://open.tiktokapis.com/v2/post/publish/video/init/";
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      post_info: { title: params.text || "", privacy_level: "PUBLIC_TO_EVERYONE" },
+      source_info: { source: "PULL_FROM_URL", video_url: params.video_url },
+    }),
+  });
+  
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!res.ok || !json || json.error) {
+    return { error: `[ETIKTOK_PUBLISH] ${json ? JSON.stringify(json) : "HTTP " + res.status}` };
+  }
+
+  await ctx.telemetry.track("social-poster.post_to_tiktok", {
+    account: cfg.key ?? "",
+    companyId: runCtx.companyId,
+  });
+  
+  return {
+    content: `Posted to TikTok. Response: ${JSON.stringify(json.data ?? json)}`,
+    data: { ok: true, platform: "tiktok", account: cfg.key, response: json.data },
+  };
+}
+
+async function postThreads(
+  ctx: PluginContext,
+  config: InstanceConfig,
+  runCtx: ToolRunContext,
+  params: { account?: string; text?: string; image_url?: string },
+): Promise<ToolResult> {
+  if (!params.account) return { error: "account is required" };
+  if (!params.text && !params.image_url) return { error: "text or image_url is required" };
+
+  const cfg = findByKey(config.threadsAccounts, params.account);
+  if (!cfg) return { error: `Threads account "${params.account}" not configured.` };
+
+  try {
+    assertCompanyAccess(ctx, {
+      tool: "post_to_threads",
+      resourceLabel: `social-poster Threads account "${params.account}"`,
+      resourceKey: params.account,
+      allowedCompanies: cfg.allowedCompanies,
+      companyId: runCtx.companyId,
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+
+  if (!cfg.threadsUserId || !cfg.accessToken) return { error: "Threads threadsUserId and accessToken are required." };
+  if ((cfg.brandVariant ?? "standard") === "kids" && params.text) {
+    const v = violatesKidsGuardrail(params.text);
+    if (v) return { error: v };
+  }
+
+  const token = await ctx.secrets.resolve(cfg.accessToken);
+
+  const containerForm = new URLSearchParams();
+  containerForm.set("media_type", params.image_url ? "IMAGE" : "TEXT");
+  if (params.text) containerForm.set("text", params.text);
+  if (params.image_url) containerForm.set("image_url", params.image_url);
+  containerForm.set("access_token", token);
+
+  const containerRes = await fetch(`${FB_GRAPH}/${cfg.threadsUserId}/threads`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: containerForm.toString(),
+  });
+  const containerJson = (await containerRes.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!containerRes.ok || !containerJson?.id) {
+    return { error: `[ETHREADS_CONTAINER] ${containerJson ? JSON.stringify(containerJson) : "HTTP " + containerRes.status}` };
+  }
+
+  const publishForm = new URLSearchParams();
+  publishForm.set("creation_id", String(containerJson.id));
+  publishForm.set("access_token", token);
+
+  const publishRes = await fetch(`${FB_GRAPH}/${cfg.threadsUserId}/threads_publish`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: publishForm.toString(),
+  });
+  const publishJson = (await publishRes.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!publishRes.ok || !publishJson?.id) {
+    return { error: `[ETHREADS_PUBLISH] ${publishJson ? JSON.stringify(publishJson) : "HTTP " + publishRes.status}` };
+  }
+
+  await ctx.telemetry.track("social-poster.post_to_threads", {
+    account: cfg.key ?? "",
+    companyId: runCtx.companyId,
+  });
+  
+  return {
+    content: `Posted to Threads ${cfg.threadsUserId}. Media ID ${publishJson.id}.`,
+    data: { ok: true, platform: "threads", account: cfg.key, media_id: publishJson.id },
+  };
+}
+
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     ctx.logger.info("social-poster plugin setup");
@@ -436,6 +589,8 @@ const plugin = definePlugin({
       ...(config.facebookPages ?? []).map((r) => ({ kind: "facebook", r })),
       ...(config.instagramAccounts ?? []).map((r) => ({ kind: "instagram", r })),
       ...(config.xAccounts ?? []).map((r) => ({ kind: "x", r })),
+      ...(config.tiktokAccounts ?? []).map((r) => ({ kind: "tiktok", r })),
+      ...(config.threadsAccounts ?? []).map((r) => ({ kind: "threads", r })),
     ];
     const orphans = allResources.filter(
       ({ r }) => !r.allowedCompanies || r.allowedCompanies.length === 0,
@@ -527,6 +682,52 @@ const plugin = definePlugin({
         const blocked = !fresh.allowPublish ? gateAllowPublish("post_to_x") : null;
         if (blocked) return blocked;
         return postX(ctx, fresh, runCtx, params as Parameters<typeof postX>[3]);
+      },
+    );
+
+    ctx.tools.register(
+      "post_to_tiktok",
+      {
+        displayName: "Post to TikTok",
+        description: "Publish a video post to a TikTok account. Requires video_url to be a publicly reachable URL.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            video_url: { type: "string" },
+            text: { type: "string" },
+          },
+          required: ["account", "video_url"],
+        },
+      },
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
+        const fresh = (await ctx.config.get()) as InstanceConfig;
+        const blocked = !fresh.allowPublish ? gateAllowPublish("post_to_tiktok") : null;
+        if (blocked) return blocked;
+        return postTiktok(ctx, fresh, runCtx, params as Parameters<typeof postTiktok>[3]);
+      },
+    );
+
+    ctx.tools.register(
+      "post_to_threads",
+      {
+        displayName: "Post to Threads",
+        description: "Publish a post to a Threads account.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            text: { type: "string" },
+            image_url: { type: "string" },
+          },
+          required: ["account"],
+        },
+      },
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
+        const fresh = (await ctx.config.get()) as InstanceConfig;
+        const blocked = !fresh.allowPublish ? gateAllowPublish("post_to_threads") : null;
+        if (blocked) return blocked;
+        return postThreads(ctx, fresh, runCtx, params as Parameters<typeof postThreads>[3]);
       },
     );
   },

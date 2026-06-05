@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "social-poster";
-const PLUGIN_VERSION = "0.3.19";
+const PLUGIN_VERSION = "0.4.0";
 
 const SETUP_INSTRUCTIONS = `# Setup — Social Poster
 
@@ -304,6 +304,89 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           },
         },
       },
+      tiktokAccounts: {
+        type: "array",
+        title: "TikTok Accounts",
+        description: "Each TikTok account the plugin can post to. Requires an access token.",
+        items: {
+          type: "object",
+          required: ["key", "accessToken", "allowedCompanies"],
+          properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description: "Human-readable label shown in this settings form.",
+            },
+            key: {
+              type: "string",
+              title: "Identifier",
+              description: "Short stable ID agents pass when posting from this account (e.g. 'main_tiktok'). Lowercase, no spaces.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description: "Companies allowed to post from this TikTok account.",
+            },
+            accessToken: {
+              type: "string",
+              format: "secret-ref",
+              title: "Access Token",
+              description: "User-context access token for TikTok API.",
+            },
+            brandVariant: {
+              type: "string",
+              title: "Brand variant",
+              enum: ["standard", "kids"],
+              default: "standard",
+            },
+          },
+        },
+      },
+      threadsAccounts: {
+        type: "array",
+        title: "Threads Accounts",
+        description: "Each Threads account the plugin can post to. Threads uses the Graph API similarly to Instagram.",
+        items: {
+          type: "object",
+          required: ["key", "threadsUserId", "accessToken", "allowedCompanies"],
+          properties: {
+            name: {
+              type: "string",
+              title: "Display name",
+              description: "Human-readable label shown in this settings form.",
+            },
+            key: {
+              type: "string",
+              title: "Identifier",
+              description: "Short stable ID agents pass when posting from this account (e.g. 'main_threads'). Lowercase, no spaces.",
+            },
+            allowedCompanies: {
+              type: "array",
+              items: { type: "string", format: "company-id" },
+              title: "Allowed companies",
+              description: "Companies allowed to post from this Threads account.",
+            },
+            threadsUserId: {
+              type: "string",
+              title: "Threads User ID",
+              description: "Threads Account ID from Graph API.",
+            },
+            accessToken: {
+              type: "string",
+              format: "secret-ref",
+              title: "Access Token",
+              description: "Page Access Token from Facebook/Meta used for Threads publishing.",
+            },
+            brandVariant: {
+              type: "string",
+              title: "Brand variant",
+              enum: ["standard", "kids"],
+              default: "standard",
+            },
+          },
+        },
+      },
       allowPublish: {
         type: "boolean",
         title: "Allow publishing",
@@ -397,6 +480,52 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           },
         },
         required: ["account", "text"],
+      },
+    },
+    {
+      name: "post_to_tiktok",
+      displayName: "Post to TikTok",
+      description: "Publish a video post to a TikTok account.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: {
+            type: "string",
+            description: "TikTok account identifier as configured.",
+          },
+          video_url: {
+            type: "string",
+            description: "Public URL of the video to post.",
+          },
+          text: {
+            type: "string",
+            description: "Optional caption text.",
+          },
+        },
+        required: ["account", "video_url"],
+      },
+    },
+    {
+      name: "post_to_threads",
+      displayName: "Post to Threads",
+      description: "Publish a post to a Threads account.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: {
+            type: "string",
+            description: "Threads account identifier as configured.",
+          },
+          text: {
+            type: "string",
+            description: "Optional text of the post.",
+          },
+          image_url: {
+            type: "string",
+            description: "Optional image URL for the post.",
+          },
+        },
+        required: ["account"],
       },
     },
   ],

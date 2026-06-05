@@ -1,7 +1,7 @@
 {
-  "name": "paperclip-plugin-social-poster",
-  "version": "0.4.0",
-  "description": "Paperclip plugin that posts to Facebook Pages, Instagram Business, and X (Twitter) via their public APIs. Encrypted credentials, brand-variant guardrails, optional scheduling.",
+  "name": "paperclip-plugin-youtube-tools",
+  "version": "0.1.0",
+  "description": "Paperclip plugin that exposes YouTube upload, metadata update, thumbnail, and playlist operations as agent tools. Uses YouTube Data API v3 with OAuth2 refresh token authentication.",
   "type": "module",
   "private": true,
   "exports": {
@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "^2026.427.0"
+    "@paperclipai/plugin-sdk": "^2026.427.0",
+    "googleapis": "^144.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
@@ -26,5 +27,5 @@
     "typescript": "^5.7.3"
   },
   "license": "MIT",
-  "author": "Barry Carr & Tony Allard"
+  "author": "BookZeta"
 }
