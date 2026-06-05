@@ -5,7 +5,7 @@ const PLUGIN_VERSION = "0.16.13";
 
 const mailboxItemSchema = {
   type: "object",
-  required: ["key", "imapHost", "user", "pass", "allowedCompanies"],
+  required: ["key", "imapHost", "user", "allowedCompanies"],
   "x-paperclip-actions": [
     {
       actionKey: "test-mailbox",
@@ -24,6 +24,7 @@ const mailboxItemSchema = {
     "key",
     "name",
     "user",
+    "authType",
     "pass",
     "imapHost",
     // Access control
@@ -48,6 +49,16 @@ const mailboxItemSchema = {
   ],
   properties: {
     // ---- Identity & primary connection (required, top of form) ----
+    authType: {
+      type: "string",
+      enum: ["basic", "oauth2"],
+      default: "basic",
+      title: "Authentication method",
+      description:
+        "How this mailbox signs in. 'basic' = username + app password (Gmail, Rackspace, Spacemail, etc.). " +
+        "'oauth2' = Sign in with Microsoft — REQUIRED for Outlook / Hotmail / Office 365, which no longer accept app passwords. " +
+        "For oauth2, leave Password blank, save, then open the Connect URL to sign in with Microsoft.",
+    },
     key: {
       type: "string",
       title: "Identifier",
@@ -325,6 +336,33 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
     "database.namespace.migrate",
     "database.namespace.read",
     "database.namespace.write",
+    "api.routes.register",
+  ],
+  apiRoutes: [
+    {
+      // Operator clicks "Connect" → we 302-redirect the browser to Microsoft.
+      // companyId is required only to satisfy the host's company-scoping gate;
+      // the OAuth flow itself is instance-level (the target mailbox is carried
+      // in the `mailbox` query param and the signed `state`).
+      routeKey: "oauth.start",
+      method: "GET",
+      path: "/oauth/start",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      // Microsoft redirects the browser back here with ?code&state. The redirect
+      // is a top-level navigation in the operator's browser, so it carries the
+      // Paperclip session cookie (and loopback is trusted in local mode).
+      // companyId is baked into the registered redirect URI's query string.
+      routeKey: "oauth.callback",
+      method: "GET",
+      path: "/oauth/callback",
+      auth: "board",
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
   ],
   database: {
     namespaceSlug: "email_tools",
@@ -336,8 +374,20 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["allowSend", "pollIntervalMinutes", "mailboxes"],
+    propertyOrder: ["allowSend", "pollIntervalMinutes", "oauthMicrosoftClientId", "oauthRedirectUri", "mailboxes"],
     properties: {
+      oauthMicrosoftClientId: {
+        type: "string",
+        title: "Microsoft OAuth Client ID",
+        description:
+          "Azure Entra 'Application (client) ID' of your registered app. Required for any mailbox using 'oauth2' auth (Outlook / Hotmail / Office 365). Public-client PKCE — no client secret is stored.",
+      },
+      oauthRedirectUri: {
+        type: "string",
+        title: "Microsoft OAuth Redirect URI",
+        description:
+          "Must match the redirect URI registered in the Azure app exactly, e.g. http://localhost:3100/api/plugins/<pluginId>/api/oauth/callback",
+      },
       allowSend: {
         type: "boolean",
         title: "Allow sending",

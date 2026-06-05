@@ -30,6 +30,7 @@ import {
 import { IdleManager } from "./idle.js";
 import { buildThread } from "./threading.js";
 import { testMailbox } from "./test-mailbox.js";
+import { getAccessToken, startAuth, handleCallback } from "./oauth.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 interface SmtpRuntime {
@@ -40,6 +41,8 @@ interface SmtpRuntime {
   smtpUser: string;
   smtpPass: string;
   smtpFrom: string;
+  /** OAuth2 access token (XOAUTH2). When set, takes precedence over smtpPass. */
+  accessToken?: string;
 }
 
 function findConfigMailbox(config: InstanceConfig, key: string): ConfigMailbox | undefined {
@@ -58,13 +61,25 @@ async function buildSmtpRuntime(
 ): Promise<SmtpRuntime> {
   if (!cfg.imapHost) throw new Error(`Mailbox "${key}": imapHost is required.`);
   if (!cfg.user) throw new Error(`Mailbox "${key}": user is required.`);
-  if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
-  const smtpPass = await ctx.secrets.resolve(cfg.pass);
   const smtpPort = typeof cfg.smtpPort === "number" ? cfg.smtpPort : 465;
   if (!Number.isFinite(smtpPort) || smtpPort <= 0 || smtpPort > 65535) {
     throw new Error(`Mailbox "${key}": invalid smtpPort ${smtpPort}.`);
   }
   const smtpSecure = typeof cfg.smtpSecure === "boolean" ? cfg.smtpSecure : smtpPort === 465;
+
+  let smtpPass = "";
+  let accessToken: string | undefined;
+  if (cfg.authType === "oauth2") {
+    const clientId = ((await ctx.config.get()) as InstanceConfig).oauthMicrosoftClientId;
+    if (!clientId) {
+      throw new Error(`Mailbox "${key}": OAuth is enabled but no Microsoft OAuth Client ID is set on the plugin settings page.`);
+    }
+    accessToken = await getAccessToken(ctx, { clientId, mailboxKey: key });
+  } else {
+    if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
+    smtpPass = await ctx.secrets.resolve(cfg.pass);
+  }
+
   return {
     key,
     smtpHost: cfg.smtpHost ?? deriveSmtpHost(cfg.imapHost),
@@ -72,6 +87,7 @@ async function buildSmtpRuntime(
     smtpSecure,
     smtpUser: cfg.smtpUser ?? cfg.user,
     smtpPass,
+    accessToken,
     smtpFrom: cfg.smtpFrom ?? cfg.user,
   };
 }
@@ -125,7 +141,9 @@ async function sendViaSmtp(rt: SmtpRuntime, input: SendInput): Promise<{
     host: rt.smtpHost,
     port: rt.smtpPort,
     secure: rt.smtpSecure,
-    auth: { user: rt.smtpUser, pass: rt.smtpPass },
+    auth: rt.accessToken
+      ? { type: "OAuth2", user: rt.smtpUser, accessToken: rt.accessToken }
+      : { user: rt.smtpUser, pass: rt.smtpPass },
   });
   try {
     const info = await transporter.sendMail({
@@ -174,11 +192,35 @@ function resolveFolder(cfg: ConfigMailbox, override: unknown): string {
   return cfg.pollFolder ?? "INBOX";
 }
 
+function firstQuery(q: Record<string, string | string[]>, key: string): string {
+  const v = q[key];
+  return Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
+}
+
+function oauthHtmlPage(message: string): {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+} {
+  return {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body:
+      `<!doctype html><html><head><meta charset="utf-8"><title>Paperclip Email — OAuth</title>` +
+      `<style>body{font-family:system-ui,-apple-system,sans-serif;background:#0b0b0d;color:#eee;` +
+      `display:flex;align-items:center;justify-content:center;height:100vh;margin:0}` +
+      `div{max-width:34rem;padding:2rem;text-align:center;line-height:1.6;font-size:1.05rem}</style>` +
+      `</head><body><div>${message}</div></body></html>`,
+  };
+}
+
 let idleManager: IdleManager | null = null;
+let workerCtx: PluginContext | null = null;
 
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     ctx.logger.info("email-tools plugin setup");
+    workerCtx = ctx;
 
     const rawConfig = (await ctx.config.get()) as InstanceConfig;
     const allowSend = !!rawConfig.allowSend;
@@ -1333,6 +1375,50 @@ const plugin = definePlugin({
 
     idleManager = new IdleManager(ctx);
     await idleManager.start(rawConfig);
+  },
+
+  // ─── OAuth2 sign-in endpoints (Microsoft Outlook / 365) ────────────────────
+  // Routes are declared in the manifest as:
+  //   GET /oauth/start    (auth: board)  — operator clicks "Connect", we 302 to Microsoft
+  //   GET /oauth/callback (auth: public) — Microsoft redirects here with ?code&state
+  async onApiRequest(input): Promise<{ status?: number; headers?: Record<string, string>; body?: unknown }> {
+    const ctx = workerCtx;
+    if (!ctx) return { status: 503, body: { error: "email-tools worker not initialized yet" } };
+    const config = (await ctx.config.get()) as InstanceConfig;
+    const clientId = config.oauthMicrosoftClientId;
+    const redirectUri = config.oauthRedirectUri;
+
+    if (input.routeKey === "oauth.start") {
+      if (!clientId || !redirectUri) {
+        return oauthHtmlPage("OAuth is not configured. Set the Microsoft OAuth Client ID and Redirect URI on the Email Tools settings page first.");
+      }
+      const mailboxKey = firstQuery(input.query, "mailbox");
+      if (!mailboxKey) return { status: 400, body: { error: "mailbox query parameter is required" } };
+      const cfg = findConfigMailbox(config, mailboxKey);
+      const url = await startAuth(ctx, { clientId, redirectUri, mailboxKey, loginHint: cfg?.user });
+      // The host strips redirect (Location) headers and forces a JSON body, so
+      // we return the authorize URL for the caller to navigate to.
+      return { status: 200, body: { authorizeUrl: url } };
+    }
+
+    if (input.routeKey === "oauth.callback") {
+      const err = firstQuery(input.query, "error");
+      if (err) {
+        return oauthHtmlPage(`Microsoft sign-in failed: <b>${err}</b><br>${firstQuery(input.query, "error_description")}`);
+      }
+      const code = firstQuery(input.query, "code");
+      const state = firstQuery(input.query, "state");
+      if (!code || !state) return oauthHtmlPage("Missing authorization code or state in the callback.");
+      if (!clientId || !redirectUri) return oauthHtmlPage("OAuth is not configured.");
+      try {
+        const { mailboxKey } = await handleCallback(ctx, { clientId, redirectUri, code, state });
+        return oauthHtmlPage(`✅ Connected <b>${mailboxKey}</b> via Microsoft.<br>You can close this tab and click <b>Test connection</b> in Paperclip.`);
+      } catch (e) {
+        return oauthHtmlPage(`Sign-in error: ${(e as Error).message}`);
+      }
+    }
+
+    return { status: 404, body: { error: `Unknown route: ${input.routeKey}` } };
   },
 
   async onConfigChanged(newConfig: Record<string, unknown>): Promise<void> {

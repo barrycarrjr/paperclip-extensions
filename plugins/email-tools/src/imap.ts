@@ -5,7 +5,10 @@ import { htmlToMarkdown } from "./markdown.js";
 export interface MailboxRuntime {
   key: string;
   user: string;
+  /** App password for basic auth. Empty when using OAuth (accessToken set instead). */
   pass: string;
+  /** OAuth2 access token (XOAUTH2). When set, takes precedence over `pass`. */
+  accessToken?: string;
   imapHost: string;
   imapPort: number;
   imapSecure: boolean;
@@ -63,7 +66,9 @@ export async function openConnection(
     host: rt.imapHost,
     port,
     secure,
-    auth: { user: rt.user, pass: rt.pass },
+    auth: rt.accessToken
+      ? { user: rt.user, accessToken: rt.accessToken }
+      : { user: rt.user, pass: rt.pass },
     logger: false,
     disableAutoIdle: !opts.forIdle,
     maxIdleTime: opts.forIdle ? (opts.maxIdleTimeMs ?? 28 * 60 * 1000) : undefined,

@@ -1,7 +1,8 @@
 import nodemailer from "nodemailer";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { openConnection, safeLogout, type MailboxRuntime } from "./imap.js";
-import type { ConfigMailbox } from "./types.js";
+import { getAccessToken } from "./oauth.js";
+import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 export interface TestCheck {
   name: string;
@@ -33,23 +34,40 @@ export async function testMailbox(
 ): Promise<TestResult> {
   const checks: TestCheck[] = [];
 
-  // 1. Resolve the secret
+  // 1. Resolve credentials — OAuth access token or basic app password.
+  const isOAuth = cfg.authType === "oauth2";
   let resolvedPass: string | null = null;
+  let accessToken: string | undefined;
   try {
-    if (!cfg.pass) throw new Error("password secret-ref is empty");
-    const { result, durationMs } = await timed(() => ctx.secrets.resolve(cfg.pass as string));
-    resolvedPass = result;
-    checks.push({
-      name: "secret",
-      passed: true,
-      message: `Resolved password secret (${result.length} chars)`,
-      durationMs,
-    });
+    if (isOAuth) {
+      const clientId = ((await ctx.config.get()) as InstanceConfig).oauthMicrosoftClientId;
+      if (!clientId) throw new Error("Microsoft OAuth Client ID is not set on the plugin settings page");
+      const { result, durationMs } = await timed(() => getAccessToken(ctx, { clientId, mailboxKey }));
+      accessToken = result;
+      checks.push({
+        name: "oauth",
+        passed: true,
+        message: `Acquired OAuth access token (${result.length} chars)`,
+        durationMs,
+      });
+    } else {
+      if (!cfg.pass) throw new Error("password secret-ref is empty");
+      const { result, durationMs } = await timed(() => ctx.secrets.resolve(cfg.pass as string));
+      resolvedPass = result;
+      checks.push({
+        name: "secret",
+        passed: true,
+        message: `Resolved password secret (${result.length} chars)`,
+        durationMs,
+      });
+    }
   } catch (err) {
     checks.push({
-      name: "secret",
+      name: isOAuth ? "oauth" : "secret",
       passed: false,
-      message: `Could not resolve secret: ${(err as Error).message}`,
+      message: isOAuth
+        ? `Could not get OAuth token (is the mailbox connected? open the Connect URL): ${(err as Error).message}`
+        : `Could not resolve secret: ${(err as Error).message}`,
     });
     return { ok: false, mailbox: mailboxKey, checks };
   }
@@ -64,7 +82,8 @@ export async function testMailbox(
     const rt: MailboxRuntime = {
       key: mailboxKey,
       user: cfg.user,
-      pass: resolvedPass,
+      pass: resolvedPass ?? "",
+      accessToken,
       imapHost: cfg.imapHost,
       imapPort,
       imapSecure,
@@ -119,12 +138,19 @@ export async function testMailbox(
     if (!smtpHost) throw new Error("smtpHost could not be derived (imapHost is empty)");
     if (!smtpUser) throw new Error("smtpUser/user is empty");
 
-    const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpSecure,
-      auth: { user: smtpUser, pass: resolvedPass },
-    });
+    const transporter = accessToken
+      ? nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpSecure,
+          auth: { type: "OAuth2", user: smtpUser, accessToken },
+        })
+      : nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpSecure,
+          auth: { user: smtpUser, pass: resolvedPass ?? "" },
+        });
     try {
       const { durationMs } = await timed(() => transporter.verify());
       checks.push({
