@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.16.14** — Persistent per-mailbox IMAP connection pool. All UI bridge actions (mark-read, mark-unread, move, delete, list, fetch) and agent tools now share one persistent connection per mailbox with an async serialization queue instead of opening a fresh connection per request. Eliminates the Gmail connection-rate-limit 502s that occurred when clicking several actions in rapid succession.
+
 - **v0.16.13** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.16.12** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
