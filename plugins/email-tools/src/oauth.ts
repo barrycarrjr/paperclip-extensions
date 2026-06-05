@@ -34,7 +34,7 @@ interface ProviderEndpoints {
   scopes: string[];
 }
 
-// /common supports both org (postcardeddm.com) and personal (hotmail.com) accounts.
+// /common supports both organizational (Microsoft 365 / Entra) and personal (Outlook.com / Hotmail) accounts.
 const PROVIDERS: Record<OAuthProvider, ProviderEndpoints> = {
   microsoft: {
     authorize: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
