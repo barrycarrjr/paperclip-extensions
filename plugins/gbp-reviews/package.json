@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-gbp-reviews",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Google Business Profile review management — parse notification emails, draft AI replies, post via GBP API, and surface a review dashboard.",
   "type": "module",
   "private": true,

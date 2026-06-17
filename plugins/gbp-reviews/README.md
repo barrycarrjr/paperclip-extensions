@@ -6,6 +6,8 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
+- **v0.1.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.0** — initial release: email polling → review issues (Phase 1), agent reply tools + GBP API posting (Phase 2), daily sync, weekly digest, and dashboard widget/page (Phase 3).
 
 ## What this plugin registers
