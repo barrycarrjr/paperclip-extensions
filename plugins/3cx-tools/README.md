@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.6.5** — New tool **`pbx_recording_transcribe`**. Transcribes a recording (by id) to text using a local whisper model that runs in the plugin host, returning the full transcript plus per-segment timings — no audio bytes. This is the routine-safe alternative to `pbx_recording_get` + `inlineAudio` (which ships several MB of base64 per call and blows agent context). The transcription runs in the worker process where the audio bytes already are, so only the text crosses the wire. **Host requirement:** Python with the `faster-whisper` package must be installed on whatever host runs the plugin worker — it is not bundled (plugins ship `dist/` JS only) and there is no per-call API cost. Override the interpreter or model on the host via `THREECX_WHISPER_PYTHON` / `THREECX_WHISPER_MODEL` (defaults: `python`, `base.en`); the per-call `model` param overrides the model. The first call for a given model is slow while the model downloads and caches. Error codes: `[E3CX_WHISPER_UNAVAILABLE]` (interpreter/package missing), `[E3CX_WHISPER_FAILED]` (transcription crashed).
+
 - **v0.6.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.6.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

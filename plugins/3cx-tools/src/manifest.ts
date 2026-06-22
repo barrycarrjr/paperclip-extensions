@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "3cx-tools";
-const PLUGIN_VERSION = "0.6.4";
+const PLUGIN_VERSION = "0.6.5";
 
 const companyRoutingItemSchema = {
   type: "object",
@@ -626,6 +626,25 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
             type: "boolean",
             description: "If true, also return base64-encoded audio bytes inline. Default false.",
             default: false,
+          },
+        },
+        required: ["id"],
+      },
+    },
+    {
+      name: "pbx_recording_transcribe",
+      displayName: "Transcribe a call recording",
+      description:
+        "Transcribe a single recording (by id) to text using a local whisper model on the plugin host. Returns the full transcript plus per-segment timings — no audio bytes — so it is safe for routines and agent reasoning (unlike pbx_recording_get + inlineAudio, which ships several MB of base64). Requires Python + faster-whisper installed on the host running the plugin; there is no per-call API cost. The first call for a given model may be slow while the model is downloaded and cached.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string", description: "Account identifier. Optional." },
+          id: { type: "string", description: "Recording id from pbx_recording_list (numeric string)." },
+          model: {
+            type: "string",
+            description:
+              "Optional faster-whisper model name (e.g. 'base.en', 'small.en'). Defaults to the host's configured model ('base.en').",
           },
         },
         required: ["id"],

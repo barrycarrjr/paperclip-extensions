@@ -30,6 +30,10 @@ import {
   listConfiguredAccounts,
   queryCache,
 } from "./callHistoryCache.js";
+import { spawn } from "node:child_process";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -252,6 +256,87 @@ function buildRecordingAudioUrl(
 
 function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
+}
+
+// ─── Local whisper transcription (host-side, no per-call cost) ─────────
+//
+// pbx_recording_transcribe runs a local faster-whisper model in the
+// plugin-host process so agents/routines get back plain transcript text
+// instead of megabytes of base64 audio. This requires `python` with the
+// `faster-whisper` package installed ON THE HOST running the plugin
+// worker — it is NOT bundled (plugins ship dist/ JS only). Override the
+// interpreter / model via env on the host if needed.
+const WHISPER_PYTHON = process.env.THREECX_WHISPER_PYTHON || "python";
+const WHISPER_MODEL_DEFAULT = process.env.THREECX_WHISPER_MODEL || "base.en";
+
+// Read from stdin (`python -`); argv[1] = audio path, argv[2] = model.
+// Emits a single JSON line on stdout. Keep stdout clean — the worker's own
+// stdout is the JSON-RPC channel, so the python child MUST be piped (below),
+// never given inherited stdio.
+const TRANSCRIBE_PY = `import sys, json
+from faster_whisper import WhisperModel
+model = WhisperModel(sys.argv[2], device="cpu", compute_type="int8")
+segments, info = model.transcribe(sys.argv[1], beam_size=5, vad_filter=True)
+segs = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segments]
+print(json.dumps({"language": info.language, "duration": round(info.duration, 2), "segments": segs, "text": " ".join(x["text"] for x in segs)}))
+`;
+
+interface TranscriptResult {
+  language?: string;
+  duration?: number;
+  text: string;
+  segments: { start: number; end: number; text: string }[];
+}
+
+function runWhisper(bin: string, args: string[], scriptStdin: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // stdio is fully piped: we feed the script on stdin and capture
+    // stdout/stderr ourselves so nothing leaks onto the worker's RPC stream.
+    const child = spawn(bin, ["-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d.toString()));
+    child.stderr.on("data", (d) => (stderr += d.toString()));
+    child.on("error", (err) => {
+      reject(
+        new Error(
+          `[E3CX_WHISPER_UNAVAILABLE] Could not run "${bin}". Install Python + faster-whisper on the plugin host (or set THREECX_WHISPER_PYTHON). (${err.message})`,
+        ),
+      );
+    });
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else
+        reject(
+          new Error(
+            `[E3CX_WHISPER_FAILED] Transcription exited with code ${code}. ${stderr.trim().slice(-600)}`,
+          ),
+        );
+    });
+    child.stdin.on("error", () => {
+      /* spawn 'error' already handles the unavailable-binary case */
+    });
+    child.stdin.write(scriptStdin);
+    child.stdin.end();
+  });
+}
+
+async function transcribeAudioBytes(
+  bytes: Uint8Array,
+  contentType: string,
+  model: string,
+): Promise<TranscriptResult> {
+  const dir = await mkdtemp(join(tmpdir(), "pbx-transcribe-"));
+  const ext = contentType.includes("wav") ? "wav" : "audio";
+  const audioPath = join(dir, `rec.${ext}`);
+  try {
+    await writeFile(audioPath, bytes);
+    const out = await runWhisper(WHISPER_PYTHON, [audioPath, model], TRANSCRIBE_PY);
+    const parsed = JSON.parse(out) as TranscriptResult;
+    return parsed;
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function assertMutationsEnabled(ctx: PluginContext, tool: string): Promise<void> {
@@ -871,6 +956,75 @@ const plugin = definePlugin({
             inlineAudio: asBool(p.inlineAudio) ?? false,
           });
           return { data: { ...match, ...inline } };
+        } catch (err) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "pbx_recording_transcribe",
+      {
+        displayName: "Transcribe a call recording",
+        description:
+          "Transcribe a single call recording (by id) to text using a local whisper model running on the plugin host. Returns the full transcript plus per-segment timings — no audio bytes — so it is safe for routines and agent reasoning. Requires Python + faster-whisper on the host (host-side cost only, no per-call API charge). First call for a given model may be slow while the model downloads.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            id: { type: "string", description: "Recording id from pbx_recording_list." },
+            model: {
+              type: "string",
+              description:
+                "Optional faster-whisper model name (e.g. 'base.en', 'small.en'). Defaults to the host's configured model ('base.en').",
+            },
+          },
+          required: ["id"],
+        },
+      },
+      async (params, runCtx) => {
+        const p = params as Record<string, unknown>;
+        const id = asString(p.id);
+        if (!id) return errorResult("[EVALIDATION] `id` is required.");
+        const accountKey = asString(p.account);
+        const r = await resolveOrError(ctx, runCtx, "pbx_recording_transcribe", accountKey);
+        if (!r.ok) return errorResult(r.error);
+        const engine = getEngineFor(runCtx.companyId, r.resolved.accountKey);
+        try {
+          const audioUrlBuilder = (recId: string) =>
+            buildRecordingAudioUrl(runCtx.companyId, r.resolved.accountKey, recId);
+          // Mirror pbx_recording_get: list-then-find for metadata + scope check.
+          const page = await engine.listRecordings(
+            r.resolved.scope,
+            { limit: 200 },
+            audioUrlBuilder,
+          );
+          const match = page.recordings.find((v) => v.id === id);
+          if (!match) {
+            return errorResult(
+              `[E3CX_NOT_FOUND] Recording "${id}" not found in the first 200 entries for your scope.`,
+            );
+          }
+          const audio = await engine.fetchRecordingAudio(r.resolved.scope, id);
+          const model = asString(p.model) || WHISPER_MODEL_DEFAULT;
+          const transcript = await transcribeAudioBytes(audio.bytes, audio.contentType, model);
+          await track(ctx, runCtx, "pbx_recording_transcribe", r.resolved.accountKey, {
+            model,
+            chars: transcript.text.length,
+          });
+          return {
+            data: {
+              id: match.id,
+              extension: match.extension,
+              from: match.from,
+              receivedAt: match.receivedAt,
+              durationSec: match.durationSec,
+              model,
+              language: transcript.language,
+              text: transcript.text,
+              segments: transcript.segments,
+            },
+          };
         } catch (err) {
           return errorResult((err as Error).message);
         }
