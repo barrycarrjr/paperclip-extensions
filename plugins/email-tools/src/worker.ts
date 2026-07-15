@@ -15,12 +15,11 @@ import {
   getUidValidity,
   listFolders,
   moveMessages,
-  openConnection,
-  safeLogout,
   searchMessages,
   setSeenFlag,
   type ParsedMessage,
 } from "./imap.js";
+import { ActionConnectionPool } from "./connection-pool.js";
 import {
   runPoll,
   buildMailboxRuntime,
@@ -179,12 +178,7 @@ async function withImapConnection<T>(
   fn: (client: import("imapflow").ImapFlow) => Promise<T>,
 ): Promise<T> {
   const rt = await buildMailboxRuntime(ctx, cfg, key);
-  const client = await openConnection(rt);
-  try {
-    return await fn(client);
-  } finally {
-    await safeLogout(client);
-  }
+  return actionPool.run(rt, fn);
 }
 
 function resolveFolder(cfg: ConfigMailbox, override: unknown): string {
@@ -213,6 +207,8 @@ function oauthHtmlPage(message: string): {
       `</head><body><div>${message}</div></body></html>`,
   };
 }
+
+const actionPool = new ActionConnectionPool();
 
 let idleManager: IdleManager | null = null;
 let workerCtx: PluginContext | null = null;
@@ -872,8 +868,7 @@ const plugin = definePlugin({
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
       const unseen = params.unseen === true;
       const limit = typeof params.limit === "number" ? Math.min(params.limit, 200) : 50;
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         // No DB-side filtering: the Email view should mirror what's actually in
         // INBOX (matching the user's Outlook/other client view). Messages
         // disappear when they're moved (auto-triage / move-to-folder) or marked
@@ -886,9 +881,7 @@ const plugin = definePlugin({
         // simpleParser — heavier than envelope-only.
         const messages = await fetchHeaders(conn, folder, slicedUids, { withSnippets: true });
         return { messages, uidValidity };
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // Returns the full parsed message body — drives the right pane.
@@ -909,14 +902,11 @@ const plugin = definePlugin({
       });
       const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         const msg = await fetchParsedMessage(conn, folder, uid);
         if (!msg) throw new Error(`Message UID ${uid} not found in "${folder}"`);
         return msg;
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // Returns the list of IMAP folders — drives the Move-to-folder picker.
@@ -935,13 +925,10 @@ const plugin = definePlugin({
         companyId,
       });
       const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         const folders = await listFolders(conn);
         return { folders };
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // ─── UI bridge: performAction handlers (operator Email view) ─────────
@@ -970,16 +957,13 @@ const plugin = definePlugin({
       }
       const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         // Mark as read first — prevents the triage routine's unseen filter
         // from double-processing the same message if it runs concurrently.
         await setSeenFlag(conn, folder, [uid], true);
         const result = await moveMessages(conn, folder, [uid], targetFolder);
         return { ok: true, movedCount: result.movedCount };
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // Moves a message to the mailbox's Trash folder (soft-delete: recoverable
@@ -1008,8 +992,7 @@ const plugin = definePlugin({
       }
       const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         const trashFolder = await findTrashFolder(conn);
         if (!trashFolder) {
           throw new Error(
@@ -1019,9 +1002,7 @@ const plugin = definePlugin({
         await setSeenFlag(conn, folder, [uid], true);
         const result = await moveMessages(conn, folder, [uid], trashFolder);
         return { ok: true, movedCount: result.movedCount, trashFolder };
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // Marks one or more messages as read.
@@ -1050,13 +1031,10 @@ const plugin = definePlugin({
       });
       const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         await setSeenFlag(conn, folder, uids, true);
         return { ok: true };
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // Marks one or more messages as unread (clears the \Seen flag).
@@ -1085,13 +1063,10 @@ const plugin = definePlugin({
       });
       const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
-      const conn = await openConnection(rt);
-      try {
+      return actionPool.run(rt, async (conn) => {
         await setSeenFlag(conn, folder, uids, false);
         return { ok: true };
-      } finally {
-        await safeLogout(conn);
-      }
+      });
     });
 
     // Returns all sender rules for a mailbox.
@@ -1425,6 +1400,7 @@ const plugin = definePlugin({
     if (idleManager) {
       await idleManager.onConfigChanged(newConfig as InstanceConfig);
     }
+    await actionPool.dropAll();
   },
 
   async onShutdown(): Promise<void> {
@@ -1432,6 +1408,7 @@ const plugin = definePlugin({
       await idleManager.shutdown();
       idleManager = null;
     }
+    await actionPool.dropAll();
   },
 
   async onHealth() {
