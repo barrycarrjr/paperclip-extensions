@@ -11,6 +11,7 @@ import {
   type MailboxRuntime,
 } from "./imap.js";
 import { dispatchReceived, passesFilter } from "./dispatch.js";
+import { getAccessToken } from "./oauth.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 const STATE_NAMESPACE = "imap";
@@ -45,17 +46,32 @@ export async function buildMailboxRuntime(
   ctx: PluginContext,
   cfg: ConfigMailbox,
   key: string,
+  oauthClientId?: string,
 ): Promise<MailboxRuntime> {
   if (!cfg.imapHost) throw new Error(`Mailbox "${key}": imapHost is required.`);
   if (!cfg.user) throw new Error(`Mailbox "${key}": user is required.`);
-  if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
-  const pass = await ctx.secrets.resolve(cfg.pass);
   const imapPort = typeof cfg.imapPort === "number" ? cfg.imapPort : 993;
   const imapSecure = typeof cfg.imapSecure === "boolean" ? cfg.imapSecure : imapPort === 993;
+
+  let pass = "";
+  let accessToken: string | undefined;
+  if (cfg.authType === "oauth2") {
+    const clientId =
+      oauthClientId ?? ((await ctx.config.get()) as InstanceConfig).oauthMicrosoftClientId;
+    if (!clientId) {
+      throw new Error(`Mailbox "${key}": OAuth is enabled but no Microsoft OAuth Client ID is set on the plugin settings page.`);
+    }
+    accessToken = await getAccessToken(ctx, { clientId, mailboxKey: key });
+  } else {
+    if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
+    pass = await ctx.secrets.resolve(cfg.pass);
+  }
+
   return {
     key,
     user: cfg.user,
     pass,
+    accessToken,
     imapHost: cfg.imapHost,
     imapPort,
     imapSecure,
