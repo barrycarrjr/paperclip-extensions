@@ -2,6 +2,10 @@
 
 Paperclip plugin that exposes Instagram posting operations as agent tools via the Instagram Graph API. Supports photos, carousels, reels, and stories with multi-account company isolation.
 
+## Recent changes
+
+- **v0.1.1** — Remove the unused native `sharp` dependency (declared but never imported). Native modules can't load from a `.pcplugin` install, so it was a trap for future wiring; any future image work should use a pure-JS library instead.
+
 ## Tools
 
 | Tool | Description |

@@ -1,6 +1,7 @@
 import { definePlugin, runWorker, type PluginContext, type ToolResult, type ToolRunContext } from "@paperclipai/plugin-sdk";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { coverDimensionIssues } from "./cover-dimensions.js";
 
 type InstanceConfig = { audiobooksRoot?: string; acxEmailRef?: string; acxPasswordRef?: string; acxMfaSecretRef?: string; allowedCompanies?: string[] };
 
@@ -101,7 +102,7 @@ const plugin = definePlugin({
         if (stat.size > 50 * 1024 * 1024) issues.push(`Cover too large: ${(stat.size / 1024 / 1024).toFixed(1)}MB (max 50MB).`);
         const ext = path.extname(p.filePath).toLowerCase();
         if (![".jpg", ".jpeg", ".png"].includes(ext)) issues.push(`Invalid format: ${ext}. ACX accepts JPEG or PNG.`);
-        // Note: Dimension check (min 2400×2400) requires sharp at runtime.
+        issues.push(...coverDimensionIssues(await fs.readFile(p.filePath)));
       } catch { return { error: `[EINVALID_INPUT] Cover file not found: ${p.filePath}` }; }
       const valid = issues.length === 0;
       return { content: valid ? "Cover passed basic validation." : `Cover has ${issues.length} issue(s).`, data: { valid, issues } };

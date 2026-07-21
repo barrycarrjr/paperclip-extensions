@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-instagram-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Paperclip plugin that exposes Instagram posting operations as agent tools. Publishes photos, carousels, reels, and stories via the Instagram Graph API. Supports multi-account with per-account company isolation.",
   "type": "module",
   "private": true,
@@ -17,8 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@paperclipai/plugin-sdk": "^2026.427.0",
-    "sharp": "^0.33.0"
+    "@paperclipai/plugin-sdk": "^2026.427.0"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",

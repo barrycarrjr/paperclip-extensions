@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-acx-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Paperclip plugin that exposes Audible/ACX audiobook publishing operations as agent tools. Validates audio files against ACX technical specs, manages the pending/published/error folder pipeline, and submits to ACX.",
   "type": "module",
   "private": true,
@@ -18,8 +18,8 @@
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.427.0",
-    "music-metadata": "^10.0.0",
-    "sharp": "^0.33.0"
+    "image-size": "^2.0.2",
+    "music-metadata": "^10.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
