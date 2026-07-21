@@ -56,6 +56,22 @@ export interface SearchResultItem {
 
 const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
+// ImapFlow reports async socket failures ("Socket timeout", ECONNRESET) as an
+// 'error' event on the client — including while a pooled connection sits idle
+// between UI actions. With zero listeners Node treats that emission as an
+// uncaught exception, which kills the whole worker process and 502s every
+// mailbox until the host restarts it. Command promises still reject on their
+// own; this listener only absorbs the out-of-band emission. Callers already
+// detect a dead client via `usable` and reconnect.
+export function attachConnectionErrorListener(client: ImapFlow, mailboxKey: string): void {
+  client.on("error", (err: Error) => {
+    // Worker stderr is captured by the host and logged as `[plugin stderr]`.
+    console.error(
+      `email-tools: IMAP connection error (mailbox=${mailboxKey}): ${err?.message ?? String(err)}`,
+    );
+  });
+}
+
 export async function openConnection(
   rt: MailboxRuntime,
   opts: { forIdle?: boolean; maxIdleTimeMs?: number } = {},
@@ -73,6 +89,7 @@ export async function openConnection(
     disableAutoIdle: !opts.forIdle,
     maxIdleTime: opts.forIdle ? (opts.maxIdleTimeMs ?? 28 * 60 * 1000) : undefined,
   });
+  attachConnectionErrorListener(client, rt.key);
   await client.connect();
   return client;
 }

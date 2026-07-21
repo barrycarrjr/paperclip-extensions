@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.16.16** — Fix worker crash on dropped IMAP connections. The persistent pooled connections (added in v0.16.14) had no 'error' listener, so an async socket failure ("Socket timeout", ECONNRESET) on an idle connection crashed the whole worker process — every mailbox then returned 502 in Portfolio Email until the host restarted the worker. openConnection now attaches an error listener to every client (pool, poll, and IDLE paths), logging the failure instead; the pool's existing `usable` check reconnects on next use.
+
 - **v0.16.15** — Persistent per-mailbox IMAP connection pool (fixes Gmail 502s on rapid UI actions). All bridge actions (mark-read, mark-unread, move, delete, list, fetch) and agent tools now share one persistent connection per mailbox via an async serialization queue instead of opening a fresh connection per request.
 
 - **v0.16.14** — Persistent per-mailbox IMAP connection pool. All UI bridge actions (mark-read, mark-unread, move, delete, list, fetch) and agent tools now share one persistent connection per mailbox with an async serialization queue instead of opening a fresh connection per request. Eliminates the Gmail connection-rate-limit 502s that occurred when clicking several actions in rapid succession.
