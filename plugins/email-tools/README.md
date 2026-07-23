@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.16.17** - Stop the IDLE poll storm and reuse resolved mailbox passwords. Each IMAP notification used to fire its own poll, and a poll that auto-triages mail generates more notifications, so a single delivery could queue about fifteen polls for one mailbox inside a millisecond. Notifications now collapse into one poll per burst (plus at most one follow-up if more arrive mid-poll). Separately, every mailbox operation re-resolved the mailbox password through the host, which rate-limits secret resolution; passwords are now reused from an in-memory cache for 60 seconds, shared by the IMAP and SMTP paths and cleared on config change and shutdown, so rotation is still honoured. Tests cover the collapsing behaviour, the reuse window, and per-mailbox lock serialization.
+
 - **v0.16.16** — Fix worker crash on dropped IMAP connections. The persistent pooled connections (added in v0.16.14) had no 'error' listener, so an async socket failure ("Socket timeout", ECONNRESET) on an idle connection crashed the whole worker process — every mailbox then returned 502 in Portfolio Email until the host restarted the worker. openConnection now attaches an error listener to every client (pool, poll, and IDLE paths), logging the failure instead; the pool's existing `usable` check reconnects on next use.
 
 - **v0.16.15** — Persistent per-mailbox IMAP connection pool (fixes Gmail 502s on rapid UI actions). All bridge actions (mark-read, mark-unread, move, delete, list, fetch) and agent tools now share one persistent connection per mailbox via an async serialization queue instead of opening a fresh connection per request.

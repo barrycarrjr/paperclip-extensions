@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-email-tools",
-  "version": "0.16.16",
+  "version": "0.16.17",
   "description": "Paperclip plugin that exposes email send/receive as agent tools. Multi-mailbox SMTP via nodemailer + IMAP via imapflow with IDLE push, polling fallback, and per-mailbox dispatch.",
   "type": "module",
   "private": true,
@@ -14,7 +14,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "clean": "rimraf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.427.0",
@@ -30,6 +31,7 @@
     "@types/turndown": "^5.0.5",
     "esbuild": "^0.27.3",
     "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
   "license": "MIT",

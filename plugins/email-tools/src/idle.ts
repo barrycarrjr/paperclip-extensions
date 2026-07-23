@@ -2,6 +2,7 @@ import type { PluginContext } from "@paperclipai/plugin-sdk";
 import type { ImapFlow } from "imapflow";
 import { buildMailboxRuntime, pollOne } from "./poll.js";
 import { openConnection, safeLogout } from "./imap.js";
+import { PollCoalescer } from "./poll-coalescer.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 interface IdleEntry {
@@ -19,9 +20,27 @@ export class IdleManager {
   private ctx: PluginContext;
   private entries = new Map<string, IdleEntry>();
   private lastConfigKey = "";
+  private coalescer: PollCoalescer;
 
   constructor(ctx: PluginContext) {
     this.ctx = ctx;
+    // One poll per burst of notifications. The server announces each affected
+    // message separately, and a poll that moves auto-triaged mail generates
+    // more announcements, so an un-collapsed handler polls a dozen times for
+    // a single delivery.
+    this.coalescer = new PollCoalescer({
+      run: async (key) => {
+        const entry = this.entries.get(key);
+        if (!entry || entry.closed) return;
+        await pollOne(this.ctx, entry.mailbox);
+      },
+      onError: (key, err) => {
+        this.ctx.logger.error("email-tools: idle-triggered poll failed", {
+          mailbox: key,
+          message: (err as Error).message,
+        });
+      },
+    });
   }
 
   async start(config: InstanceConfig): Promise<void> {
@@ -60,8 +79,12 @@ export class IdleManager {
   }
 
   async shutdown(): Promise<void> {
+    this.coalescer.cancelAll();
     const keys = Array.from(this.entries.keys());
     await Promise.all(keys.map((k) => this.closeOne(k)));
+    // Let a poll that was already running finish rather than tearing the
+    // connection out from under it.
+    await this.coalescer.whenIdle();
   }
 
   private openIdle(mailbox: ConfigMailbox): void {
@@ -90,12 +113,7 @@ export class IdleManager {
           this.ctx.telemetry
             .track("idle-notification", { mailbox: key })
             .catch(() => {});
-          void pollOne(this.ctx, entry.mailbox).catch((err) => {
-            this.ctx.logger.error("email-tools: idle-triggered poll failed", {
-              mailbox: key,
-              message: (err as Error).message,
-            });
-          });
+          this.coalescer.schedule(key);
         };
 
         client.on("exists", triggerPoll);
@@ -144,6 +162,7 @@ export class IdleManager {
     const entry = this.entries.get(key);
     if (!entry) return;
     entry.closed = true;
+    this.coalescer.cancel(key);
     if (entry.reconnectTimer) clearTimeout(entry.reconnectTimer);
     if (entry.client) {
       await safeLogout(entry.client);

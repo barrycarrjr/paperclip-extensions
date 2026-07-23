@@ -25,6 +25,8 @@ import {
   buildMailboxRuntime,
   applyAutoTriageRuleToInbox,
   applyMuteRuleToInbox,
+  clearSecretCache,
+  resolveMailboxSecret,
 } from "./poll.js";
 import { IdleManager } from "./idle.js";
 import { buildThread } from "./threading.js";
@@ -76,7 +78,7 @@ async function buildSmtpRuntime(
     accessToken = await getAccessToken(ctx, { clientId, mailboxKey: key });
   } else {
     if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
-    smtpPass = await ctx.secrets.resolve(cfg.pass);
+    smtpPass = await resolveMailboxSecret(ctx, key, cfg.pass);
   }
 
   return {
@@ -1400,6 +1402,9 @@ const plugin = definePlugin({
     if (idleManager) {
       await idleManager.onConfigChanged(newConfig as InstanceConfig);
     }
+    // A config change can repoint a mailbox at a different secret, or follow a
+    // password rotation, so cached passwords are no longer trustworthy.
+    clearSecretCache();
     await actionPool.dropAll();
   },
 
@@ -1408,6 +1413,7 @@ const plugin = definePlugin({
       await idleManager.shutdown();
       idleManager = null;
     }
+    clearSecretCache();
     await actionPool.dropAll();
   },
 

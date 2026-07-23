@@ -11,7 +11,9 @@ import {
   type MailboxRuntime,
 } from "./imap.js";
 import { dispatchReceived, passesFilter } from "./dispatch.js";
+import { withMailboxLock } from "./mailbox-lock.js";
 import { getAccessToken } from "./oauth.js";
+import { SecretCache } from "./secret-cache.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 const STATE_NAMESPACE = "imap";
@@ -23,23 +25,36 @@ interface MailboxCursor {
   uid: number;
 }
 
-const mailboxLocks = new Map<string, Promise<void>>();
+// Re-exported so existing importers keep working; the implementation moved to
+// its own module so it can be tested without pulling in the IMAP stack.
+export { withMailboxLock } from "./mailbox-lock.js";
 
-export async function withMailboxLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  while (mailboxLocks.has(key)) {
-    await mailboxLocks.get(key);
-  }
-  let release: () => void = () => {};
-  const lock = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  mailboxLocks.set(key, lock);
-  try {
-    return await fn();
-  } finally {
-    mailboxLocks.delete(key);
-    release();
-  }
+/**
+ * Resolved mailbox passwords, reused for a short window. Module-level so every
+ * caller of `buildMailboxRuntime` shares it: bridge actions, agent tools,
+ * background polls, and IDLE all hit the same cache.
+ */
+const secretCache = new SecretCache();
+
+/** Forget every cached password. Called on worker shutdown. */
+export function clearSecretCache(): void {
+  secretCache.clear();
+}
+
+/**
+ * Resolve a mailbox secret through the shared cache.
+ *
+ * Exported so the SMTP path shares the same entry as IMAP: both read
+ * `cfg.pass`, so sending a reply right after reading the message costs no
+ * extra resolution. The "Test connection" diagnostic deliberately stays on the
+ * uncached path, since its whole job is to time a real resolution.
+ */
+export function resolveMailboxSecret(
+  ctx: PluginContext,
+  key: string,
+  secretRef: string,
+): Promise<string> {
+  return secretCache.resolve(key, secretRef, () => ctx.secrets.resolve(secretRef));
 }
 
 export async function buildMailboxRuntime(
@@ -64,7 +79,7 @@ export async function buildMailboxRuntime(
     accessToken = await getAccessToken(ctx, { clientId, mailboxKey: key });
   } else {
     if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
-    pass = await ctx.secrets.resolve(cfg.pass);
+    pass = await resolveMailboxSecret(ctx, key, cfg.pass);
   }
 
   return {
