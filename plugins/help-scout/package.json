@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-help-scout",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "description": "Paperclip plugin that exposes Help Scout customer-support operations (conversations, replies, notes, customer lookups, tagging, status changes, reports) as agent tools. Multi-account, per-account company isolation, mutations gated.",
   "type": "module",
   "private": true,
@@ -14,7 +14,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "clean": "rimraf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.427.0"
@@ -23,6 +24,7 @@
     "@types/node": "^24.6.0",
     "esbuild": "^0.27.3",
     "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   },
   "license": "MIT",

@@ -280,7 +280,8 @@ export async function helpScoutRequest<T = unknown>(
       (body as { message?: string; error?: string } | null)?.message ??
       (body as { error?: string } | null)?.error ??
       `HTTP ${res.status}`;
-    throw new Error(mapStatusToErrorCode(res.status, message));
+    const detail = extractValidationDetail(body);
+    throw new Error(mapStatusToErrorCode(res.status, detail ? `${message} (${detail})` : message));
   }
 
   return {
@@ -290,6 +291,36 @@ export async function helpScoutRequest<T = unknown>(
   };
 }
 
+/**
+ * Help Scout answers a rejected write with a top-level `message` of just
+ * "Bad Request" and puts the reason (which field, and why) in
+ * `_embedded.errors`. Without this the caller sees a bare
+ * "[EHELP_SCOUT_400] Bad request" and has no way to tell what was wrong.
+ * Returns e.g. `customer: may not be null` or null when the body has no
+ * field-level errors.
+ */
+export function extractValidationDetail(body: unknown): string | null {
+  const errors = (
+    body as {
+      _embedded?: { errors?: Array<{ path?: string; message?: string; rejectedValue?: unknown }> };
+    } | null
+  )?._embedded?.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+
+  const parts = errors
+    .slice(0, 5)
+    .map((e) => {
+      const path = typeof e?.path === "string" && e.path.trim() ? e.path.trim() : "(body)";
+      const msg = typeof e?.message === "string" && e.message.trim() ? e.message.trim() : "invalid";
+      return `${path}: ${msg}`;
+    })
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+
+  const suffix = errors.length > 5 ? `; +${errors.length - 5} more` : "";
+  return parts.join("; ") + suffix;
+}
+
 function mapStatusToErrorCode(status: number, msg: string): string {
   if (status === 401) return `[EHELP_SCOUT_AUTH] ${msg}`;
   if (status === 403) return `[EHELP_SCOUT_FORBIDDEN] ${msg}`;
@@ -297,6 +328,61 @@ function mapStatusToErrorCode(status: number, msg: string): string {
   if (status === 422) return `[EHELP_SCOUT_INVALID] ${msg}`;
   if (status >= 500) return `[EHELP_SCOUT_SERVER_${status}] ${msg}`;
   return `[EHELP_SCOUT_${status}] ${msg}`;
+}
+
+/**
+ * Help Scout requires a `customer` on POST /conversations/{id}/reply. It is
+ * the recipient of the outgoing email, and omitting it fails the whole request
+ * with a bare 400. Callers (the mail view, agents) normally know only the
+ * conversation, so resolve the recipient from the conversation's
+ * primaryCustomer unless one was named explicitly.
+ *
+ * Returns the object to put in the request's `customer` field: `{ id }` for a
+ * customer already on the conversation, `{ email }` when the caller addressed
+ * someone else and Help Scout has to resolve or create them.
+ */
+export async function resolveReplyCustomer(
+  resolved: ResolvedAccount,
+  conversationId: string,
+  opts: { customerId?: string | number; customerEmail?: string } = {},
+): Promise<Record<string, unknown>> {
+  const rawId = opts.customerId;
+  if (rawId !== undefined && rawId !== null && String(rawId).trim() !== "") {
+    const id = Number(rawId);
+    if (!Number.isFinite(id)) {
+      throw new Error(`[EINVALID_INPUT] \`customerId\` must be numeric, got "${String(rawId)}"`);
+    }
+    return { id };
+  }
+
+  const wanted = opts.customerEmail?.trim();
+
+  const resp = await helpScoutRequest<{ primaryCustomer?: { id?: number; email?: string } }>(
+    resolved,
+    `/conversations/${encodeURIComponent(conversationId)}`,
+  );
+  const primary = resp.body?.primaryCustomer;
+
+  if (wanted) {
+    // Same person as the conversation's primary customer: prefer the id, which
+    // is what Help Scout documents for reply threads.
+    if (
+      typeof primary?.id === "number" &&
+      typeof primary.email === "string" &&
+      primary.email.toLowerCase() === wanted.toLowerCase()
+    ) {
+      return { id: primary.id };
+    }
+    return { email: wanted };
+  }
+
+  if (typeof primary?.id !== "number") {
+    throw new Error(
+      `[EHELP_SCOUT_NO_CUSTOMER] conversation ${conversationId} has no primary customer to reply to. ` +
+        "Pass `customerEmail` (or `customerId`) to address the reply explicitly.",
+    );
+  }
+  return { id: primary.id };
 }
 
 /**

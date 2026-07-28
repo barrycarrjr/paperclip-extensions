@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.5.15** - Fixed replies failing with `[EHELP_SCOUT_400] Bad request`. Help Scout requires a `customer` on every reply (it is the recipient of the outgoing email), but the plugin only sent one when the caller passed `customerEmail`, which neither the mail view nor `helpscout_send_reply` normally does. Both reply paths now look up the conversation's primary customer and address the reply to them; `customerEmail` still overrides, and a new `customerId` accepts a Help Scout customer id directly. Failed writes now also report which field Help Scout rejected instead of a bare "Bad request".
+
 - **v0.5.14** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.5.13** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

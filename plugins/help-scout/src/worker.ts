@@ -14,6 +14,7 @@ import {
   listMailboxesForAccount,
   normalizeTag,
   resolveMailboxId,
+  resolveReplyCustomer,
 } from "./helpScoutClient.js";
 import { isCompanyAllowed } from "./companyAccess.js";
 
@@ -724,7 +725,8 @@ const plugin = definePlugin({
       "helpscout_send_reply",
       {
         displayName: "Send Help Scout reply",
-        description: "Reply to an existing conversation.",
+        description:
+          "Reply to an existing conversation. The reply goes to the conversation's primary customer unless customerEmail or customerId names someone else.",
         parametersSchema: {
           type: "object",
           properties: {
@@ -732,6 +734,7 @@ const plugin = definePlugin({
             conversationId: { type: "string" },
             body: { type: "string" },
             customerEmail: { type: "string" },
+            customerId: { type: "string" },
             cc: { type: "array", items: { type: "string" } },
             bcc: { type: "array", items: { type: "string" } },
             imported: { type: "boolean", default: false },
@@ -748,6 +751,7 @@ const plugin = definePlugin({
           conversationId?: string;
           body?: string;
           customerEmail?: string;
+          customerId?: string;
           cc?: string[];
           bcc?: string[];
           imported?: boolean;
@@ -764,8 +768,11 @@ const plugin = definePlugin({
             cc: p.cc,
             bcc: p.bcc,
             imported: !!p.imported,
+            customer: await resolveReplyCustomer(r.resolved, p.conversationId, {
+              customerId: p.customerId,
+              customerEmail: p.customerEmail,
+            }),
           };
-          if (p.customerEmail) body.customer = { email: p.customerEmail };
 
           const resp = await helpScoutRequest<Record<string, unknown>>(
             r.resolved,
@@ -1458,6 +1465,7 @@ const plugin = definePlugin({
         conversationId?: string;
         body?: string;
         customerEmail?: string;
+        customerId?: string;
         cc?: string[];
         bcc?: string[];
         imported?: boolean;
@@ -1478,8 +1486,11 @@ const plugin = definePlugin({
         cc: p.cc,
         bcc: p.bcc,
         imported: !!p.imported,
+        customer: await resolveReplyCustomer(r.resolved, p.conversationId, {
+          customerId: p.customerId,
+          customerEmail: p.customerEmail,
+        }),
       };
-      if (p.customerEmail) body.customer = { email: p.customerEmail };
 
       const resp = await helpScoutRequest<Record<string, unknown>>(
         r.resolved,
