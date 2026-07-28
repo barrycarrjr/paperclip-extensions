@@ -198,7 +198,12 @@ export async function helpScoutRequest<T = unknown>(
   resolved: ResolvedAccount,
   pathPart: string,
   opts: RequestOptions = {},
-): Promise<{ status: number; body: T | null; rateLimitRemaining: string | null }> {
+): Promise<{
+  status: number;
+  body: T | null;
+  rateLimitRemaining: string | null;
+  location: string | null;
+}> {
   const url = new URL(HELP_SCOUT_BASE + pathPart);
   if (opts.query) {
     for (const [k, v] of Object.entries(opts.query)) {
@@ -288,7 +293,22 @@ export async function helpScoutRequest<T = unknown>(
     status: res.status,
     body: body as T | null,
     rateLimitRemaining: res.headers.get("x-ratelimit-remaining-minute"),
+    // Creates answer 201 with an empty body and the new resource's URL in
+    // Location. Without this the caller has no way to learn the new id.
+    location: res.headers.get("location"),
   };
+}
+
+/**
+ * Pull the resource id out of a Help Scout `Location` header, e.g.
+ * `https://api.helpscout.net/v2/conversations/2913724936` -> `2913724936`.
+ * Returns null for a missing or unparseable header — callers treat the id as
+ * a nice-to-have, never as a precondition for reporting success.
+ */
+export function conversationIdFromLocation(location: string | null | undefined): string | null {
+  if (!location) return null;
+  const match = /\/conversations\/(\d+)/.exec(location);
+  return match ? match[1] : null;
 }
 
 /**

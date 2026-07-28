@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-youtube-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Paperclip plugin that exposes YouTube upload, metadata update, thumbnail, and playlist operations as agent tools. Uses YouTube Data API v3 with OAuth2 refresh token authentication.",
   "type": "module",
   "private": true,

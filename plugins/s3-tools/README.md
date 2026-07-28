@@ -2,6 +2,10 @@
 
 Paperclip plugin that exposes S3 download, upload, list, delete, and presigned URL operations as agent tools.
 
+## Recent changes
+
+- **v0.1.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## Tools
 
 | Tool | Description |

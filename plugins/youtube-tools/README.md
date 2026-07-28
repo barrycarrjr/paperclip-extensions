@@ -2,6 +2,10 @@
 
 Paperclip plugin that exposes YouTube upload, thumbnail, playlist, and metadata operations as agent tools via the YouTube Data API v3.
 
+## Recent changes
+
+- **v0.1.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## Tools
 
 | Tool | Description |

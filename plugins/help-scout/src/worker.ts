@@ -9,6 +9,7 @@ import {
   type ConfigAccount,
   type InstanceConfig,
   type ResolvedAccount,
+  conversationIdFromLocation,
   getHelpScoutAccount,
   helpScoutRequest,
   listMailboxesForAccount,
@@ -1456,6 +1457,75 @@ const plugin = definePlugin({
     });
 
     // ─── UI bridge: write-side actions ───────────────────────────────────
+
+    /**
+     * `helpscout.create-conversation` — start a brand new conversation, i.e.
+     * the mail view's "compose". Same POST as the `helpscout_create_conversation`
+     * agent tool, minus the idempotency dance: a human clicking Send once wants
+     * exactly one conversation, and the dedupe tag would only get in the way if
+     * they legitimately email the same customer twice.
+     */
+    ctx.actions.register("helpscout.create-conversation", async (params) => {
+      gateBridgeMutation("helpscout.create-conversation");
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        mailboxId?: string;
+        subject?: string;
+        body?: string;
+        customer?: { email?: string; firstName?: string; lastName?: string };
+        status?: "active" | "pending" | "closed";
+        tags?: string[];
+      };
+      if (!p.subject?.trim()) throw new Error("[EINVALID_INPUT] `subject` is required");
+      if (!p.body?.trim()) throw new Error("[EINVALID_INPUT] `body` is required");
+      if (!p.customer?.email?.trim()) {
+        throw new Error("[EINVALID_INPUT] `customer.email` is required");
+      }
+
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.create-conversation",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      // required=true — a new conversation has to land in a specific mailbox,
+      // and this is what enforces the account's allowedMailboxes list.
+      const mailboxId = resolveMailboxId(r.resolved, p.mailboxId, true);
+      const tags = (p.tags ?? []).map(normalizeTag);
+
+      const requestBody = {
+        subject: p.subject,
+        mailboxId: Number(mailboxId),
+        type: "email",
+        status: p.status ?? "active",
+        customer: {
+          email: p.customer.email,
+          firstName: p.customer.firstName,
+          lastName: p.customer.lastName,
+        },
+        // "reply" (not "customer") — this thread is us writing to them.
+        threads: [{ type: "reply", text: p.body, customer: { email: p.customer.email } }],
+        tags: tags.length > 0 ? tags : undefined,
+        imported: false,
+      };
+
+      const resp = await helpScoutRequest<Record<string, unknown>>(
+        r.resolved,
+        "/conversations",
+        { method: "POST", body: requestBody, expectStatus: [201] },
+      );
+      const id =
+        conversationIdFromLocation(resp.location) ??
+        (resp.body?.id !== undefined ? String(resp.body.id) : null);
+
+      await trackBridge(ctx, companyId, "create-conversation", r.resolved.accountKey, {
+        mailboxId: String(mailboxId),
+      });
+      return { ok: true, id, ...(resp.body ?? {}) };
+    });
 
     ctx.actions.register("helpscout.send-reply", async (params) => {
       gateBridgeMutation("helpscout.send-reply");

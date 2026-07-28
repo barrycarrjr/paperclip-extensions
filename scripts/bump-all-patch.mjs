@@ -26,8 +26,8 @@ const REPO_ROOT = dirname(__dirname);
 const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
-  "phone-tools":
-    "Verified personal caller IDs API via Twilio's OutgoingCallerIds (list/start-verification/delete) so agents can place calls from a verified personal number. Per-call reason substitution with a universal preflight rule plus a dedicated Gather Info task. Assistant editing UI in the Agent Phone tab.",
+  "help-scout":
+    "Added the `helpscout.create-conversation` bridge action so the Paperclip mail view can compose a brand new message, not just reply to an existing one. It posts the same conversation Help Scout's API expects as the `helpscout_create_conversation` agent tool, minus the idempotency tag (a person clicking Send once wants exactly one conversation), honours the account's `allowedMailboxes` list, and is covered by the same \"allow create/reply/note/status/tag changes\" setting as every other write. `helpScoutRequest` now also returns the response's `Location` header, which is how a create learns the new conversation id — Help Scout answers 201 with an empty body.",
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";
@@ -52,12 +52,23 @@ function bumpPackageJson(pkgPath) {
   return { oldVer, newVer };
 }
 
+// Two manifest shapes in the wild: older plugins hoist a `const PLUGIN_VERSION`,
+// newer ones (acx-tools, kdp-tools, s3-tools, youtube-tools) write the version
+// inline on the manifest object. Handle both — a plugin that matches neither is
+// a real problem worth stopping for.
 function bumpManifest(manifestPath, expectedNewVer) {
   const raw = readFileSync(manifestPath, "utf8");
-  const re = /(const\s+PLUGIN_VERSION\s*=\s*")[^"]+(")/;
-  if (!re.test(raw)) throw new Error(`no PLUGIN_VERSION in ${manifestPath}`);
-  const next = raw.replace(re, `$1${expectedNewVer}$2`);
-  writeFileSync(manifestPath, next);
+  const constRe = /(const\s+PLUGIN_VERSION\s*=\s*")[^"]+(")/;
+  if (constRe.test(raw)) {
+    writeFileSync(manifestPath, raw.replace(constRe, `$1${expectedNewVer}$2`));
+    return;
+  }
+  const inlineRe = /(^\s*version\s*:\s*")[^"]+(",)/m;
+  if (inlineRe.test(raw)) {
+    writeFileSync(manifestPath, raw.replace(inlineRe, `$1${expectedNewVer}$2`));
+    return;
+  }
+  throw new Error(`no PLUGIN_VERSION or inline version in ${manifestPath}`);
 }
 
 function updateReadme(readmePath, plugin, oldVer, newVer) {

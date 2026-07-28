@@ -2,6 +2,10 @@
 
 Paperclip plugin that exposes Amazon KDP publishing operations as agent tools. Validates manuscripts and manages the pending/published/error folder pipeline.
 
+## Recent changes
+
+- **v0.1.1** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 ## Tools
 
 | Tool | Description |
