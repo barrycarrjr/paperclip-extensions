@@ -37,6 +37,15 @@ export interface SearchInput {
   from?: string;
   to?: string;
   subject?: string;
+  /**
+   * IMAP TEXT: matches headers *and* body. This is what the operator-facing
+   * search box sends — one box, matches anywhere. Servers implement it as a
+   * substring scan, so it is the slowest criterion here; keep the folder set
+   * bounded when using it.
+   */
+  text?: string;
+  /** IMAP BODY: body only, headers excluded. */
+  body?: string;
   since?: Date;
   before?: Date;
   unseen?: boolean;
@@ -110,6 +119,8 @@ function buildSearchObject(q: SearchInput): SearchObject {
   if (q.from) obj.from = q.from;
   if (q.to) obj.to = q.to;
   if (q.subject) obj.subject = q.subject;
+  if (q.text) obj.text = q.text;
+  if (q.body) obj.body = q.body;
   if (q.since) obj.since = q.since;
   if (q.before) obj.before = q.before;
   if (q.unseen) obj.seen = false;
@@ -412,6 +423,32 @@ export async function listFolders(client: ImapFlow): Promise<string[]> {
     .map((item) => item.path)
     .filter(Boolean)
     .sort();
+}
+
+/**
+ * Folders that can actually be opened, with the special-use role attached
+ * where the server advertises one.
+ *
+ * `listFolders` returns every path the server lists, including container-only
+ * nodes carrying `\Noselect` (Gmail's bare `[Gmail]` is the common one).
+ * Opening one of those throws, which would abort a whole multi-folder search,
+ * so anything unselectable is dropped here rather than at the call site.
+ */
+export async function listSelectableFolders(
+  client: ImapFlow,
+): Promise<Array<{ path: string; specialUse: string | null }>> {
+  const items = await client.list();
+  const out: Array<{ path: string; specialUse: string | null }> = [];
+  for (const item of items) {
+    if (!item.path) continue;
+    const flags = (item as { flags?: Set<string> }).flags;
+    if (flags?.has("\\Noselect") || flags?.has("\\NonExistent")) continue;
+    out.push({
+      path: item.path,
+      specialUse: (item as { specialUse?: string }).specialUse ?? null,
+    });
+  }
+  return out;
 }
 
 // Locates the mailbox's Trash folder. Prefers the IMAP SPECIAL-USE

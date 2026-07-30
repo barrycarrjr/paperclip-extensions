@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.16.19** - Mailbox search for the operator Email view. Until now search existed only as the `email_search` agent tool, so there was no way for a person to search their own mail anywhere in the Paperclip UI. Adds an `email.search` bridge resource that crosses folders (and, when no mailbox is named, every mailbox the calling company may see) and returns one newest-first list. Folder scope is chosen rather than brute-forced: Trash and Junk are excluded unless asked for, INBOX and the mailbox's own poll folder are searched first, the folder count is capped, and anything left out is reported back in `skippedFolders` instead of silently narrowing the result. A message that lives in both INBOX and an archive (normal on Gmail, where All Mail duplicates everything) collapses to a single row keyed on Message-ID, keeping the INBOX copy so the operator gets a location they can act on. A folder that fails to open is reported in `errors` and does not abandon the rest of the search. Results are envelope-only: adding snippets would mean pulling full message bytes from every folder searched. Both `email.search` and the `email_search` tool gained a `text` filter (IMAP TEXT, matching headers and body) so a single search box works without the caller guessing which field a term is in. Requires at least one filter, since an empty query would otherwise walk every folder of every mailbox.
+
 - **v0.16.18** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.16.17** - Stop the IDLE poll storm and reuse resolved mailbox passwords. Each IMAP notification used to fire its own poll, and a poll that auto-triages mail generates more notifications, so a single delivery could queue about fifteen polls for one mailbox inside a millisecond. Notifications now collapse into one poll per burst (plus at most one follow-up if more arrive mid-poll). Separately, every mailbox operation re-resolved the mailbox password through the host, which rate-limits secret resolution; passwords are now reused from an in-memory cache for 60 seconds, shared by the IMAP and SMTP paths and cleared on config change and shutdown, so rotation is still honoured. Tests cover the collapsing behaviour, the reuse window, and per-mailbox lock serialization.
@@ -189,6 +191,37 @@ its company list — use that as your migration TODO list.
 | `in_reply_to` | string | no | Message-ID being replied to |
 | `references` | string[] | no | Older Message-IDs in the thread |
 | `reply_to` | string | no | Reply-To header override |
+
+`email_search`:
+
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `mailbox` | string | yes | The mailbox Identifier from plugin config. Calling company must be in that mailbox's Allowed companies. |
+| `folder` | string | no | Defaults to the mailbox's poll folder (INBOX if unset). |
+| `text` | string | no | Free text matched against headers and body (IMAP TEXT). Use when you do not know which field holds the term. Slowest filter. |
+| `from` | string | no | Substring of the From: header |
+| `to` | string | no | Substring of the To: header |
+| `subject` | string | no | Substring of the Subject: header |
+| `since` / `before` | string | no | ISO date or `YYYY-MM-DD` |
+| `unseen` | boolean | no | Unread only |
+| `limit` | number | no | Default 50, max 200 |
+
+Returns headers and no bodies. Use `email_fetch` for a full message.
+
+### Searching from the UI
+
+The operator Email view calls the `email.search` bridge resource, which takes
+the same filters plus `includeTrash`, and differs in scope: omit `mailbox` and
+it searches every mailbox the calling company is allowed to see, and omit
+`folder` and it searches across folders rather than one. It answers with
+`{ results, truncated, searchedMailboxes, skippedFolders, errors }`.
+
+Two things are worth knowing about the scope it picks. Trash and Junk are left
+out unless `includeTrash` is set, and the number of folders per mailbox is
+capped, so a very large account is not guaranteed to be searched exhaustively.
+Anything left out is listed in `skippedFolders`, and a folder that could not be
+opened lands in `errors`, so the caller can tell the difference between "no
+matches" and "not looked at".
 
 ### Example invocation
 

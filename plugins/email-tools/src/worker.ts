@@ -6,7 +6,7 @@ import {
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
 import nodemailer from "nodemailer";
-import { assertCompanyAccess } from "./companyAccess.js";
+import { assertCompanyAccess, isCompanyAllowed } from "./companyAccess.js";
 import {
   fetchHeaders,
   fetchParsedMessage,
@@ -14,11 +14,13 @@ import {
   getAttachment,
   getUidValidity,
   listFolders,
+  listSelectableFolders,
   moveMessages,
   searchMessages,
   setSeenFlag,
   type ParsedMessage,
 } from "./imap.js";
+import { mergeSearchResults, planFolderScope, type SearchHit } from "./search-scope.js";
 import { ActionConnectionPool } from "./connection-pool.js";
 import {
   runPoll,
@@ -110,6 +112,13 @@ function normalizeUidArg(uid: unknown): number[] {
     return uid.filter((n) => typeof n === "number" && Number.isFinite(n)).map((n) => Math.floor(n));
   }
   return [];
+}
+
+/** Narrows an untyped bridge param to a non-empty string, or undefined. */
+function str(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function parseDateArg(v: string | undefined): Date | undefined {
@@ -400,6 +409,7 @@ const plugin = definePlugin({
         const p = params as {
           mailbox?: string;
           folder?: string;
+          text?: string;
           from?: string;
           to?: string;
           subject?: string;
@@ -417,6 +427,7 @@ const plugin = definePlugin({
           const items = await withImapConnection(ctx, cfg, p.mailbox as string, async (client) => {
             const uids = await searchMessages(client, {
               folder,
+              text: p.text,
               from: p.from,
               to: p.to,
               subject: p.subject,
@@ -931,6 +942,141 @@ const plugin = definePlugin({
         const folders = await listFolders(conn);
         return { folders };
       });
+    });
+
+    /**
+     * `email.search` — the operator search box.
+     *
+     * Differs from `email.list-messages` in scope: that one deliberately
+     * mirrors a single folder, this one crosses folders and (when no mailbox
+     * is named) every mailbox the company may see. Envelopes only — snippets
+     * would mean pulling full message bodies from every folder searched.
+     */
+    ctx.data.register("email.search", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) throw new Error("[EINVALID_INPUT] companyId is required");
+
+      const p = params as {
+        mailbox?: string;
+        folder?: string;
+        text?: string;
+        from?: string;
+        to?: string;
+        subject?: string;
+        since?: string;
+        before?: string;
+        unseen?: boolean;
+        includeTrash?: boolean;
+        limit?: number;
+      };
+
+      const criteria = {
+        text: str(p.text),
+        from: str(p.from),
+        to: str(p.to),
+        subject: str(p.subject),
+        since: parseDateArg(str(p.since)),
+        before: parseDateArg(str(p.before)),
+        unseen: p.unseen === true,
+      };
+      // Without this an empty box would fetch every message in every folder of
+      // every mailbox — minutes of IMAP traffic for a result nobody asked for.
+      const hasCriteria =
+        !!criteria.text ||
+        !!criteria.from ||
+        !!criteria.to ||
+        !!criteria.subject ||
+        !!criteria.since ||
+        !!criteria.before ||
+        criteria.unseen;
+      if (!hasCriteria) {
+        throw new Error("[EINVALID_INPUT] Provide at least one of: text, from, to, subject, since, before, unseen");
+      }
+
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const limit = Math.min(200, Math.max(1, Math.floor(p.limit ?? 50)));
+
+      // A named mailbox is access-checked and fails loudly; the all-mailboxes
+      // case filters instead, so a company never learns which other mailboxes
+      // exist by watching which keys error.
+      let targets: Array<{ key: string; cfg: ConfigMailbox }>;
+      if (p.mailbox) {
+        const cfg = findConfigMailbox(config, p.mailbox);
+        if (!cfg) throw new Error(`Mailbox "${p.mailbox}" not configured`);
+        assertCompanyAccess(ctx, {
+          tool: "email.search",
+          resourceLabel: `Mailbox "${p.mailbox}"`,
+          resourceKey: p.mailbox,
+          allowedCompanies: cfg.allowedCompanies,
+          companyId,
+        });
+        targets = [{ key: cfg.key ?? p.mailbox, cfg }];
+      } else {
+        targets = (config.mailboxes ?? [])
+          .filter((m) => !!m.key && isCompanyAllowed(m.allowedCompanies, companyId))
+          .map((m) => ({ key: m.key as string, cfg: m }));
+      }
+
+      if (targets.length === 0) {
+        return { results: [], truncated: false, searchedMailboxes: [], skippedFolders: [], errors: [] };
+      }
+
+      const skippedFolders: string[] = [];
+      const errors: Array<{ mailbox: string; folder?: string; message: string }> = [];
+
+      // Mailboxes run concurrently — each holds its own pooled connection, so
+      // they do not contend. Folders within a mailbox stay sequential: they
+      // share one connection and IMAP only has one selected folder at a time.
+      const perMailbox = await Promise.all(
+        targets.map(async ({ key, cfg }): Promise<SearchHit[]> => {
+          try {
+            const rt = await buildMailboxRuntime(ctx, cfg, key);
+            return await actionPool.run(rt, async (conn) => {
+              const available = await listSelectableFolders(conn);
+              const scope = planFolderScope(available, {
+                folder: str(p.folder),
+                pollFolder: cfg.pollFolder ?? "INBOX",
+                includeTrash: p.includeTrash === true,
+              });
+              for (const folder of scope.skipped) skippedFolders.push(`${key}/${folder}`);
+
+              const hits: SearchHit[] = [];
+              for (const folder of scope.folders) {
+                try {
+                  const uids = await searchMessages(conn, { folder, ...criteria });
+                  if (uids.length === 0) continue;
+                  // Highest UIDs are the most recent arrivals in that folder;
+                  // the global newest-first ordering happens after the merge.
+                  const headers = await fetchHeaders(conn, folder, uids.slice(-limit));
+                  for (const h of headers) hits.push({ ...h, mailbox: key, folder });
+                } catch (err) {
+                  // One unreadable folder must not lose the whole search.
+                  errors.push({ mailbox: key, folder, message: (err as Error).message });
+                }
+              }
+              return hits;
+            });
+          } catch (err) {
+            errors.push({ mailbox: key, message: (err as Error).message });
+            return [];
+          }
+        }),
+      );
+
+      const merged = mergeSearchResults(perMailbox.flat(), limit);
+      await ctx.telemetry.track("email.search", {
+        companyId,
+        mailboxes: String(targets.length),
+        count: String(merged.results.length),
+      });
+
+      return {
+        results: merged.results,
+        truncated: merged.truncated,
+        searchedMailboxes: targets.map((t) => t.key),
+        skippedFolders,
+        errors,
+      };
     });
 
     // ─── UI bridge: performAction handlers (operator Email view) ─────────

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.16.18";
+const PLUGIN_VERSION = "0.16.19";
 
 const mailboxItemSchema = {
   type: "object",
@@ -472,6 +472,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
           folder: {
             type: "string",
             description: "Folder to search. Defaults to the mailbox's pollFolder (INBOX if unset).",
+          },
+          text: {
+            type: "string",
+            description:
+              "Free text matched against headers AND body (IMAP TEXT). Use this when you do not know which field the term appears in. Slower than the field-specific filters below.",
           },
           from: { type: "string", description: "Match against From: header (substring)." },
           to: { type: "string", description: "Match against To: header (substring)." },
