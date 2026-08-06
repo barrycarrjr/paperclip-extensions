@@ -4,6 +4,8 @@ Paperclip plugin that exposes Instagram posting operations as agent tools via th
 
 ## Recent changes
 
+- **v0.1.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.1** — Remove the unused native `sharp` dependency (declared but never imported). Native modules can't load from a `.pcplugin` install, so it was a trap for future wiring; any future image work should use a pure-JS library instead.

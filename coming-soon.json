@@ -92,6 +92,12 @@
       "categories": ["automation"]
     },
     {
+      "id": "adroll-tools",
+      "displayName": "AdRoll Tools",
+      "description": "Retargeting and display-ad operations on AdRoll: campaign performance pulls, budget checks, and draft-first campaign management. AdRoll ships both a full REST API (the NextRoll API, OAuth 2.0) and an official MCP server (beta, OAuth 2.1), so this can wrap the hosted MCP directly. Feeds CMO Agent for ad-spend reporting and campaign tuning.",
+      "categories": ["automation", "connector"]
+    },
+    {
       "id": "review-tools",
       "displayName": "Review Tools",
       "description": "Pull and reply to customer reviews across Google Business Profile, Facebook, Trustpilot, Apple App Store, Google Play, and more. Per-service on/off toggles so each company connects only what it uses. Read tools surface new reviews; submit tools post replies. Pairs with the Review Reply Agent for drafting, approval, and policy-driven auto-reply.",

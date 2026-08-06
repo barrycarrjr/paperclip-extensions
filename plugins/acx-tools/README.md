@@ -4,6 +4,8 @@ Paperclip plugin that exposes Audible/ACX audiobook publishing operations as age
 
 ## Recent changes
 
+- **v0.1.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.1** — Replace the never-wired native `sharp` dependency with pure-JS `image-size`, and implement the previously skipped cover dimension check: `acx_validate_cover` now enforces the ACX 2400×2400 minimum. Native modules can't load from a `.pcplugin` install (only `dist/` ships), so `sharp` could never have worked there.

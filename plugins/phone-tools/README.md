@@ -132,6 +132,8 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- **v0.7.10** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.7.9** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.7.8** — Verified personal caller IDs API via Twilio's OutgoingCallerIds (list/start-verification/delete) so agents can place calls from a verified personal number. Per-call reason substitution with a universal preflight rule plus a dedicated Gather Info task. Assistant editing UI in the Agent Phone tab.
