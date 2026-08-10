@@ -101,7 +101,27 @@ Under **Google accounts**, click **+ Add item**:
 - **One account per Google email** — you can't have two plugin accounts for the same Google email. Create a second GCP OAuth client if you need separate client credentials per company.
 `;
 
-const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
+/**
+ * Mirror of the host's `PluginConnectorDeclaration`.
+ *
+ * Declared here rather than imported because the published plugin SDK predates
+ * the field. Delete this and take the type from `@paperclipai/plugin-sdk` once
+ * an SDK carrying `connectors` is released.
+ */
+interface ConnectorDeclaration {
+  id: string;
+  surface: "calendar";
+  displayName: string;
+  connectionsKey: string;
+  companiesField: string;
+  labelField?: string;
+  requiredFields?: string[];
+}
+
+const manifest: PaperclipPluginManifestV1 & {
+  setupInstructions?: string;
+  connectors?: ConnectorDeclaration[];
+} = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
@@ -219,6 +239,22 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     },
     required: ["accounts"],
   },
+  // Lets the board's Calendar page show, per company, whether a Google account
+  // is actually hooked up, and send the operator here when one is not. Points
+  // at the `accounts` array above; grants nothing on its own.
+  connectors: [
+    {
+      id: "google-calendar",
+      surface: "calendar",
+      displayName: "Google Calendar",
+      connectionsKey: "accounts",
+      companiesField: "allowedCompanies",
+      labelField: "userEmail",
+      // An account with no refresh token cannot authenticate, so it must not
+      // read as connected just because the row exists.
+      requiredFields: ["refreshTokenRef"],
+    },
+  ],
   tools: ALL_TOOLS,
   ui: {
     slots: [
