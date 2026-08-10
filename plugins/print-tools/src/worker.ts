@@ -56,6 +56,82 @@ function psSingleQuote(s: string): string {
   return s.replace(/'/g, "''");
 }
 
+interface PrintJobParams {
+  content?: string;
+  printer?: string;
+  jobTitle?: string;
+  copies?: number;
+}
+
+interface PrintJobOutcome {
+  printer: string;
+  copies: number;
+  contentLength: number;
+}
+
+// Shared by the print_text agent tool and the print_text UI bridge action,
+// so the two entry points cannot drift apart in behaviour.
+async function runPrintJob(
+  config: InstanceConfig,
+  p: PrintJobParams,
+): Promise<{ error: string } | PrintJobOutcome> {
+  if (!p.content || p.content.trim() === "") {
+    return { error: "content is required and cannot be empty." };
+  }
+
+  const printerName = (p.printer ?? config.defaultPrinter ?? "").trim();
+  const copies = Math.max(1, Math.min(99, Math.floor(p.copies ?? 1)));
+
+  // Validate named printer exists before writing the temp file.
+  if (printerName) {
+    const raw = await runPowerShell(
+      "@(Get-Printer | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress",
+    );
+    let names: string[] = [];
+    try {
+      const parsed = JSON.parse(raw);
+      names = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      names = [];
+    }
+    const found = names.some((n) => n.toLowerCase() === printerName.toLowerCase());
+    if (!found) {
+      return {
+        error: `[EPRINT_NO_PRINTER] Printer "${printerName}" not found. Call list_printers to see available printers.`,
+      };
+    }
+  }
+
+  // Write to a temp file to avoid PowerShell escaping issues with the content.
+  const tmpFile = join(tmpdir(), `paperclip-print-${randomUUID()}.txt`);
+  try {
+    writeFileSync(tmpFile, p.content, "utf8");
+
+    const printerArg = printerName ? `-Name '${psSingleQuote(printerName)}'` : "";
+    // Out-Printer has no -Copies parameter in Windows PowerShell 5.1,
+    // so repeat the pipeline for each copy.
+    const escapedPath = psSingleQuote(tmpFile);
+    const command =
+      copies === 1
+        ? `Get-Content -Path '${escapedPath}' | Out-Printer ${printerArg}`
+        : `1..${copies} | ForEach-Object { Get-Content -Path '${escapedPath}' | Out-Printer ${printerArg} }`;
+
+    await runPowerShell(command);
+  } finally {
+    try {
+      unlinkSync(tmpFile);
+    } catch {
+      // Temp file cleanup failure is non-fatal.
+    }
+  }
+
+  return {
+    printer: printerName || "Windows default",
+    copies,
+    contentLength: p.content.length,
+  };
+}
+
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     ctx.logger.info("print-tools plugin setup");
@@ -120,75 +196,21 @@ const plugin = definePlugin({
           companyId: runCtx.companyId,
         });
 
-        const p = params as {
-          content?: string;
-          printer?: string;
-          jobTitle?: string;
-          copies?: number;
-        };
-
-        if (!p.content || p.content.trim() === "") {
-          return { error: "content is required and cannot be empty." };
+        const outcome = await runPrintJob(config, params as PrintJobParams);
+        if ("error" in outcome) {
+          return { error: outcome.error };
         }
-
-        const printerName = (p.printer ?? config.defaultPrinter ?? "").trim();
-        const copies = Math.max(1, Math.min(99, Math.floor(p.copies ?? 1)));
-
-        // Validate named printer exists before writing the temp file.
-        if (printerName) {
-          const raw = await runPowerShell(
-            "@(Get-Printer | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress",
-          );
-          let names: string[] = [];
-          try {
-            const parsed = JSON.parse(raw);
-            names = Array.isArray(parsed) ? parsed : [parsed];
-          } catch {
-            names = [];
-          }
-          const found = names.some((n) => n.toLowerCase() === printerName.toLowerCase());
-          if (!found) {
-            return {
-              error: `[EPRINT_NO_PRINTER] Printer "${printerName}" not found. Call list_printers to see available printers.`,
-            };
-          }
-        }
-
-        // Write to a temp file to avoid PowerShell escaping issues with the content.
-        const tmpFile = join(tmpdir(), `paperclip-print-${randomUUID()}.txt`);
-        try {
-          writeFileSync(tmpFile, p.content, "utf8");
-
-          const printerArg = printerName ? `-Name '${psSingleQuote(printerName)}'` : "";
-          // Out-Printer has no -Copies parameter in Windows PowerShell 5.1,
-          // so repeat the pipeline for each copy.
-          const escapedPath = psSingleQuote(tmpFile);
-          const command =
-            copies === 1
-              ? `Get-Content -Path '${escapedPath}' | Out-Printer ${printerArg}`
-              : `1..${copies} | ForEach-Object { Get-Content -Path '${escapedPath}' | Out-Printer ${printerArg} }`;
-
-          await runPowerShell(command);
-        } finally {
-          try {
-            unlinkSync(tmpFile);
-          } catch {
-            // Temp file cleanup failure is non-fatal.
-          }
-        }
-
-        const resolvedPrinter = printerName || "Windows default";
 
         await ctx.telemetry.track("print-tools.print_text", {
-          printerName: resolvedPrinter,
-          contentLength: p.content.length,
-          copies,
+          printerName: outcome.printer,
+          contentLength: outcome.contentLength,
+          copies: outcome.copies,
           companyId: runCtx.companyId,
         });
 
         return {
-          content: `Print job sent to ${resolvedPrinter}.`,
-          data: { ok: true, printer: resolvedPrinter },
+          content: `Print job sent to ${outcome.printer}.`,
+          data: { ok: true, printer: outcome.printer },
         };
       },
     );
@@ -204,6 +226,42 @@ const plugin = definePlugin({
         names = [];
       }
       return { options: names };
+    });
+
+    // UI bridge action for operator surfaces (for example the Print button in
+    // the email viewer). Same behaviour and company gate as the print_text
+    // agent tool; the bridge carries no agent run, so companyId arrives in
+    // params and failures are thrown rather than returned as ToolResult.
+    ctx.actions.register("print_text", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) throw new Error("companyId is required");
+
+      const config = (await ctx.config.get()) as InstanceConfig;
+      assertCompanyAccess(ctx, {
+        tool: "print_text",
+        resourceLabel: "print-tools",
+        resourceKey: "instance",
+        allowedCompanies: config.allowedCompanies,
+        companyId,
+      });
+
+      const outcome = await runPrintJob(config, {
+        content: typeof params.content === "string" ? params.content : undefined,
+        printer: typeof params.printer === "string" ? params.printer : undefined,
+        jobTitle: typeof params.jobTitle === "string" ? params.jobTitle : undefined,
+        copies: typeof params.copies === "number" ? params.copies : undefined,
+      });
+      if ("error" in outcome) throw new Error(outcome.error);
+
+      await ctx.telemetry.track("print-tools.print_text", {
+        printerName: outcome.printer,
+        contentLength: outcome.contentLength,
+        copies: outcome.copies,
+        companyId,
+        via: "ui-bridge",
+      });
+
+      return { ok: true, printer: outcome.printer };
     });
   },
 });

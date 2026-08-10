@@ -26,8 +26,10 @@ const REPO_ROOT = dirname(__dirname);
 const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
-  "help-scout":
-    "Added the `helpscout.create-conversation` bridge action so the Paperclip mail view can compose a brand new message, not just reply to an existing one. It posts the same conversation Help Scout's API expects as the `helpscout_create_conversation` agent tool, minus the idempotency tag (a person clicking Send once wants exactly one conversation), honours the account's `allowedMailboxes` list, and is covered by the same \"allow create/reply/note/status/tag changes\" setting as every other write. `helpScoutRequest` now also returns the response's `Location` header, which is how a create learns the new conversation id — Help Scout answers 201 with an empty body.",
+  // v0.59.0: none. print-tools carries the release's real change (the
+  // print_text UI bridge action) but was bumped to 0.1.24 by hand with its
+  // own Recent-changes entry before this script ran, so it is reverted to
+  // that state after the run rather than double-bumped here.
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";

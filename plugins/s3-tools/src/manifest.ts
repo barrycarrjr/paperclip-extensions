@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: "s3-tools",
   apiVersion: 1,
-  version: "0.1.3",
+  version: "0.1.4",
   displayName: "S3 Tools",
   setupInstructions: `# Setup — S3 Tools
 

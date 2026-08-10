@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.5.19** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.5.18** — Added the `helpscout.create-conversation` bridge action so the Paperclip mail view can compose a brand new message, not just reply to an existing one. It posts the same conversation Help Scout's API expects as the `helpscout_create_conversation` agent tool, minus the idempotency tag (a person clicking Send once wants exactly one conversation), honours the account's `allowedMailboxes` list, and is covered by the same "allow create/reply/note/status/tag changes" setting as every other write. `helpScoutRequest` now also returns the response's `Location` header, which is how a create learns the new conversation id — Help Scout answers 201 with an empty body.
 
 - **v0.5.17** — Added the `helpscout.create-conversation` bridge action so the Paperclip mail view can compose a brand new message, not just reply to an existing one. It posts the same conversation Help Scout's API expects as the `helpscout_create_conversation` agent tool, minus the idempotency tag (a person clicking Send once wants exactly one conversation), honours the account's `allowedMailboxes` list, and is covered by the same "allow create/reply/note/status/tag changes" setting as every other write. `helpScoutRequest` now also returns the response's `Location` header, which is how a create learns the new conversation id — Help Scout answers 201 with an empty body.

@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-s3-tools",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Paperclip plugin that exposes S3 download, upload, sync, and list operations as agent tools. Multi-bucket, per-bucket company isolation, credential-gated. Supports AWS S3 and S3-compatible services (MinIO, R2, Spaces).",
   "type": "module",
   "private": true,

@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: "youtube-tools",
   apiVersion: 1,
-  version: "0.1.3",
+  version: "0.1.4",
   displayName: "YouTube Tools",
   setupInstructions: `# Setup — YouTube Tools
 

@@ -6,6 +6,8 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 
 ## Recent changes
 
+- **v0.3.25** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.3.24** — Declares a Google Calendar connector, so Paperclip's Calendar pages can show per company whether a Google account is actually hooked up and link back here to fix it. `refreshTokenRef` is marked required, so an account added before its refresh token has been fetched reads as not connected rather than passing as set up. No change to tools or behaviour.
 
 - **v0.3.23** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
