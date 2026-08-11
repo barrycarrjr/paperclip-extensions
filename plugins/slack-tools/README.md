@@ -13,6 +13,18 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 
 ## Recent changes
 
+- **v0.4.27** — Rotating a token now takes effect on the next call.
+
+  The Slack client was cached against *which secret* the token came from, not
+  the token itself. A rotation keeps the same secret reference and changes the
+  value underneath it, so the cache kept serving a client built from the
+  previous token — with no error anywhere. Rotating a leaked or expired
+  credential appeared to work and changed nothing until someone restarted the
+  worker. Found the hard way while connecting a second workspace.
+
+  The cache now compares a digest of the resolved token as well as the
+  reference. Covered by a test that fails against the old behaviour.
+
 - **v0.4.26** — Adds `slack_create_channel` and `slack_invite_users`. Until now
   the plugin could talk in Slack but not build anything in it: an agent asked to
   "set up Slack for this company" could design the channel structure and then

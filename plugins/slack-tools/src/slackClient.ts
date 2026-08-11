@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { WebClient, ErrorCode, type WebClientOptions } from "@slack/web-api";
 import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { assertCompanyAccess } from "./companyAccess.js";
@@ -35,10 +36,21 @@ export interface ResolvedWorkspace {
 interface CachedClient {
   client: WebClient;
   resolvedTokenRef: string;
+  /**
+   * SHA-256 of the token this client was built with. The reference alone is
+   * not enough to know the client is still current — rotating a secret keeps
+   * the same reference and changes the value underneath it.
+   */
+  tokenDigest: string;
   channelCache: Map<string, { id: string; expiresAt: number }>;
 }
 
 const clientCache = new Map<string, CachedClient>();
+
+/** Test seam: the cache is module-level, so tests need a clean slate. */
+export function __resetClientCacheForTests(): void {
+  clientCache.clear();
+}
 const cacheKey = (companyId: string, workspaceKey: string, useUserToken: boolean) =>
   `${companyId}::${workspaceKey.toLowerCase()}::${useUserToken ? "user" : "bot"}`;
 
@@ -88,9 +100,28 @@ export async function getSlackClient(
     );
   }
 
+  // Resolve before consulting the cache, and key the cache on the token's
+  // VALUE rather than which secret it came from.
+  //
+  // Keying on the secret reference alone meant a rotated secret was ignored:
+  // the ref is unchanged by a rotation, so the cache kept serving a client
+  // built from the previous token and every call carried the old credential.
+  // Nothing errored — which is the worst version of this, because rotating a
+  // leaked or expired token appeared to work while changing nothing. Only a
+  // worker restart cleared it.
+  const token = await ctx.secrets.resolve(tokenRef);
+  if (!token) {
+    throw new Error(
+      `[ECONFIG] Slack workspace "${workspace.key}": secret "${tokenRef}" did not resolve.`,
+    );
+  }
+  // Compared by digest so the cache doesn't hold a second plaintext copy of
+  // the credential; the WebClient already has the one it needs.
+  const tokenDigest = createHash("sha256").update(token).digest("hex");
+
   const ck = cacheKey(runCtx.companyId, workspace.key ?? requestedKey, useUserToken);
   const cached = clientCache.get(ck);
-  if (cached && cached.resolvedTokenRef === tokenRef) {
+  if (cached && cached.resolvedTokenRef === tokenRef && cached.tokenDigest === tokenDigest) {
     return {
       workspace,
       workspaceKey: workspace.key ?? requestedKey,
@@ -99,19 +130,12 @@ export async function getSlackClient(
     };
   }
 
-  const token = await ctx.secrets.resolve(tokenRef);
-  if (!token) {
-    throw new Error(
-      `[ECONFIG] Slack workspace "${workspace.key}": secret "${tokenRef}" did not resolve.`,
-    );
-  }
-
   const opts: WebClientOptions = {
     retryConfig: { retries: 3 },
   };
   const client = new WebClient(token, opts);
   const channelCache = new Map<string, { id: string; expiresAt: number }>();
-  clientCache.set(ck, { client, resolvedTokenRef: tokenRef, channelCache });
+  clientCache.set(ck, { client, resolvedTokenRef: tokenRef, tokenDigest, channelCache });
   return {
     workspace,
     workspaceKey: workspace.key ?? requestedKey,

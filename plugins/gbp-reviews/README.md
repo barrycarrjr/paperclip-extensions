@@ -6,6 +6,18 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
+- **v0.1.6** — Rotating the OAuth credentials now takes effect on the next call.
+
+  The Google OAuth client was cached against *which secrets* it was built from,
+  not their values. Rotating any of the three — client id, client secret, or
+  refresh token — keeps the same references and changes the values underneath,
+  so the cache kept using the old credentials with no error until the worker
+  restarted. That matters most for the refresh token, which is precisely what
+  you rotate when one leaks or expires.
+
+  The cache now compares a digest of the resolved values too. Same bug and same
+  fix as slack-tools v0.4.27, found there first.
+
 - **v0.1.5** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
