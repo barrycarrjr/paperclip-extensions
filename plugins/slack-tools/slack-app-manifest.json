@@ -63,8 +63,7 @@
         "pins:read",
         "pins:write",
         "channels:manage",
-        "groups:write",
-        "users:read.email"
+        "groups:write"
       ]
     },
     "pkce_enabled": false
