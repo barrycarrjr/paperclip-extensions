@@ -36,14 +36,14 @@ const workspaceItemSchema = {
       format: "secret-ref",
       title: "Bot token (xoxb-...)",
       description:
-        "Paste the UUID of the secret holding this workspace's Slack bot token (xoxb-...). Used by tools that announce or notify (channel posts, operator DMs from the bot identity). Create the Slack App by importing the bundled `slack-app-manifest.json` at api.slack.com/apps (Create New App → From a manifest), install it to your workspace, then copy 'Bot User OAuth Token' from OAuth & Permissions. Store it as a secret on the company's Secrets page and paste the secret's UUID here — never paste the raw token.",
+        "The secret holding this workspace's Slack bot token (xoxb-...). Save the token on the company's Secrets page first, then pick it from the dropdown here — never paste the raw token into this field. Used by tools that announce or notify (channel posts, operator DMs from the bot identity). Create the Slack App by importing the bundled `slack-app-manifest.json` at api.slack.com/apps (Create New App → From a manifest), install it to your workspace, then copy 'Bot User OAuth Token' from OAuth & Permissions.",
     },
     userTokenRef: {
       type: "string",
       format: "secret-ref",
       title: "User token (xoxp-...)",
       description:
-        "Paste the UUID of the secret holding this workspace's Slack user token (xoxp-...). Used by tools that act *as you* — search, file uploads, reactions, reminders, personal-identity DMs. The whole point of an assistant plugin is acting on the operator's behalf, so this is first-class: configure it at install time alongside the bot token. Get it from the same OAuth & Permissions page as the bot token after installing the app via the bundled manifest. Store it as a secret on the company's Secrets page and paste the secret's UUID here.",
+        "The secret holding this workspace's Slack user token (xoxp-...). Pick it from the dropdown after saving it on the Secrets page. Used by tools that act *as you* — search, file uploads, reactions, reminders, personal-identity DMs. The whole point of an assistant plugin is acting on the operator's behalf, so this is first-class: configure it at install time alongside the bot token. Get it from the same OAuth & Permissions page as the bot token after installing the app via the bundled manifest.",
     },
     defaultDmTarget: {
       type: "string",
@@ -103,11 +103,11 @@ Copy both.
 In Paperclip, switch to the company that should own this workspace connection. For each token:
 
 - Go to **Secrets → Add**
-- Name it descriptively (e.g. \`SLACK_BOT_TOKEN_MAIN\`, \`SLACK_USER_TOKEN_MAIN\`)
+- Name it descriptively (e.g. \`SLACK_BOT_TOKEN_MAIN\`, \`SLACK_USER_TOKEN_MAIN\`) — this is the name you'll pick from the dropdown in the next step, so make it recognisable
 - Paste the token as the value
-- Save, then **copy the secret's UUID**
+- Save
 
-You'll have two secret UUIDs at the end.
+That's all you need here. The configuration form below looks the secrets up by name; you never handle an ID.
 
 ---
 
@@ -119,8 +119,8 @@ Click the **Configuration** tab above. Under **Slack workspaces**, click **+ Add
 |---|---|
 | **Identifier** | \`main\` |
 | **Display name** | (e.g. "Acme Slack") |
-| **Bot token** | paste the bot-token secret UUID from step 3 |
-| **User token** | paste the user-token secret UUID from step 3 |
+| **Bot token** | pick the \`xoxb-\` secret from step 3 in the dropdown |
+| **User token** | pick the \`xoxp-\` secret from step 3 in the dropdown |
 | **Default DM target** | your Slack user ID — see step 5 |
 | **Default channel ID** | optional; a C-prefixed channel ID for the default posting channel |
 | **Allowed companies** | tick the company that owns this workspace |
@@ -171,7 +171,7 @@ If you upgraded from v0.3.x, **re-import the v0.4.0 manifest at api.slack.com/ap
 - **\`not_in_channel\` error** — the bot isn't a member of the channel. Either invite it with \`/invite @YourBot\` in Slack, or use \`chat:write.public\` scope (already in the manifest) and post to a public channel.
 - **\`missing_scope\` error** — Slack added a new scope or you've imported an older manifest. Re-import the latest \`slack-app-manifest.json\`, reinstall the app, and update both secrets (the tokens change on reinstall).
 - **\`channel_not_found\`** — double-check you're passing a C-prefixed channel ID, not a channel name. Use \`slack_list_channels\` to find the correct ID.
-- **\`[ECONFIG] ... no userTokenRef configured\`** — a future tool needs the user token but you didn't set one. Add the \`xoxp-\` secret and paste its UUID into the workspace's User token field.
+- **\`[ECONFIG] ... no userTokenRef configured\`** — a tool needs the user token but you didn't set one. Save the \`xoxp-\` token on the Secrets page, then pick it in the workspace's User token dropdown.
 `;
 
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {

@@ -101,6 +101,8 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 | `slack_lookup_user` | read | Resolve by email or user ID. Use once at setup to find your `defaultDmTarget`. |
 | `slack_list_channels` | read | List channels, optional substring filter. |
 | `slack_get_channel` | read | Single-channel metadata. |
+| `slack_create_channel` | mutation | Create a channel. Idempotent — an existing name is returned, not an error. Names normalised to Slack's rules. Gated by `allowMutations`. |
+| `slack_invite_users` | mutation | Invite workspace members to a channel by ID or email. Already-members reported, not failed. Gated by `allowMutations`. |
 | `slack_list_users` | read | Roster, paginated. Filters bots/deleted unless `includeDeleted`. |
 | `slack_set_user_status` | write | Set the operator's status. **User token only.** |
 
@@ -156,16 +158,16 @@ workspace and grab BOTH tokens — **Bot User OAuth Token** (`xoxb-…`) and
 For each token:
 
 1. Open `<COMPANY-PREFIX>/company/settings/secrets` in the paperclip UI
-   (any company is fine; secrets are looked up by UUID).
+   (any company is fine).
 2. Click **+ Create secret**.
 3. Name it descriptively (e.g. `SLACK_BOT_TOKEN_MAIN`,
    `SLACK_USER_TOKEN_MAIN`).
 4. Provider: `Local encrypted` (the default).
 5. Value: paste the token. Save.
-6. Copy the secret's UUID.
 
-You'll have two secret UUIDs at the end — one for `xoxb-…`, one for
-`xoxp-…`.
+That is all — the plugin config form below picks secrets by name from a
+dropdown, so you never handle an ID. Name them recognisably; the name is what
+you will be choosing from.
 
 ### 3. Find your default DM target user ID
 
@@ -185,8 +187,8 @@ Slack workspaces. Fill in:
 |---|---|---|
 | `Identifier` | `team-main` | Short stable ID agents pass as the `workspace` parameter. Lowercase, no spaces. **Don't change after skills start using it.** |
 | `Display name` | `Acme Slack` | Free-form label. |
-| `Bot token (xoxb-…)` | (paste bot-token secret UUID from step 2) | Bot identity — channel posts, operator DMs. |
-| `User token (xoxp-…)` | (paste user-token secret UUID from step 2) | Operator identity — search, files, reactions, reminders. |
+| `Bot token (xoxb-…)` | pick the `xoxb-` secret from step 2 | Bot identity — channel posts, operator DMs. |
+| `User token (xoxp-…)` | pick the `xoxp-` secret from step 2 | Operator identity — search, files, reactions, reminders. |
 | `Default DM target user ID` | `U01ABCDEFGH` | Your Slack user ID from step 3. Saves passing `userId` on every DM. |
 | `Default channel ID (optional)` | `C01ABCDEFGH` | If most messages go to one ops channel, paste its ID here. |
 | `Allowed companies` | tick the LLC | Which paperclip companies may use this workspace. Empty = unusable. Typical: one workspace = one LLC, single-element list. |
