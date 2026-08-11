@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.4.25";
+const PLUGIN_VERSION = "0.4.26";
 
 const workspaceItemSchema = {
   type: "object",
@@ -422,6 +422,55 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         properties: {
           workspace: { type: "string", description: "Workspace identifier. Optional." },
           channelId: { type: "string", description: "C-prefixed channel ID." },
+        },
+        required: ["channelId"],
+      },
+    },
+    {
+      name: "slack_create_channel",
+      displayName: "Create Slack channel",
+      description:
+        "Create a channel in the workspace. Idempotent — a name that already exists is returned rather than erroring, so a setup routine can be re-run safely. Names are normalized to Slack's rules (lowercase, hyphens). Gated by allowMutations.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          name: {
+            type: "string",
+            description:
+              "Channel name. Normalized automatically: 'M3 Orders' becomes 'm3-orders'. Max 80 chars.",
+          },
+          isPrivate: {
+            type: "boolean",
+            description: "Create as a private channel. Default false (public).",
+          },
+          purpose: { type: "string", description: "Optional channel purpose." },
+          topic: { type: "string", description: "Optional channel topic." },
+        },
+        required: ["name"],
+      },
+    },
+    {
+      name: "slack_invite_users",
+      displayName: "Invite users to a Slack channel",
+      description:
+        "Invite existing workspace members to a channel by user ID or email. Users already in the channel are reported as such rather than failing. Cannot invite people who aren't in the workspace — that needs a workspace admin. Gated by allowMutations.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          workspace: { type: "string", description: "Workspace identifier. Optional." },
+          channelId: { type: "string", description: "C-prefixed channel ID." },
+          userIds: {
+            type: "array",
+            items: { type: "string" },
+            description: "Slack user IDs (U-prefixed).",
+          },
+          emails: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Email addresses, looked up to user IDs. Emails not belonging to a workspace member are returned in notFound.",
+          },
         },
         required: ["channelId"],
       },

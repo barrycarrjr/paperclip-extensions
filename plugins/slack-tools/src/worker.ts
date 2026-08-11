@@ -536,6 +536,194 @@ const plugin = definePlugin({
     );
 
     ctx.tools.register(
+      "slack_create_channel",
+      {
+        displayName: "Create Slack channel",
+        description:
+          "Create a channel in the workspace. Idempotent: if the name already exists it returns the existing channel rather than failing. Gated by allowMutations.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            workspace: { type: "string" },
+            name: { type: "string" },
+            isPrivate: { type: "boolean" },
+            purpose: { type: "string" },
+            topic: { type: "string" },
+          },
+          required: ["name"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        if (!allowMutations) {
+          return {
+            error:
+              "[EDISABLED] slack_create_channel is disabled. Enable 'Allow editing & deleting messages' on /instance/settings/plugins/slack-tools.",
+          };
+        }
+        const p = params as {
+          workspace?: string;
+          name?: string;
+          isPrivate?: boolean;
+          purpose?: string;
+          topic?: string;
+        };
+        const name = normalizeChannelName(p.name ?? "");
+        if (!name) {
+          return {
+            error:
+              "[EINVALID_INPUT] `name` is required (lowercase letters, numbers, hyphens; max 80 chars)",
+          };
+        }
+
+        const r = await resolveOrError(ctx, runCtx, "slack_create_channel", p.workspace);
+        if (!r.ok) return { error: r.error };
+
+        try {
+          let channel: { id?: string; name?: string; is_private?: boolean } | null = null;
+          let created = false;
+          try {
+            const resp = await r.resolved.client.conversations.create({
+              name,
+              is_private: p.isPrivate ?? false,
+            });
+            channel = resp.channel ?? null;
+            created = true;
+          } catch (err) {
+            // Re-running a setup routine should converge, not fail. Slack's
+            // name_taken means the thing we wanted already exists, which is
+            // the desired end state — look it up and carry on.
+            if (slackErrorCode(err) !== "name_taken") throw err;
+            channel = await findChannelByName(r.resolved.client, name);
+            if (!channel) throw err;
+          }
+
+          if (channel?.id && (p.purpose || p.topic)) {
+            if (p.purpose) {
+              await r.resolved.client.conversations.setPurpose({
+                channel: channel.id,
+                purpose: p.purpose,
+              });
+            }
+            if (p.topic) {
+              await r.resolved.client.conversations.setTopic({
+                channel: channel.id,
+                topic: p.topic,
+              });
+            }
+          }
+
+          await track(ctx, runCtx, "slack_create_channel", r.resolved.workspaceKey, {
+            name,
+            created,
+            isPrivate: !!p.isPrivate,
+          });
+          return {
+            content: created
+              ? `Created #${channel?.name ?? name}.`
+              : `#${channel?.name ?? name} already existed — reused it.`,
+            data: {
+              id: channel?.id ?? null,
+              name: channel?.name ?? name,
+              isPrivate: channel?.is_private ?? !!p.isPrivate,
+              created,
+            },
+          };
+        } catch (err) {
+          return { error: wrapSlackError(err) };
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "slack_invite_users",
+      {
+        displayName: "Invite users to a Slack channel",
+        description:
+          "Invite one or more existing workspace members to a channel, by user ID or email. Already-members are reported, not treated as failures. Gated by allowMutations.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            workspace: { type: "string" },
+            channelId: { type: "string" },
+            userIds: { type: "array", items: { type: "string" } },
+            emails: { type: "array", items: { type: "string" } },
+          },
+          required: ["channelId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        if (!allowMutations) {
+          return {
+            error:
+              "[EDISABLED] slack_invite_users is disabled. Enable 'Allow editing & deleting messages' on /instance/settings/plugins/slack-tools.",
+          };
+        }
+        const p = params as {
+          workspace?: string;
+          channelId?: string;
+          userIds?: string[];
+          emails?: string[];
+        };
+        if (!p.channelId) return { error: "[EINVALID_INPUT] `channelId` is required" };
+
+        const r = await resolveOrError(ctx, runCtx, "slack_invite_users", p.workspace);
+        if (!r.ok) return { error: r.error };
+
+        try {
+          const resolved: string[] = [...(p.userIds ?? [])];
+          const notFound: string[] = [];
+          // Emails are what an operator actually has to hand; user IDs are
+          // what Slack wants. Translate rather than making the caller do it.
+          for (const email of p.emails ?? []) {
+            try {
+              const found = await r.resolved.client.users.lookupByEmail({ email });
+              if (found.user?.id) resolved.push(found.user.id);
+              else notFound.push(email);
+            } catch {
+              notFound.push(email);
+            }
+          }
+
+          if (resolved.length === 0) {
+            return {
+              error:
+                "[EINVALID_INPUT] no users to invite — pass `userIds`, or `emails` that belong to workspace members" +
+                (notFound.length > 0 ? ` (not found: ${notFound.join(", ")})` : ""),
+            };
+          }
+
+          let alreadyIn = false;
+          try {
+            await r.resolved.client.conversations.invite({
+              channel: p.channelId,
+              users: resolved.join(","),
+            });
+          } catch (err) {
+            // Everyone named is already in the channel. That is the end state
+            // the caller asked for, so it is a success with a different note.
+            if (slackErrorCode(err) !== "already_in_channel") throw err;
+            alreadyIn = true;
+          }
+
+          await track(ctx, runCtx, "slack_invite_users", r.resolved.workspaceKey, {
+            channelId: p.channelId,
+            invited: resolved.length,
+            notFound: notFound.length,
+          });
+          return {
+            content: alreadyIn
+              ? `All ${resolved.length} user(s) were already in the channel.`
+              : `Invited ${resolved.length} user(s).` +
+                (notFound.length > 0 ? ` ${notFound.length} email(s) not found.` : ""),
+            data: { invited: resolved, alreadyInChannel: alreadyIn, notFound },
+          };
+        } catch (err) {
+          return { error: wrapSlackError(err) };
+        }
+      },
+    );
+
+    ctx.tools.register(
       "slack_read_channel",
       {
         displayName: "Read Slack channel history",
@@ -1082,6 +1270,55 @@ const plugin = definePlugin({
     return { status: "ok", message: "slack-tools ready" };
   },
 });
+
+/**
+ * The raw Slack error string (`name_taken`, `already_in_channel`, …) out of a
+ * @slack/web-api rejection, or null if this isn't one.
+ *
+ * Separate from `wrapSlackError`, which turns errors into operator-facing
+ * text. Here we need to branch on the code while it is still a code.
+ */
+export function slackErrorCode(err: unknown): string | null {
+  const e = err as { data?: { error?: string } };
+  return e?.data?.error ?? null;
+}
+
+/**
+ * Slack's own channel-name rules: lowercase, no spaces or dots, 80 chars.
+ * Applied here so an agent asking for "M3 Orders" gets `m3-orders` instead of
+ * an `invalid_name_specials` rejection it cannot interpret.
+ */
+export function normalizeChannelName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^#/, "")
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 80);
+}
+
+/** Find a channel by exact name — used to make channel creation idempotent. */
+async function findChannelByName(
+  client: { conversations: { list: (args: Record<string, unknown>) => Promise<any> } },
+  name: string,
+): Promise<{ id?: string; name?: string; is_private?: boolean } | null> {
+  let cursor: string | undefined;
+  do {
+    const resp = await client.conversations.list({
+      cursor,
+      limit: 1000,
+      types: "public_channel,private_channel",
+      exclude_archived: false,
+    });
+    for (const ch of resp.channels ?? []) {
+      if (ch?.name === name) return ch;
+    }
+    cursor = resp.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+  return null;
+}
 
 function clampLimit(value: number | undefined, fallback: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;

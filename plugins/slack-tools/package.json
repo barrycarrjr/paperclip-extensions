@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-slack-tools",
-  "version": "0.4.25",
+  "version": "0.4.26",
   "description": "Paperclip plugin that exposes Slack send/edit/lookup operations as agent tools. Multi-workspace, per-workspace company isolation, mutations gated. Anchor use case: deliver the daily CEO morning briefing as a Slack DM.",
   "type": "module",
   "private": true,
@@ -14,7 +14,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "clean": "rimraf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.427.0",
@@ -24,6 +25,7 @@
     "@types/node": "^24.6.0",
     "esbuild": "^0.27.3",
     "rimraf": "^6.0.1",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.3"
   },
   "license": "MIT",

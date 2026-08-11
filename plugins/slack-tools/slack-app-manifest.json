@@ -61,7 +61,10 @@
         "reactions:write",
         "files:write",
         "pins:read",
-        "pins:write"
+        "pins:write",
+        "channels:manage",
+        "groups:write",
+        "users:read.email"
       ]
     },
     "pkce_enabled": false

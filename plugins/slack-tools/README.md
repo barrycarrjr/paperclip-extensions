@@ -13,6 +13,29 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 
 ## Recent changes
 
+- **v0.4.26** — Adds `slack_create_channel` and `slack_invite_users`. Until now
+  the plugin could talk in Slack but not build anything in it: an agent asked to
+  "set up Slack for this company" could design the channel structure and then
+  had no way to create a single channel. Both new tools are gated by
+  `allowMutations`, like editing and deleting.
+
+  Both are **idempotent**, because setup work gets re-run: creating a channel
+  whose name already exists returns the existing one rather than failing, and
+  inviting people who are already members reports that instead of erroring. A
+  routine that partially completed can be run again and will converge.
+
+  `slack_invite_users` accepts emails as well as user IDs and looks them up,
+  since emails are what an operator actually has to hand. It can only invite
+  people who are already in the workspace — adding someone new to the workspace
+  itself is a Slack admin action and deliberately out of scope.
+
+  **Existing apps need re-authorising to use these.** The bundled
+  `slack-app-manifest.json` gained `channels:manage`, `groups:write` and
+  `users:read.email`; an app installed from the older manifest has no permission
+  to create channels and will fail with `[ESLACK_SCOPE]`. Re-import the manifest
+  on the existing app and reinstall it to the workspace. A newly created app
+  picks the scopes up automatically.
+
 - **v0.4.25** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.4.24** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
