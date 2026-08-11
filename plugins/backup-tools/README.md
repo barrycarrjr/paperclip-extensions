@@ -139,12 +139,27 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
   backlog item every night; a successful backup comments and closes it.
   Adds the `issues.update` capability for the priority and close.
 
-  **Backups still do not run.** The worker cannot reach the host to request
-  a database snapshot: the snapshot endpoint needs admin rights the worker
-  has no way to present, and plugin outbound HTTP blocks local addresses to
-  stop a plugin attacking its own host — which blocks the host as well. The
-  fix is a host-side snapshot service behind a narrow capability, replacing
-  the HTTP call. Tracked separately.
+  **Backups now actually run.** They never had. Every run failed in about
+  five milliseconds, before doing any work, going back months — the plugin
+  asked the host's own HTTP API for a database snapshot, and that could
+  never work from inside a worker: the endpoint requires instance-admin
+  rights a worker cannot hold, and plugin outbound HTTP blocks loopback and
+  private addresses precisely so a plugin cannot attack the host it runs in.
+
+  Rather than punch a hole in either protection, the host now hands the
+  snapshot over directly via `ctx.system.createSnapshot()`, behind a new
+  `system.snapshot.read` capability (requires host ≥ this release). It
+  returns a file path rather than bytes — the worker is on the same machine,
+  so there is no reason to stream gigabytes through the plugin channel — and
+  the plugin releases the host's copy as soon as its own encrypted archive is
+  built, so a backup never costs two copies of the database on disk.
+
+  Verified end to end: a 56 MB encrypted archive written to a local
+  destination, with the host's snapshot directory empty afterwards.
+
+  Note `system.snapshot.read` is the most powerful capability the host
+  grants — it is the entire database. It is declared here because copying
+  the instance somewhere safe is this plugin's whole job.
 
 - **v0.1.25** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 

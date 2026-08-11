@@ -415,6 +415,10 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "database.namespace.write",
     "database.namespace.migrate",
     "jobs.schedule",
+    // Ask the host for a whole-instance database snapshot. This is the plugin's
+    // core job; without it there is nothing to back up. Replaces an attempt to
+    // call the host's own HTTP API, which could never work from inside a worker.
+    "system.snapshot.read",
     "http.outbound",
     "secrets.read-ref",
     "companies.read",

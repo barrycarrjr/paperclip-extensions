@@ -241,48 +241,36 @@ async function fetchSnapshotFromCore(ctx: PluginContext): Promise<{
   estimatedUncompressedBytes: number;
   bodyStream: NodeJS.ReadableStream;
   bodySizeHint?: number;
+  /** Release the host's copy once the archive is built. Always call it. */
+  release: () => Promise<void>;
 }> {
-  // The plugin worker has http.outbound capability and runs on the same
-  // box as the host (or at least within reach). We point at the host's
-  // internal API URL via the standard PAPERCLIP_API_URL env var that's
-  // baked into the worker process at spawn time.
-  const apiBase = process.env.PAPERCLIP_API_URL?.replace(/\/+$/, "") ?? "";
-  if (!apiBase) {
-    throw new Error("[EBACKUP_NO_API_URL] worker has no PAPERCLIP_API_URL — cannot reach core /api/system/snapshot");
-  }
-  const resp = await ctx.http.fetch(`${apiBase}/api/system/snapshot`, {
-    method: "POST",
-    headers: { "Content-Type": "application/octet-stream" },
-  });
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`[EBACKUP_SNAPSHOT_FETCH_FAILED] HTTP ${resp.status}: ${body.slice(0, 300)}`);
-  }
-  const manifestB64 = resp.headers.get("X-Paperclip-Snapshot-Manifest");
-  if (!manifestB64) throw new Error("[EBACKUP_SNAPSHOT_NO_MANIFEST] core response missing X-Paperclip-Snapshot-Manifest");
-  const manifest = JSON.parse(Buffer.from(manifestB64, "base64").toString("utf8")) as {
-    instanceId: string;
-    snapshotUuid: string;
-    createdAt: string;
-    publicTableCounts: Record<string, number>;
-    pluginNamespaces: Array<{ pluginKey: string; pluginVersion: string; namespaceName: string; tableCounts: Record<string, number> }>;
-    excludedPluginNamespaces: Array<{ pluginKey: string; pluginVersion: string; namespaceName: string; reason: string }>;
-    estimatedUncompressedBytes: number;
-  };
-  if (!resp.body) throw new Error("[EBACKUP_SNAPSHOT_NO_BODY] core response had no body stream");
-  const bodyStream = Readable.fromWeb(resp.body as unknown as import("node:stream/web").ReadableStream);
-  const sizeHeader = resp.headers.get("Content-Length");
+  // Ask the host directly rather than calling its HTTP API.
+  //
+  // The HTTP route was never reachable from in here and could not be made so:
+  // it requires instance-admin rights a worker has no way to hold, and plugin
+  // outbound HTTP deliberately refuses loopback and private addresses so a
+  // plugin cannot attack the host it runs inside. Both of those are worth
+  // keeping. `ctx.system.createSnapshot()` sidesteps them entirely — it is
+  // gated on the `system.snapshot.read` capability in our manifest instead.
+  //
+  // The host writes the dump to its own disk and hands back a path. We are a
+  // child process on the same machine, so we can just open it.
+  const snapshot = await ctx.system.createSnapshot();
+  const bodyStream = createReadStream(snapshot.filePath);
   return {
-    manifest: manifest as never,
-    snapshotUuid: manifest.snapshotUuid,
-    instanceId: manifest.instanceId,
-    createdAt: manifest.createdAt,
-    publicTableCounts: manifest.publicTableCounts,
-    pluginNamespaces: manifest.pluginNamespaces,
-    excludedPluginNamespaces: manifest.excludedPluginNamespaces,
-    estimatedUncompressedBytes: manifest.estimatedUncompressedBytes,
+    manifest: snapshot.manifest as never,
+    snapshotUuid: snapshot.manifest.snapshotUuid,
+    instanceId: snapshot.manifest.instanceId,
+    createdAt: snapshot.manifest.createdAt,
+    publicTableCounts: snapshot.manifest.publicTableCounts,
+    pluginNamespaces: snapshot.manifest.pluginNamespaces,
+    excludedPluginNamespaces: snapshot.manifest.excludedPluginNamespaces,
+    estimatedUncompressedBytes: snapshot.manifest.estimatedUncompressedBytes,
     bodyStream,
-    bodySizeHint: sizeHeader ? Number(sizeHeader) : undefined,
+    bodySizeHint: snapshot.sizeBytes,
+    release: async () => {
+      await ctx.system.releaseSnapshot(snapshot.filePath);
+    },
   };
 }
 
@@ -439,32 +427,42 @@ async function runBackup(
   const perDestResults: { id: string; status: "succeeded" | "failed"; remoteKey?: string; error?: string }[] = [];
 
   try {
-    // 1) pull snapshot from core (streamed)
+    // 1) ask the host for a snapshot (it writes it to disk, we read the file)
     const snap = await fetchSnapshotFromCore(ctx);
 
     // 2) encrypt to tmp file (we need a real file because we may upload to N destinations)
-    const built = await buildEncryptedArchiveToTmpFile({
-      passphrase,
-      envelopeSeed: {
-        magic: "PCBACKUP1",
-        producerPluginVersion: PLUGIN_VERSION,
-        instanceId: snap.instanceId,
-        snapshotUuid: snap.snapshotUuid,
-        archiveUuid,
-        createdAt: startedAt.toISOString(),
-        cadence,
-        scheduleId: scheduleId ?? undefined,
-        salt: generateSalt(),
-        estimatedUncompressedBytes: snap.estimatedUncompressedBytes,
-        publicTableCounts: snap.publicTableCounts,
-        pluginNamespaces: snap.pluginNamespaces,
-        excludedPluginNamespaces: snap.excludedPluginNamespaces,
-      } as never,
-      bodyStream: snap.bodyStream,
-    });
-    archiveFilePath = built.archiveFilePath;
-    envelope = built.envelope;
-    archiveSizeBytes = built.sizeBytes;
+    try {
+      const built = await buildEncryptedArchiveToTmpFile({
+        passphrase,
+        envelopeSeed: {
+          magic: "PCBACKUP1",
+          producerPluginVersion: PLUGIN_VERSION,
+          instanceId: snap.instanceId,
+          snapshotUuid: snap.snapshotUuid,
+          archiveUuid,
+          createdAt: startedAt.toISOString(),
+          cadence,
+          scheduleId: scheduleId ?? undefined,
+          salt: generateSalt(),
+          estimatedUncompressedBytes: snap.estimatedUncompressedBytes,
+          publicTableCounts: snap.publicTableCounts,
+          pluginNamespaces: snap.pluginNamespaces,
+          excludedPluginNamespaces: snap.excludedPluginNamespaces,
+        } as never,
+        bodyStream: snap.bodyStream,
+      });
+      archiveFilePath = built.archiveFilePath;
+      envelope = built.envelope;
+      archiveSizeBytes = built.sizeBytes;
+    } finally {
+      // The host's copy is the size of the whole database. Release it the
+      // moment we've finished encrypting our own, success or failure —
+      // holding it through the upload fan-out would double the disk cost of
+      // every backup for no reason.
+      await snap.release().catch((err: unknown) => {
+        ctx.logger.warn("could not release host snapshot", { err: String(err) });
+      });
+    }
 
     // 3) fan-out upload
     for (const destId of destinationIds) {
