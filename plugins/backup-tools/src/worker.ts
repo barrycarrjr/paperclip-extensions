@@ -508,6 +508,8 @@ async function runBackup(
 
     if (finalStatus !== "succeeded") {
       await maybeCreateFailureIssue(ctx, cfg, backupId, finalStatus, perDestResults);
+    } else {
+      await clearFailureAlert(ctx, cfg);
     }
 
     void ctx.activity.log({
@@ -555,20 +557,118 @@ async function maybeCreateFailureIssue(
   topLevelError?: string,
 ) {
   if (!cfg.alertOnFailureToCompanyId) return;
+  const companyId = cfg.alertOnFailureToCompanyId;
   const failureSummary =
     topLevelError ??
     perDest
       .filter((d) => d.status === "failed")
       .map((d) => `- ${d.id}: ${d.error}`)
       .join("\n");
+  const detail =
+    `Backup run \`${backupId}\` finished with status \`${status}\`.\n\n${failureSummary}\n\n` +
+    `See plugin dashboard for the full per-destination breakdown.`;
+
   try {
+    // Repeat failures escalate on ONE issue instead of filing a fresh one
+    // every night. Six consecutive nightly failures previously produced six
+    // separate unassigned backlog items, which read as noise and were ignored
+    // for the better part of a week while no backup succeeded at all. A
+    // problem that is getting worse has to get louder, not longer.
+    const open = await ctx.issues.list({
+      companyId,
+      originKind: `plugin:${PLUGIN_KEY}` as const,
+      originId: FAILURE_ISSUE_ORIGIN_ID,
+      limit: 20,
+    });
+    const existing = open.find((i) => i.status !== "done" && i.status !== "cancelled") ?? null;
+
+    if (existing) {
+      const streak = await recordFailureStreak(ctx, companyId);
+      await ctx.issues.createComment(
+        existing.id,
+        `Failed again (${streak} consecutive failures).\n\n${detail}`,
+        companyId,
+      );
+      // Priority climbs with the streak. Two nights is a glitch; four nights
+      // running means there is no usable recent backup of anything.
+      const priority = streak >= 4 ? "critical" : streak >= 2 ? "high" : "medium";
+      if (existing.priority !== priority) {
+        await ctx.issues.update(existing.id, { priority }, companyId);
+      }
+      return;
+    }
+
+    await resetFailureStreak(ctx, companyId);
     await ctx.issues.create({
-      companyId: cfg.alertOnFailureToCompanyId,
-      title: `[backup-tools] backup ${status} (${backupId.slice(0, 8)})`,
-      body: `Backup run \`${backupId}\` finished with status \`${status}\`.\n\n${failureSummary}\n\nSee plugin dashboard for the full per-destination breakdown.`,
-    } as never);
+      companyId,
+      title: `[backup-tools] backups are failing`,
+      // `description`, not `body`. The SDK's create() takes `description`, so
+      // the old `body` key was silently dropped — every one of those nightly
+      // issues was filed with an empty body and no clue what had gone wrong.
+      // The `as never` cast is gone too; it was what stopped the compiler
+      // saying so.
+      description: detail,
+      priority: "high",
+      originKind: `plugin:${PLUGIN_KEY}` as const,
+      originId: FAILURE_ISSUE_ORIGIN_ID,
+    });
   } catch (err) {
     ctx.logger.warn("alertOnFailureToCompanyId issue creation failed", { err: String(err) });
+  }
+}
+
+/** Matches the manifest's plugin id — used to tag and re-find our own issues. */
+const PLUGIN_KEY = "backup-tools";
+/** Stable origin id so the running failure issue can be found again. */
+const FAILURE_ISSUE_ORIGIN_ID = "backup-failure-streak";
+const FAILURE_STREAK_KEY = "backup.failure.streak";
+
+/**
+ * A backup finally worked. Close the running failure issue and reset the
+ * streak, so the next bad night starts a fresh, correctly-prioritised alert
+ * rather than continuing to escalate an outage that is already over.
+ */
+async function clearFailureAlert(ctx: PluginContext, cfg: InstanceConfig): Promise<void> {
+  if (!cfg.alertOnFailureToCompanyId) return;
+  const companyId = cfg.alertOnFailureToCompanyId;
+  try {
+    await ctx.state.delete(failureStreakScope(companyId));
+    const open = await ctx.issues.list({
+      companyId,
+      originKind: `plugin:${PLUGIN_KEY}` as const,
+      originId: FAILURE_ISSUE_ORIGIN_ID,
+      limit: 20,
+    });
+    for (const issue of open) {
+      if (issue.status === "done" || issue.status === "cancelled") continue;
+      await ctx.issues.createComment(issue.id, "A backup completed successfully. Closing.", companyId);
+      await ctx.issues.update(issue.id, { status: "done" }, companyId);
+    }
+  } catch (err) {
+    ctx.logger.warn("could not clear backup failure alert", { err: String(err) });
+  }
+}
+
+function failureStreakScope(companyId: string) {
+  return { scopeKind: "company" as const, scopeId: companyId, stateKey: FAILURE_STREAK_KEY };
+}
+
+async function recordFailureStreak(ctx: PluginContext, companyId: string): Promise<number> {
+  try {
+    const prev = await ctx.state.get(failureStreakScope(companyId));
+    const next = (typeof prev === "number" ? prev : 0) + 1;
+    await ctx.state.set(failureStreakScope(companyId), next);
+    return next;
+  } catch {
+    return 1;
+  }
+}
+
+async function resetFailureStreak(ctx: PluginContext, companyId: string): Promise<void> {
+  try {
+    await ctx.state.set(failureStreakScope(companyId), 1);
+  } catch {
+    /* best-effort */
   }
 }
 

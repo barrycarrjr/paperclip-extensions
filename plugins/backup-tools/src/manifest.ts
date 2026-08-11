@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "backup-tools";
-const PLUGIN_VERSION = "0.1.25";
+const PLUGIN_VERSION = "0.1.26";
 
 // ---------------------------------------------------------------------------
 // instanceConfigSchema sub-shapes
@@ -420,6 +420,9 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "companies.read",
     "issues.read",
     "issues.create",
+    // Needed to escalate the running failure issue's priority and to close it
+    // once a backup succeeds, instead of filing a new issue every night.
+    "issues.update",
     "issue.comments.create",
     "activity.log.write",
     "telemetry.track",

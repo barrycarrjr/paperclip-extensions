@@ -128,6 +128,24 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.26** — Failure alerts now say what actually went wrong, and stop
+  piling up. The failure detail was being written to a field the platform
+  does not accept, so it was silently dropped and every alert issue was
+  filed with an empty body — six nights of failures with no stated cause.
+  Fixed by using `description`, and by removing the type cast that stopped
+  the compiler pointing it out. Repeat failures now escalate on **one**
+  issue with a running count and a rising priority (medium, then high at
+  two consecutive, critical at four) instead of opening a fresh unassigned
+  backlog item every night; a successful backup comments and closes it.
+  Adds the `issues.update` capability for the priority and close.
+
+  **Backups still do not run.** The worker cannot reach the host to request
+  a database snapshot: the snapshot endpoint needs admin rights the worker
+  has no way to present, and plugin outbound HTTP blocks local addresses to
+  stop a plugin attacking its own host — which blocks the host as well. The
+  fix is a host-side snapshot service behind a narrow capability, replacing
+  the HTTP call. Tracked separately.
+
 - **v0.1.25** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.24** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
