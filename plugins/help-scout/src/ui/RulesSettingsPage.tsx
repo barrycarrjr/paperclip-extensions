@@ -29,10 +29,15 @@ interface Rule {
   updatedAt: string;
 }
 
-interface MailboxRow {
-  accountKey: string;
-  mailboxId: string;
+/**
+ * An account paired with the company its rules are filed under. This screen is
+ * instance-level but rules are per company, so the account carries its own
+ * company rather than inheriting whichever one the operator is viewing from.
+ */
+interface RuleScope {
+  key: string;
   name: string;
+  companyId: string;
 }
 
 /** The four shapes a pattern can take, as a person would describe them. */
@@ -133,25 +138,22 @@ const inputStyle: React.CSSProperties = {
 };
 
 export function RulesSettingsPage(_props: PluginSettingsPageProps) {
-  const host = useHostContext();
-  const companyId = host.companyId ?? undefined;
+  useHostContext();
 
-  const mailboxes = usePluginData<{ mailboxes: MailboxRow[] }>("helpscout.list-mailboxes", {
-    companyId,
-  });
-
-  const accountKeys = useMemo(() => {
-    const seen = new Set<string>();
-    for (const m of mailboxes.data?.mailboxes ?? []) seen.add(m.accountKey);
-    return [...seen];
-  }, [mailboxes.data]);
+  const scopes = usePluginData<{ scopes: RuleScope[] }>("helpscout.list-rule-scopes", {});
+  const scopeList = useMemo(() => scopes.data?.scopes ?? [], [scopes.data]);
 
   const [account, setAccount] = useState<string | null>(null);
-  const activeAccount = account ?? accountKeys[0] ?? null;
+  const activeScope = useMemo(
+    () => scopeList.find((s) => s.key === account) ?? scopeList[0] ?? null,
+    [scopeList, account],
+  );
+  const activeAccount = activeScope?.key ?? null;
+  const companyId = activeScope?.companyId;
 
   const rules = usePluginData<{ rules: Rule[] }>(
     "helpscout.list-rules",
-    activeAccount ? { companyId, accountKey: activeAccount } : {},
+    activeScope ? { companyId, accountKey: activeAccount } : {},
   );
 
   const setRule = usePluginAction("helpscout.set-rule");
@@ -226,12 +228,12 @@ export function RulesSettingsPage(_props: PluginSettingsPageProps) {
     },
   ];
 
-  if (mailboxes.loading) return <div style={{ padding: 16, color: css.muted }}>Loading…</div>;
-  if (!activeAccount) {
+  if (scopes.loading) return <div style={{ padding: 16, color: css.muted }}>Loading…</div>;
+  if (!activeScope) {
     return (
       <div style={{ padding: 16, color: css.muted }}>
-        No Help Scout account is configured for this company yet. Add one on the Configuration tab
-        first.
+        No Help Scout account is set up for rules yet. An account needs exactly one allowed
+        company, so its rules have somewhere to live. Set that in the configuration above and save.
       </div>
     );
   }
@@ -244,17 +246,17 @@ export function RulesSettingsPage(_props: PluginSettingsPageProps) {
         checked first and always wins.
       </p>
 
-      {accountKeys.length > 1 && (
+      {scopeList.length > 1 && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 12, color: css.muted, marginRight: 8 }}>Account</label>
           <select
-            value={activeAccount}
+            value={activeAccount ?? ""}
             onChange={(e) => setAccount(e.target.value)}
             style={inputStyle}
           >
-            {accountKeys.map((k) => (
-              <option key={k} value={k}>
-                {k}
+            {scopeList.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.name || s.key}
               </option>
             ))}
           </select>

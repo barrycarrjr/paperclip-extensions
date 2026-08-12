@@ -31,10 +31,15 @@ interface Rule {
   updatedAt: string;
 }
 
-interface Mailbox {
+/**
+ * A mailbox paired with the company its rules are filed under. This screen is
+ * instance-level but rules are per company, so the mailbox carries its own
+ * company rather than inheriting whichever one the operator is viewing from.
+ */
+interface RuleScope {
   key: string;
   name: string;
-  pollFolder: string;
+  companyId: string;
 }
 
 type PatternKind = "address" | "domain" | "subject";
@@ -112,18 +117,22 @@ const inputStyle: React.CSSProperties = {
 };
 
 export function RulesSettingsPage(_props: PluginSettingsPageProps) {
-  const host = useHostContext();
-  const companyId = host.companyId ?? undefined;
+  useHostContext();
 
-  const mailboxes = usePluginData<{ mailboxes: Mailbox[] }>("email.list-mailboxes", { companyId });
-  const mailboxList = useMemo(() => mailboxes.data?.mailboxes ?? [], [mailboxes.data]);
+  const scopes = usePluginData<{ scopes: RuleScope[] }>("email.list-rule-scopes", {});
+  const scopeList = useMemo(() => scopes.data?.scopes ?? [], [scopes.data]);
 
   const [mailbox, setMailbox] = useState<string | null>(null);
-  const activeMailbox = mailbox ?? mailboxList[0]?.key ?? null;
+  const activeScope = useMemo(
+    () => scopeList.find((s) => s.key === mailbox) ?? scopeList[0] ?? null,
+    [scopeList, mailbox],
+  );
+  const activeMailbox = activeScope?.key ?? null;
+  const companyId = activeScope?.companyId;
 
   const rules = usePluginData<{ rules: Rule[] }>(
     "email.list-rules",
-    activeMailbox ? { companyId, mailbox: activeMailbox } : {},
+    activeScope ? { companyId, mailbox: activeMailbox } : {},
   );
 
   const setRule = usePluginAction("email.set-rule");
@@ -192,11 +201,13 @@ export function RulesSettingsPage(_props: PluginSettingsPageProps) {
     }
   }
 
-  if (mailboxes.loading) return <div style={{ padding: 16, color: css.muted }}>Loading…</div>;
-  if (!activeMailbox) {
+  if (scopes.loading) return <div style={{ padding: 16, color: css.muted }}>Loading…</div>;
+  if (!activeScope) {
     return (
       <div style={{ padding: 16, color: css.muted }}>
-        No mailbox is configured for this company yet. Add one on the Configuration tab first.
+        No mailbox is set up for rules yet. A mailbox needs an ingest company, or exactly one
+        allowed company, so its rules have somewhere to live. Set that in the configuration above
+        and save.
       </div>
     );
   }
@@ -209,13 +220,17 @@ export function RulesSettingsPage(_props: PluginSettingsPageProps) {
         per mailbox.
       </p>
 
-      {mailboxList.length > 1 && (
+      {scopeList.length > 1 && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 12, color: css.muted, marginRight: 8 }}>Mailbox</label>
-          <select value={activeMailbox} onChange={(e) => setMailbox(e.target.value)} style={inputStyle}>
-            {mailboxList.map((m) => (
-              <option key={m.key} value={m.key}>
-                {m.name || m.key}
+          <select
+            value={activeMailbox ?? ""}
+            onChange={(e) => setMailbox(e.target.value)}
+            style={inputStyle}
+          >
+            {scopeList.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.name || s.key}
               </option>
             ))}
           </select>

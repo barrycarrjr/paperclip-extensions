@@ -1870,6 +1870,30 @@ const plugin = definePlugin({
       return { id: p.conversationId, tags: remaining };
     });
 
+    /**
+     * Help Scout accounts paired with the company their rules belong to.
+     *
+     * The plugin settings screen is instance-level, but triage rules are
+     * stored per company, so a panel that filtered by "the company you happen
+     * to be viewing from" showed nothing when that was a company with no
+     * account of its own. Safe to expose here: the bridge is board-gated, and
+     * the configuration form on the same screen already lists every account
+     * and its allowedCompanies. An account whose owning company cannot be
+     * determined is omitted, because there is no company to file rules under.
+     */
+    ctx.data.register("helpscout.list-rule-scopes", async () => {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const scopes: Array<{ key: string; name: string; companyId: string }> = [];
+      for (const a of config.accounts ?? []) {
+        const key = a.key ?? "";
+        if (!key) continue;
+        const allowed = (a.allowedCompanies ?? []).filter((c) => c && c !== "*");
+        if (allowed.length !== 1) continue;
+        scopes.push({ key, name: a.displayName ?? key, companyId: allowed[0]! });
+      }
+      return { scopes };
+    });
+
     /** Rules for one account, as rows, for the operator UI. */
     ctx.data.register("helpscout.list-rules", async (params) => {
       const companyId = requireCompanyId(params);

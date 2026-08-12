@@ -1345,6 +1345,34 @@ const plugin = definePlugin({
       });
     });
 
+    /**
+     * Mailboxes paired with the company their rules belong to.
+     *
+     * The plugin settings screen is instance-level, but sender rules are
+     * stored per company, so a panel that filtered by "the company you happen
+     * to be viewing from" showed nothing at all when that was a company with
+     * no mailbox of its own. This returns every configured mailbox with the
+     * company that owns it, so the panel can offer them directly.
+     *
+     * Safe to expose here: the bridge is board-gated, and the configuration
+     * form on the very same screen already lists every mailbox and its
+     * allowedCompanies. A mailbox whose owning company cannot be determined
+     * is omitted, because there is no company to file its rules under.
+     */
+    ctx.data.register("email.list-rule-scopes", async () => {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const scopes: Array<{ key: string; name: string; companyId: string }> = [];
+      for (const m of config.mailboxes ?? []) {
+        const key = m.key ?? "";
+        if (!key) continue;
+        const allowed = (m.allowedCompanies ?? []).filter((c) => c && c !== "*");
+        const companyId = m.ingestCompanyId ?? (allowed.length === 1 ? allowed[0] : undefined);
+        if (!companyId) continue;
+        scopes.push({ key, name: m.name ?? key, companyId });
+      }
+      return { scopes };
+    });
+
     // Returns all sender rules for a mailbox.
     ctx.data.register("email.list-rules", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
