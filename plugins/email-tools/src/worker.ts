@@ -22,6 +22,12 @@ import {
 } from "./imap.js";
 import { mergeSearchResults, planFolderScope, type SearchHit } from "./search-scope.js";
 import {
+  describeInvalidPattern,
+  isRuleType,
+  isValidRulePattern,
+  normalizeRulePattern,
+} from "./rule-patterns.js";
+import {
   parseStoredCursor,
   planCursorAdvance,
   resolveSince,
@@ -1418,10 +1424,16 @@ const plugin = definePlugin({
       if (!companyId || !mailboxKey || !senderPattern || !ruleType) {
         throw new Error("companyId, mailbox, senderPattern, and ruleType are required");
       }
-      if (ruleType !== "auto-triage" && ruleType !== "keep-always" && ruleType !== "mute") {
+      if (!isRuleType(ruleType)) {
         throw new Error(
           `ruleType must be 'auto-triage', 'keep-always', or 'mute', got: ${ruleType}`,
         );
+      }
+      // Reject a malformed pattern rather than storing a rule that can never
+      // match. Silently accepting one is worse than refusing it: the operator
+      // believes the noise is handled and the mail keeps arriving.
+      if (!isValidRulePattern(senderPattern)) {
+        throw new Error(describeInvalidPattern(senderPattern));
       }
       const config = (await ctx.config.get()) as InstanceConfig;
       const cfg = findConfigMailbox(config, mailboxKey);
@@ -1433,13 +1445,14 @@ const plugin = definePlugin({
         allowedCompanies: cfg.allowedCompanies,
         companyId,
       });
+      const storedPattern = normalizeRulePattern(senderPattern);
       await ctx.db.execute(
         `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
            (company_id, mailbox_key, sender_pattern, rule_type)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (company_id, mailbox_key, sender_pattern)
          DO UPDATE SET rule_type = $4, updated_at = now()`,
-        [companyId, mailboxKey, senderPattern, ruleType],
+        [companyId, mailboxKey, storedPattern, ruleType],
       );
 
       // Auto-triage and mute rules do a one-shot sweep of unread INBOX so

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.17.0";
+const PLUGIN_VERSION = "0.18.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -370,6 +370,17 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
   },
   entrypoints: {
     worker: "./dist/worker.js",
+    ui: "./dist/ui",
+  },
+  ui: {
+    slots: [
+      {
+        type: "settingsPage",
+        id: "email-tools-sender-rules",
+        displayName: "Sender rules",
+        exportName: "RulesSettingsPage",
+      },
+    ],
   },
   instanceConfigSchema: {
     type: "object",

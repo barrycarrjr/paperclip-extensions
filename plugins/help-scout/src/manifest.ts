@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.6.0";
+const PLUGIN_VERSION = "0.7.0";
 
 const accountItemSchema = {
   type: "object",
@@ -189,6 +189,17 @@ const manifest: PaperclipPluginManifestV1 & {
   },
   entrypoints: {
     worker: "./dist/worker.js",
+    ui: "./dist/ui",
+  },
+  ui: {
+    slots: [
+      {
+        type: "settingsPage",
+        id: "helpscout-triage-rules",
+        displayName: "Triage rules",
+        exportName: "RulesSettingsPage",
+      },
+    ],
   },
   instanceConfigSchema: {
     type: "object",

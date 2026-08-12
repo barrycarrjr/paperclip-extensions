@@ -4,6 +4,9 @@
  * - dist/worker.js  — bundled (all runtime deps inlined). Spawned by paperclip
  *   as a worker process; must run without the plugin folder's node_modules.
  * - dist/manifest.js — transpiled only (small file, type-only imports erased).
+ * - dist/ui/index.js — UI bundle (the triage rules settings panel). React and
+ *   the SDK's UI module stay external: the host supplies them, and bundling a
+ *   second React would break hooks.
  *
  * The Help Scout client uses native fetch — no CJS require shimming needed.
  */
@@ -15,4 +18,14 @@ const { esbuild: presets } = createPluginBundlerPresets();
 await Promise.all([
   esbuild.build(presets.worker),
   esbuild.build(presets.manifest),
+  esbuild.build({
+    entryPoints: ["src/ui/index.tsx"],
+    outfile: "dist/ui/index.js",
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: ["es2022"],
+    sourcemap: true,
+    external: ["react", "react-dom", "react/jsx-runtime", "@paperclipai/plugin-sdk/ui"],
+  }),
 ]);
