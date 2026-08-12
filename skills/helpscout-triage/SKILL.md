@@ -1,6 +1,6 @@
 ---
 name: helpscout-triage
-description: Triage new conversations in a Help Scout mailbox — apply learned per-sender / per-subject rules to auto-tag and auto-close infrastructure noise (Rollbar alerts, GoDaddy renewals, system notifications), surfacing only the rare human-customer messages for review. Designed to run autonomously on a daily or twice-daily schedule. Reusable across any Help Scout mailbox configured in the help-scout plugin — pass the mailbox identifier as `mailbox` in the routine. Conservative by default — never deletes conversations, only changes status to "closed" and adds tags, both fully reversible from the Help Scout UI.
+description: Triage new conversations in a Help Scout mailbox — apply the operator's per-sender / per-subject rules (held in the help-scout plugin database) to auto-tag and auto-close infrastructure noise (Rollbar alerts, GoDaddy renewals, system notifications), surfacing only the rare human-customer messages for review. Designed to run autonomously on a daily or twice-daily schedule. Reusable across any Help Scout mailbox configured in the help-scout plugin — pass the mailbox identifier as `mailbox` in the routine. Conservative by default — never deletes conversations, only changes status to "closed" and adds tags, both fully reversible from the Help Scout UI.
 ---
 
 # Help Scout Triage
@@ -42,10 +42,12 @@ variable's `defaultValue`.
 - The target Help Scout account is configured in plugin config with the
   calling company in `allowedCompanies`. `allowMutations` must be true
   (the skill needs to tag and change status).
-- A **rules-home issue** exists in the routine's company, with
-  `routine.parentIssueId` pointing at it. The rules-home issue holds a
-  Markdown document (key: `helpscout-triage-rules`) containing the
-  Auto-noise / Keep-active / Review queue sections.
+- `help-scout` plugin v0.6.0+, which is where triage rules live. Older
+  versions kept them in a Markdown document.
+- A **rules-home issue** in the routine's company, with
+  `routine.parentIssueId` pointing at it. Optional for triage itself now
+  that rules and the cursor are in the plugin database. It is still the
+  target for the one-time import and tombstone (step 1b).
 
 ## Parameters (passed in by the routine)
 
@@ -62,7 +64,28 @@ variable's `defaultValue`.
 
 ### 1. Load rules
 
-a. Resolve the rules-home issue:
+Rules live in the help-scout plugin database. Do not read or parse a
+Markdown document for them.
+
+Call `help-scout:helpscout_list_rules` with `account` (this skill's
+`mailbox` variable) and, if the routine is scoped to one, `mailboxId`.
+The response is:
+
+```json
+{ "autoNoise":  ["@statuspage.io", "subject: Daily Summary", ...],
+  "keepActive": ["boss@acme.com", "sender: On-call Rotation", ...] }
+```
+
+Use these two lists for the matching in Step 5. Keep-active is evaluated
+first and wins.
+
+### 1b. One-time migration (skip once done)
+
+Older installs still have the rules in a `helpscout-triage-rules`
+document. Lift them across once, then retire the document.
+
+Resolve the rules-home issue. A null `parentIssueId` means there is
+nothing to migrate, so skip the rest of this step and carry on:
 
 ```bash
 PARENT_ID=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
@@ -70,24 +93,59 @@ PARENT_ID=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   | jq -r '.parentIssueId')
 ```
 
-If null/empty, abort with an error comment on the run issue.
+Fetch `GET /api/issues/<PARENT_ID>/documents/helpscout-triage-rules`. On
+404, or if the body already contains
+`<!-- retired:helpscout-triage-rules -->`, there is nothing to do.
 
-b. Read the document:
+Otherwise:
 
-```bash
-DOC=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-  "$PAPERCLIP_API_URL/api/issues/$PARENT_ID/documents/helpscout-triage-rules")
+1. Pass the document body to the `helpscout.import-rules` plugin action
+   with `accountKey` and (if scoped) `mailboxId`. It parses all four rule
+   forms, gives keep-active precedence over auto-noise on any conflict,
+   and is safe to run twice. It returns `{ found, imported, existing }`.
+2. Re-run `helpscout_list_rules` and confirm the count matches what the
+   document held. **If anything is missing, stop and report it** rather
+   than continuing, because the document is about to stop being read.
+3. `PUT` the tombstone body below to the same document path, with a
+   `changeSummary` of "Retired: rules moved to the help-scout database".
+
+```markdown
+<!-- retired:helpscout-triage-rules -->
+
+# Retired
+
+This document no longer holds anything.
+
+- **Triage rules** live in the help-scout plugin database. Manage them
+  with the Keep active / Auto-noise buttons in the Help Scout view.
+- **The triage cursor** lives in plugin state, read and written by
+  `helpscout_get_triage_cursor` / `helpscout_set_triage_cursor`.
+
+Previous contents remain in this document's revision history.
 ```
 
-If 404, seed with the empty template (see "Document template" below) via
-`PUT /api/issues/<PARENT_ID>/documents/helpscout-triage-rules`.
+Do not attempt to DELETE the document. That route requires board auth
+and an agent does not have it.
 
-Parse the three sections into in-memory lists.
+Mention the import counts in the run report the first time this runs.
 
 ### 2. Determine since-cutoff
 
-If `last-run` is set and parseable: use it (minus a 5-minute safety
-overlap). Otherwise default to 24 hours ago.
+Call `help-scout:helpscout_get_triage_cursor` with the same `account`
+(and `mailboxId`, if scoped) and **use the returned `since` verbatim**:
+
+```json
+{ "lastRunAt": "2026-08-11T06:00:00.000Z",
+  "since":     "2026-08-11T05:55:00.000Z",
+  "source":    "cursor" }
+```
+
+Do not recompute the window. The 5 minute safety overlap and the 24 hour
+fallback are applied inside the tool. `source` is `"cursor"` or
+`"fallback"` and is worth naming in the run report.
+
+If the tool comes back unknown, an older `help-scout` is installed than
+this skill expects. Fall back to 24 hours ago, carry on, and say so.
 
 ### 3. Verify credentials see the mailbox
 
@@ -134,7 +192,7 @@ a. Get the full conversation if needed (`helpscout_get_conversation` with
    metadata returned by find — only fetch when a rule needs body content.
 
 b. **Match against Keep-active first** — if any rule matches, skip this
-   conversation. Do not act, do not mention in review queue.
+   conversation. Do not act, do not count it as a rule candidate.
 
 c. **Match against Auto-noise** — if any rule matches:
    - Call `help-scout:helpscout_add_label` with
@@ -143,21 +201,29 @@ c. **Match against Auto-noise** — if any rule matches:
      `status: "<closeStatus>"` (default `closed`).
    - Increment `closedCount`. Continue to next.
 
-d. **No match** — only surface to review queue if it looks like a
-   triage candidate, otherwise leave alone:
+d. **No match** — count it as a rule candidate if it looks like one,
+   otherwise leave it alone entirely.
+
+   "Count" means tally it in memory for the run report in Step 7. There
+   is nowhere to write it, and nothing reads a stored queue: the operator
+   sets rules from the Keep active / Auto-noise buttons in the Help Scout
+   view, which write straight to the database.
+
    - Sender domain is in known-noise pattern list (e.g. `@*.notifications`,
-     `noreply@`, `no-reply@`, `mailer@`) → add to review queue.
+     `noreply@`, `no-reply@`, `mailer@`) → count it.
    - Subject contains noise-y keywords (`Daily Summary`, `Renewal Notice`,
-     `Service Alert`, `[error]`, `[notification]`) → add to review queue.
-   - Otherwise: leave it alone. Person-to-person conversations stay in
-     the active queue, untouched.
+     `Service Alert`, `[error]`, `[notification]`) → count it.
+   - Otherwise: leave it alone and do not count it. Person-to-person
+     conversations stay in the active queue, untouched.
 
-### 6. Update rules document
+### 6. Record the cursor
 
-- Set `last-run:` to current UTC ISO timestamp.
-- Merge new review-queue entries with existing.
-- Don't touch Auto-noise or Keep-active — those are human-edited.
-- Save back via `PUT /api/issues/<PARENT_ID>/documents/helpscout-triage-rules`.
+Call `help-scout:helpscout_set_triage_cursor` with the same `account`
+(and `mailboxId`) and no `lastRunAt`, so it records the current time.
+
+That is the whole step. Do not write any document. If the setter reports
+that it refused to move the cursor backwards, a newer run already
+recorded a later timestamp: note it and finish normally, do not force.
 
 ### 7. Report
 
@@ -165,51 +231,25 @@ Append a comment on **this run's issue** (NOT the rules-home / parent
 issue). Use `PAPERCLIP_ISSUE_ID` from the heartbeat env.
 
 ```
-Help Scout triage — <mailbox> — <UTC timestamp>
-- Processed: <N> active conversations since <last-run>
+Help Scout triage - <mailbox> - <UTC timestamp>
+- Processed: <N> active conversations since <since> (<source>)
 - Auto-closed (tagged <noiseTag>): <closedCount>
-- New senders surfaced to review queue: <newReviewCount>
+- Unknown senders worth a rule: <newCandidateCount>
 - Skipped (kept active): <leftAloneCount>
 - Errors: <errorCount> (see below)
 
-Top review-queue candidates this run:
+Top candidates for a rule this run:
   - <count> from <sender> (subject pattern: <example>)
   ... (top 5)
 
-Review and graduate senders in the rules document on issue <PARENT_ID>.
+Set rules with the Keep active / Auto-noise buttons in the Help Scout view.
 ```
+
+`<since>` and `<source>` come from `helpscout_get_triage_cursor` in Step
+2, so a run that fell back to the 24 hour window says so plainly instead
+of looking identical to one that used a real cursor.
 
 If `errorCount > 0`, list the first 5 errors instead.
-
-## Document template (for first-run seed)
-
-```markdown
-# Help Scout triage rules — mailbox: <mailbox>
-
-last-run:
-
-## Auto-noise senders / subjects
-
-<!-- One rule per line. Match is case-insensitive substring. -->
-<!-- Forms: -->
-<!--   noreply@example.com           — full email match against From -->
-<!--   @rollbar.com                  — domain anywhere in From -->
-<!--   subject: Daily Summary        — Subject substring -->
-<!--   sender: Rollbar Notification  — display-name match against From -->
-
-## Keep-active senders / subjects
-
-<!-- Same syntax. Beats Auto-noise if both match. Use for senders that
-     LOOK like noise but you actually want to see (e.g. an internal team
-     member whose alerts you read). -->
-
-## Review queue
-
-<!-- Auto-populated by this skill. One line per sender:
-     `<count> conversations from <sender> — example subject: "<subj>"`.
-     Graduate entries by moving them into Auto-noise or Keep-active
-     above, then delete the line here. -->
-```
 
 ## Rule matching syntax
 
@@ -255,6 +295,9 @@ Tool names use `<pluginId>:<toolName>` — so:
 - `help-scout:helpscout_get_conversation`
 - `help-scout:helpscout_add_label`
 - `help-scout:helpscout_change_status`
+- `help-scout:helpscout_list_rules`
+- `help-scout:helpscout_get_triage_cursor`
+- `help-scout:helpscout_set_triage_cursor`
 
 ## Errors
 
@@ -266,16 +309,22 @@ Tool names use `<pluginId>:<toolName>` — so:
   rotate the secret.
 - `[EHELPSCOUT_RATE_LIMIT]` — back off; Help Scout caps at 400 req/min.
   Resume next run.
-- Rules document parse error — fall back to "no rules" mode, surface a
-  warning.
-- Rules document missing (404) — auto-create from template, treat as no
-  rules for this run.
+- `helpscout_list_rules` fails — do not guess. Abort with an error
+  comment rather than running in "no rules" mode, which would auto-close
+  nothing and, worse, treat keep-active senders as unclassified.
+- `helpscout_set_triage_cursor` refuses the write (cursor would move
+  backwards) — a newer run already recorded a later timestamp. Not an
+  error. Note it and finish normally.
+- `helpscout.import-rules` reports fewer rules than the document held —
+  stop and report. Do not tombstone a document whose rules did not all
+  make it across.
 
 ## After running
 
-- The rules document on the rules-home issue is the source of truth.
-  Operator graduates entries from Review queue → Auto-noise or
-  Keep-active by editing the document directly in the Paperclip UI.
+- Triage rules live in the help-scout plugin database. The operator sets
+  them with the Keep active / Auto-noise buttons in the Help Scout view,
+  which write the rule and tag the conversation in one action. The next
+  run picks them up via `helpscout_list_rules`.
 - Once a sender pattern is consistently auto-closed, recommend the
   operator install a **Help Scout workflow** (Help Scout's own filter
   engine) so the conversation is tagged and closed at delivery time —
@@ -284,7 +333,7 @@ Tool names use `<pluginId>:<toolName>` — so:
 ## Out of scope
 
 - Bulk historical cleanup of an existing closed-conversation backlog.
-  This skill only acts on conversations modified since `last-run`.
+  This skill only acts on conversations modified since the stored cursor.
 - Auto-replying to customers — different skill (`helpscout-respond` or
   similar). This skill never sends replies.
 - Reopening or moving between mailboxes.
@@ -293,10 +342,12 @@ Tool names use `<pluginId>:<toolName>` — so:
 
 ## Pre-requisites
 
-- `help-scout` plugin v0.2.0+ installed and `ready`.
+- `help-scout` plugin v0.6.0+ installed and `ready`. That is the version
+  that added the rules table and the cursor tools; older versions kept
+  both in a Markdown document.
 - Help Scout PAT issued and stored as a paperclip secret.
 - At least one Help Scout account configured in plugin config with the
   calling company in `allowedCompanies`, `allowMutations: true`, and
   `defaultMailbox` (or explicit `mailboxId` per call) set.
-- A rules-home issue exists in the same company, linked via
-  `routine.parentIssueId`.
+- A rules-home issue linked via `routine.parentIssueId`. Only needed
+  until the one-time import and tombstone in step 1b have run.

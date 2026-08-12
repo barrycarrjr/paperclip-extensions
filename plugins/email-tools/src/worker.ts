@@ -21,6 +21,12 @@ import {
   type ParsedMessage,
 } from "./imap.js";
 import { mergeSearchResults, planFolderScope, type SearchHit } from "./search-scope.js";
+import {
+  parseStoredCursor,
+  planCursorAdvance,
+  resolveSince,
+  triageCursorScope,
+} from "./triage-cursor.js";
 import { ActionConnectionPool } from "./connection-pool.js";
 import {
   runPoll,
@@ -822,6 +828,122 @@ const plugin = definePlugin({
       },
     );
 
+    /**
+     * Resolve a mailbox and confirm the calling company may touch it.
+     *
+     * Both cursor tools need the same two checks in the same order. Skipping
+     * the access check would let any company read or reset another company's
+     * triage position, which is a quiet way to make mail go unprocessed.
+     */
+    async function resolveCursorMailbox(
+      tool: string,
+      mailboxKey: string,
+      companyId: string,
+    ): Promise<void> {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool,
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+    }
+
+    ctx.tools.register(
+      "email_get_triage_cursor",
+      {
+        displayName: "Get Triage Cursor",
+        description:
+          "Return the point in time the triage routine should search from for a mailbox. Use the returned `since` verbatim; it already includes the safety overlap and the fallback window.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            mailbox: {
+              type: "string",
+              description: "Mailbox identifier, matching a key in plugin config.",
+            },
+          },
+          required: ["mailbox"],
+        } as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { mailbox?: string };
+        if (typeof p.mailbox !== "string" || !p.mailbox) {
+          return { error: "mailbox is required" };
+        }
+        try {
+          await resolveCursorMailbox("email_get_triage_cursor", p.mailbox, runCtx.companyId);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+        const stored = parseStoredCursor(
+          await ctx.state.get(triageCursorScope(runCtx.companyId, p.mailbox)),
+        );
+        const { since, source } = resolveSince(stored, new Date());
+        return {
+          content:
+            source === "cursor"
+              ? `Last triaged ${stored}. Search from ${since}.`
+              : `No stored cursor. Search from ${since} (24 hour fallback).`,
+          data: { lastRunAt: stored, since, source },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "email_set_triage_cursor",
+      {
+        displayName: "Set Triage Cursor",
+        description:
+          "Record how far the triage routine got. Call once at the end of a successful run, except on a bulk cleanup. Defaults to now. Refuses to move the cursor backwards unless force is set.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            mailbox: {
+              type: "string",
+              description: "Mailbox identifier, matching a key in plugin config.",
+            },
+            lastRunAt: {
+              type: "string",
+              description: "ISO timestamp. Omit to use the current time.",
+            },
+            force: {
+              type: "boolean",
+              description: "Allow moving the cursor backwards. Only for a deliberate reseed.",
+            },
+          },
+          required: ["mailbox"],
+        } as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { mailbox?: string; lastRunAt?: string; force?: boolean };
+        if (typeof p.mailbox !== "string" || !p.mailbox) {
+          return { error: "mailbox is required" };
+        }
+        try {
+          await resolveCursorMailbox("email_set_triage_cursor", p.mailbox, runCtx.companyId);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+        const scope = triageCursorScope(runCtx.companyId, p.mailbox);
+        const stored = parseStoredCursor(await ctx.state.get(scope));
+        const proposed =
+          typeof p.lastRunAt === "string" && p.lastRunAt.trim()
+            ? p.lastRunAt
+            : new Date().toISOString();
+        const plan = planCursorAdvance(stored, proposed, { force: p.force === true });
+        if (!plan.ok) return { error: plan.reason ?? "Cursor write refused" };
+        await ctx.state.set(scope, { lastRunAt: plan.lastRunAt });
+        return {
+          content: `Triage cursor for "${p.mailbox}" set to ${plan.lastRunAt}.`,
+          data: { lastRunAt: plan.lastRunAt },
+        };
+      },
+    );
+
     ctx.jobs.register("poll-mailboxes", async () => {
       const config = (await ctx.config.get()) as InstanceConfig;
       await runPoll(ctx, config);
@@ -1254,6 +1376,39 @@ const plugin = definePlugin({
       };
     });
 
+    // Reads the triage routine's cursor for a mailbox. Same data as the
+    // agent tool, reachable from the UI and from curl.
+    ctx.data.register("email.get-triage-cursor", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      await resolveCursorMailbox("email.get-triage-cursor", mailboxKey, companyId);
+      const stored = parseStoredCursor(
+        await ctx.state.get(triageCursorScope(companyId, mailboxKey)),
+      );
+      const { since, source } = resolveSince(stored, new Date());
+      return { lastRunAt: stored, since, source };
+    });
+
+    // Writes the triage cursor. This is the seed path for a mailbox whose
+    // previous cursor lived in the retired Markdown rules document.
+    ctx.actions.register("email.set-triage-cursor", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      await resolveCursorMailbox("email.set-triage-cursor", mailboxKey, companyId);
+      const scope = triageCursorScope(companyId, mailboxKey);
+      const stored = parseStoredCursor(await ctx.state.get(scope));
+      const proposed =
+        typeof params.lastRunAt === "string" && params.lastRunAt.trim()
+          ? params.lastRunAt
+          : new Date().toISOString();
+      const plan = planCursorAdvance(stored, proposed, { force: params.force === true });
+      if (!plan.ok) throw new Error(plan.reason ?? "Cursor write refused");
+      await ctx.state.set(scope, { lastRunAt: plan.lastRunAt });
+      return { ok: true, lastRunAt: plan.lastRunAt };
+    });
+
     // Upserts a sender rule (auto-triage, keep-always, or mute) for a mailbox.
     ctx.actions.register("email.set-rule", async (params) => {
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
@@ -1315,67 +1470,6 @@ const plugin = definePlugin({
         }
       }
       return { ok: true, sweptCount };
-    });
-
-    // One-time import of sender rules from a Markdown rules doc body.
-    // Returns counts so the UI can show "imported N rules, skipped M dupes".
-    ctx.actions.register("email.import-rules", async (params) => {
-      const companyId = typeof params.companyId === "string" ? params.companyId : null;
-      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
-      const docBody = typeof params.docBody === "string" ? params.docBody : null;
-      if (!companyId || !mailboxKey || docBody === null) {
-        throw new Error("companyId, mailbox, and docBody are required");
-      }
-      const config = (await ctx.config.get()) as InstanceConfig;
-      const cfg = findConfigMailbox(config, mailboxKey);
-      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
-      assertCompanyAccess(ctx, {
-        tool: "email.import-rules",
-        resourceLabel: `Mailbox "${mailboxKey}"`,
-        resourceKey: mailboxKey,
-        allowedCompanies: cfg.allowedCompanies,
-        companyId,
-      });
-
-      // Process keep-always FIRST so it wins any cross-section conflicts —
-      // the safer interpretation when a pattern is contradictorily listed
-      // under both auto-triage and keep-always in the source doc.
-      const sections: Array<{ header: string; ruleType: "auto-triage" | "keep-always" }> = [
-        { header: "## Keep-always senders", ruleType: "keep-always" },
-        { header: "## Auto-triage senders", ruleType: "auto-triage" },
-      ];
-      let imported = 0;
-      let conflicts = 0;
-      for (const { header, ruleType } of sections) {
-        const start = docBody.indexOf(header);
-        if (start === -1) continue;
-        const after = start + header.length;
-        const nextHeader = docBody.indexOf("\n## ", after);
-        const section = docBody.slice(after, nextHeader === -1 ? docBody.length : nextHeader);
-        for (const rawLine of section.split("\n")) {
-          const line = rawLine.replace(/^[-*+]\s+/, "").trim();
-          if (!line || line.startsWith("<!--") || line.startsWith("#") || line.startsWith("`<")) continue;
-          const pattern = line.split("|")[0]!.trim();
-          if (!pattern) continue;
-          if (
-            !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(pattern) &&
-            !/^@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(pattern) &&
-            !/^subject:/i.test(pattern)
-          ) {
-            continue;
-          }
-          const result = await ctx.db.execute(
-            `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
-               (company_id, mailbox_key, sender_pattern, rule_type)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (company_id, mailbox_key, sender_pattern) DO NOTHING`,
-            [companyId, mailboxKey, pattern, ruleType],
-          );
-          if (result.rowCount > 0) imported += 1;
-          else conflicts += 1;
-        }
-      }
-      return { ok: true, imported, conflicts };
     });
 
     // Deletes a sender rule for a mailbox.

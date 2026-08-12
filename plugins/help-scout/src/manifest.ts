@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.5.19";
+const PLUGIN_VERSION = "0.6.0";
 
 const accountItemSchema = {
   type: "object",
@@ -158,7 +158,10 @@ Click **Save Configuration** again.
 - **Duplicate conversations** — use \`idempotencyKey\` on \`helpscout_create_conversation\` to prevent double-creation if a skill retries.
 `;
 
-const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
+const manifest: PaperclipPluginManifestV1 & {
+  setupInstructions?: string;
+  database?: { namespaceSlug: string; migrationsDir: string };
+} = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
@@ -174,7 +177,16 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "secrets.read-ref",
     "http.outbound",
     "telemetry.track",
+    "plugin.state.read",
+    "plugin.state.write",
+    "database.namespace.migrate",
+    "database.namespace.read",
+    "database.namespace.write",
   ],
+  database: {
+    namespaceSlug: "help_scout",
+    migrationsDir: "migrations",
+  },
   entrypoints: {
     worker: "./dist/worker.js",
   },
@@ -211,6 +223,78 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     },
   },
   tools: [
+    {
+      name: "helpscout_list_rules",
+      displayName: "List Help Scout Triage Rules",
+      description:
+        "Return the operator triage rules for a Help Scout account. The triage routine calls this at the start of every run. Returns { autoNoise: string[], keepActive: string[] }. Keep-active is evaluated first and beats auto-noise when both match. Patterns take four forms, all matched case-insensitively: a full address (support@acme.com), a domain (@acme.com), a subject substring (subject: Daily Summary), or a sender display name (sender: Rollbar Notification). Replaces the Markdown rules-home document, which is retired.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: {
+            type: "string",
+            description:
+              "Account identifier as configured on the plugin settings page. Must list the calling company under allowedCompanies.",
+          },
+          mailboxId: {
+            type: "string",
+            description:
+              "Optional. Also returns rules scoped to this specific mailbox. Omit to get account-wide rules only.",
+          },
+        },
+        required: ["account"],
+      },
+    },
+    {
+      name: "helpscout_get_triage_cursor",
+      displayName: "Get Help Scout Triage Cursor",
+      description:
+        "Return the point in time the Help Scout triage routine should search from. Returns { lastRunAt: string|null, since: string, source: 'cursor'|'fallback' }. Use `since` verbatim as the cutoff: it already subtracts the 5 minute safety overlap and falls back to 24 hours ago when no cursor has been recorded. Replaces the old `last-run:` line in the Markdown rules document.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: {
+            type: "string",
+            description: "Account identifier as configured on the plugin settings page.",
+          },
+          mailboxId: {
+            type: "string",
+            description:
+              "Optional. Scopes the cursor to one mailbox, so two routines over different mailboxes in the same account do not share a position.",
+          },
+        },
+        required: ["account"],
+      },
+    },
+    {
+      name: "helpscout_set_triage_cursor",
+      displayName: "Set Help Scout Triage Cursor",
+      description:
+        "Record how far the Help Scout triage routine got. Call once at the end of a successful run. Defaults to the current time when lastRunAt is omitted. Refuses to move the cursor backwards unless force is true, so a slow or retried run cannot rewind it and cause the next run to reprocess everything in between.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: {
+            type: "string",
+            description: "Account identifier as configured on the plugin settings page.",
+          },
+          mailboxId: {
+            type: "string",
+            description: "Optional mailbox scope. Must match what was passed to the getter.",
+          },
+          lastRunAt: {
+            type: "string",
+            description: "ISO timestamp. Omit to use the current time.",
+          },
+          force: {
+            type: "boolean",
+            description:
+              "Allow moving the cursor backwards. Only for a deliberate reseed, never for a normal run.",
+          },
+        },
+        required: ["account"],
+      },
+    },
     {
       name: "helpscout_list_mailboxes",
       displayName: "List Help Scout mailboxes",

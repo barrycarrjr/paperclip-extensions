@@ -18,6 +18,21 @@ import {
   resolveReplyCustomer,
 } from "./helpScoutClient.js";
 import { isCompanyAllowed } from "./companyAccess.js";
+import {
+  isRuleType,
+  isValidRulePattern,
+  normalizeRulePattern,
+  parseRulesDocument,
+} from "./triage-rules.js";
+import {
+  parseStoredCursor,
+  planCursorAdvance,
+  resolveSince,
+  triageCursorScope,
+} from "./triage-cursor.js";
+
+/** Schema the host provisions for this plugin. */
+const NS = "plugin_help_scout_dcee45a1d3";
 
 type ResolveResult =
   | { ok: true; resolved: ResolvedAccount }
@@ -1240,6 +1255,139 @@ const plugin = definePlugin({
      * On a fresh row pre-save, the action returns whatever's already
      * configured plus a hint in the response.
      */
+    // -- Triage rules ------------------------------------------------------
+    //
+    // These used to live in a hand-edited Markdown document on a rules-home
+    // issue. They are rows now, so the UI can write them from a button and the
+    // skill does not have to parse prose.
+
+    ctx.tools.register(
+      "helpscout_list_rules",
+      {
+        displayName: "List Help Scout Triage Rules",
+        description:
+          "Return the operator triage rules for a Help Scout account. The triage routine should call this at the start of every run. Returns { autoNoise: string[], keepActive: string[] }. Keep-active beats auto-noise when both match. Patterns are a full address, @domain, subject:keyword, or sender:display-name (all case-insensitive substring matches).",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string", description: "Account identifier from plugin config." },
+            mailboxId: {
+              type: "string",
+              description:
+                "Optional. Also returns rules scoped to this mailbox. Omit for account-wide rules only.",
+            },
+          },
+          required: ["account"],
+        } as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { account?: string; mailboxId?: string };
+        const r = await resolveOrError(ctx, runCtx, "helpscout_list_rules", p.account);
+        if (!r.ok) return { error: r.error };
+        // A mailbox-scoped run still honours account-wide rules, so match rows
+        // whose mailbox_id is NULL as well as this mailbox's own.
+        const rows = await ctx.db.query<{ sender_pattern: string; rule_type: string }>(
+          `SELECT sender_pattern, rule_type
+             FROM ${NS}.helpscout_triage_rules
+            WHERE company_id = $1 AND account_key = $2
+              AND (mailbox_id IS NULL OR mailbox_id = $3)
+            ORDER BY rule_type, sender_pattern`,
+          [runCtx.companyId, r.resolved.accountKey, p.mailboxId ?? null],
+        );
+        const autoNoise = rows
+          .filter((x) => x.rule_type === "auto-noise")
+          .map((x) => x.sender_pattern);
+        const keepActive = rows
+          .filter((x) => x.rule_type === "keep-active")
+          .map((x) => x.sender_pattern);
+        return {
+          content: `auto-noise: ${autoNoise.length} rule(s), keep-active: ${keepActive.length} rule(s)`,
+          data: { autoNoise, keepActive },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "helpscout_get_triage_cursor",
+      {
+        displayName: "Get Help Scout Triage Cursor",
+        description:
+          "Return the point in time the Help Scout triage routine should search from. Returns { lastRunAt, since, source }. Use `since` verbatim: it already subtracts the 5 minute safety overlap and falls back to 24 hours ago when no cursor has been recorded.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string", description: "Account identifier from plugin config." },
+            mailboxId: { type: "string", description: "Optional mailbox scope." },
+          },
+          required: ["account"],
+        } as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { account?: string; mailboxId?: string };
+        const r = await resolveOrError(ctx, runCtx, "helpscout_get_triage_cursor", p.account);
+        if (!r.ok) return { error: r.error };
+        const stored = parseStoredCursor(
+          await ctx.state.get(
+            triageCursorScope(runCtx.companyId, r.resolved.accountKey, p.mailboxId ?? null),
+          ),
+        );
+        const { since, source } = resolveSince(stored, new Date());
+        return {
+          content:
+            source === "cursor"
+              ? `Last triaged ${stored}. Search from ${since}.`
+              : `No stored cursor. Search from ${since} (24 hour fallback).`,
+          data: { lastRunAt: stored, since, source },
+        };
+      },
+    );
+
+    ctx.tools.register(
+      "helpscout_set_triage_cursor",
+      {
+        displayName: "Set Help Scout Triage Cursor",
+        description:
+          "Record how far the Help Scout triage routine got. Call once at the end of a successful run. Defaults to now. Refuses to move the cursor backwards unless force is true, so a slow or retried run cannot rewind it.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string", description: "Account identifier from plugin config." },
+            mailboxId: { type: "string", description: "Optional mailbox scope." },
+            lastRunAt: { type: "string", description: "ISO timestamp. Omit to use the current time." },
+            force: { type: "boolean", description: "Allow moving the cursor backwards." },
+          },
+          required: ["account"],
+        } as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as {
+          account?: string;
+          mailboxId?: string;
+          lastRunAt?: string;
+          force?: boolean;
+        };
+        const r = await resolveOrError(ctx, runCtx, "helpscout_set_triage_cursor", p.account);
+        if (!r.ok) return { error: r.error };
+        const scope = triageCursorScope(
+          runCtx.companyId,
+          r.resolved.accountKey,
+          p.mailboxId ?? null,
+        );
+        const stored = parseStoredCursor(await ctx.state.get(scope));
+        const proposed =
+          typeof p.lastRunAt === "string" && p.lastRunAt.trim()
+            ? p.lastRunAt
+            : new Date().toISOString();
+        const plan = planCursorAdvance(stored, proposed, { force: p.force === true });
+        if (!plan.ok) return { error: plan.reason ?? "Cursor write refused" };
+        await ctx.state.set(scope, { lastRunAt: plan.lastRunAt });
+        return {
+          content: `Help Scout triage cursor for "${r.resolved.accountKey}" set to ${plan.lastRunAt}.`,
+          data: { lastRunAt: plan.lastRunAt },
+        };
+      },
+    );
+
     ctx.actions.register("list-mailboxes", async () => {
       const config = (await ctx.config.get()) as InstanceConfig;
       const accounts = config.accounts ?? [];
@@ -1720,6 +1868,146 @@ const plugin = definePlugin({
         removed: existing.length - remaining.length,
       });
       return { id: p.conversationId, tags: remaining };
+    });
+
+    /** Rules for one account, as rows, for the operator UI. */
+    ctx.data.register("helpscout.list-rules", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as { accountKey?: string; mailboxId?: string };
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.list-rules",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+      const rows = await ctx.db.query<{
+        sender_pattern: string;
+        rule_type: string;
+        mailbox_id: string | null;
+        created_at: string;
+        updated_at: string;
+      }>(
+        `SELECT sender_pattern, rule_type, mailbox_id, created_at, updated_at
+           FROM ${NS}.helpscout_triage_rules
+          WHERE company_id = $1 AND account_key = $2
+            AND (mailbox_id IS NULL OR mailbox_id = $3)
+          ORDER BY rule_type, sender_pattern`,
+        [companyId, r.resolved.accountKey, p.mailboxId ?? null],
+      );
+      return {
+        rules: rows.map((x) => ({
+          senderPattern: x.sender_pattern,
+          ruleType: x.rule_type,
+          mailboxId: x.mailbox_id,
+          createdAt: x.created_at,
+          updatedAt: x.updated_at,
+        })),
+      };
+    });
+
+    /** Upsert one rule. Rejects a pattern that is not one of the four forms. */
+    ctx.actions.register("helpscout.set-rule", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        mailboxId?: string;
+        senderPattern?: string;
+        ruleType?: string;
+      };
+      if (!isRuleType(p.ruleType)) {
+        throw new Error(`ruleType must be 'auto-noise' or 'keep-active', got: ${p.ruleType}`);
+      }
+      const raw = typeof p.senderPattern === "string" ? p.senderPattern : "";
+      if (!isValidRulePattern(raw)) {
+        throw new Error(
+          `Not a valid rule pattern: ${JSON.stringify(raw)}. Use a full address, @domain, 'subject: text', or 'sender: name'.`,
+        );
+      }
+      const r = await resolveOrErrorForBridge(ctx, companyId, "helpscout.set-rule", p.accountKey);
+      if (!r.ok) throw new Error(r.error);
+      const senderPattern = normalizeRulePattern(raw);
+      await ctx.db.execute(
+        `INSERT INTO ${NS}.helpscout_triage_rules
+           (company_id, account_key, mailbox_id, sender_pattern, rule_type)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (company_id, account_key, mailbox_id, sender_pattern)
+         DO UPDATE SET rule_type = $5, updated_at = now()`,
+        [companyId, r.resolved.accountKey, p.mailboxId ?? null, senderPattern, p.ruleType],
+      );
+      await trackBridge(ctx, companyId, "set-rule", r.resolved.accountKey, {
+        ruleType: p.ruleType,
+      });
+      return { ok: true, senderPattern, ruleType: p.ruleType };
+    });
+
+    ctx.actions.register("helpscout.delete-rule", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as { accountKey?: string; mailboxId?: string; senderPattern?: string };
+      const raw = typeof p.senderPattern === "string" ? p.senderPattern.trim() : "";
+      if (!raw) throw new Error("senderPattern is required");
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.delete-rule",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+      const result = await ctx.db.execute(
+        `DELETE FROM ${NS}.helpscout_triage_rules
+          WHERE company_id = $1 AND account_key = $2
+            AND mailbox_id IS NOT DISTINCT FROM $3
+            AND sender_pattern = $4`,
+        [companyId, r.resolved.accountKey, p.mailboxId ?? null, normalizeRulePattern(raw)],
+      );
+      return { ok: true, deleted: result.rowCount };
+    });
+
+    /**
+     * One-time lift of the hand-written Markdown rules into rows.
+     *
+     * Unlike the email-tools equivalent this is load-bearing rather than
+     * historical: until it has run, these rules exist only in the document, so
+     * it must happen before the skill stops reading it. Idempotent, so running
+     * it twice is safe.
+     */
+    ctx.actions.register("helpscout.import-rules", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as { accountKey?: string; mailboxId?: string; docBody?: string };
+      if (typeof p.docBody !== "string") throw new Error("docBody is required");
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.import-rules",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+
+      const parsed = parseRulesDocument(p.docBody);
+      let imported = 0;
+      let existing = 0;
+      for (const rule of parsed) {
+        const result = await ctx.db.execute(
+          `INSERT INTO ${NS}.helpscout_triage_rules
+             (company_id, account_key, mailbox_id, sender_pattern, rule_type)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (company_id, account_key, mailbox_id, sender_pattern) DO NOTHING`,
+          [
+            companyId,
+            r.resolved.accountKey,
+            p.mailboxId ?? null,
+            rule.senderPattern,
+            rule.ruleType,
+          ],
+        );
+        if (result.rowCount > 0) imported += 1;
+        else existing += 1;
+      }
+      await trackBridge(ctx, companyId, "import-rules", r.resolved.accountKey, {
+        found: parsed.length,
+        imported,
+      });
+      return { ok: true, found: parsed.length, imported, existing };
     });
   },
 

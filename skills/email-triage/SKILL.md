@@ -8,7 +8,8 @@ description: Triage new mail in an IMAP mailbox — apply learned per-sender rul
 Pulls new mail from one IMAP mailbox via the `email-tools` plugin, applies
 the operator's per-sender rules, and routes obvious noise out of INBOX into
 a `_paperclip/triage` label. Unknown senders are NOT auto-acted on — they
-land in a review queue for the operator to confirm.
+are left in INBOX and reported, so the operator decides whether they earn
+a rule.
 
 The **same skill runs against any mailbox**. The mailbox identifier is a
 parameter, so one routine per mailbox is all you need.
@@ -66,16 +67,18 @@ the title — both forms are functionally equivalent at run time.
   skill needs to move mail. It will only ever move TO `_paperclip/triage`,
   never to Trash — but the plugin enforces the lock at the tool level, so
   it must be off for any move to succeed.)
-- A **rules-home issue** exists in the routine's company, with the
-  routine's `parentIssueId` pointing at it. The rules-home issue holds a
-  Markdown document (key: `email-triage-rules`) that contains the
-  Auto-triage / Keep-always / Review queue sections. The operator edits
-  this document in the Paperclip UI to graduate senders.
+- A **rules-home issue** in the routine's company, with the routine's
+  `parentIssueId` pointing at it. This is **no longer where anything is
+  stored** (rules are in the plugin database, the cursor is in plugin
+  state). Keep it anyway for two reasons: the Morning Brief and Portfolio
+  Brief discover which mailboxes to show by listing issues whose title
+  starts with `Email triage rules - `, and the skill needs the issue ID
+  once to tombstone the retired document (step 5b).
   - Convention: rules-home issue title = `Email triage rules - <mailbox>`.
   - Discovery: agent reads the routine via `GET /api/routines/<routineId>`
     and uses `parentIssueId` as the rules-home issue ID. If
-    `parentIssueId` is null, the skill aborts with a clear error and asks
-    the operator to create a rules-home issue and link it.
+    `parentIssueId` is null, skip step 5b and carry on. Triage itself does
+    not depend on it.
 
 ## Parameters (passed in by the routine)
 
@@ -85,7 +88,7 @@ the title — both forms are functionally equivalent at run time.
 | `triageLabel` | no | Destination IMAP folder/label for moved mail. Defaults to `_paperclip/triage`. |
 | `markRead` | no | When `true`, also calls `email_mark_read` after a successful move. Defaults to `true`. |
 | `unreadOnly` | no | When `true`, only consider **unread** (`\Unseen`) mail — pass `unseen: true` to `email_search` and never move/touch a message that's already been marked as read. **Defaults to `true`.** Marked-as-read is the operator's signal that they have already dealt with the message; auto-acting on it would override that signal. Only override to `false` for explicit re-organization tasks the operator has asked for. |
-| `bulkCleanup` | no | When `true`, ignore `last-run` and walk the existing INBOX backlog from `bulkSince`. Designed for a one-shot backlog clearance, not the daily routine. Does NOT update `last-run` at the end of the run, so the next normal run still picks up where it left off. Defaults to `false`. |
+| `bulkCleanup` | no | When `true`, ignore the stored cursor and walk the existing INBOX backlog from `bulkSince`. Designed for a one-shot backlog clearance, not the daily routine. Does NOT write the cursor at the end of the run, so the next normal run still picks up where it left off. Defaults to `false`. |
 | `bulkSince` | no | ISO date or `YYYY-MM-DD`. Only consulted when `bulkCleanup=true`. Defaults to 90 days ago. |
 | `looseMode` | no | When `true`, auto-move strong-signal unknown senders (List-Unsubscribe header, OR address matches `noreply@`/`no-reply@`/`notifications@`/`marketing@`/`news@`/`mailer@`/`bounces@`/`info@`) to `<triageLabel>` instead of leaving them in INBOX. Person-to-person mail (no signals) is still left alone. Defaults to `false`. |
 
@@ -93,9 +96,8 @@ the title — both forms are functionally equivalent at run time.
 
 ### 1. Load rules
 
-Sender rules live in the email-tools plugin database — **do not** read or
-parse the Markdown rules-home document for Auto-triage / Keep-always
-entries. The Markdown's rule sections are deprecated read-only history.
+Sender rules live in the email-tools plugin database. Nothing about this
+skill reads or writes a Markdown document any more.
 
 Call the `email-tools:email_list_rules` agent tool with the `mailbox`
 parameter. The response is:
@@ -106,9 +108,11 @@ parameter. The response is:
   "mute":       ["newsletter@chatty.com", "@toonoisy.tld", ...] }
 ```
 
-Use these three lists for the matching in Step 4. The `parentIssueId` of
-the routine still points at the rules-home issue — that's where the
-Review queue lives (Step 5). Resolve it the same way:
+Use these three lists for the matching in Step 4.
+
+Separately, resolve the rules-home issue ID. It is not needed for triage,
+only for the one-shot tombstone in step 5b, so a null value is not an
+error:
 
 ```bash
 PARENT_ID=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
@@ -116,25 +120,31 @@ PARENT_ID=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   | jq -r '.parentIssueId')
 ```
 
-If `PARENT_ID` is null/empty, abort with an error comment on the run
-issue: "No rules-home issue linked. Set the routine's parentIssueId to
-an issue holding the email-triage-rules document."
-
-If the document doesn't exist (HTTP 404 on first fetch in Step 5),
-create it with just a Review-queue section — there's no need to seed
-Auto-triage / Keep-always / Mute sections anymore (rules are in the DB).
-
 ### 2. Determine since-cutoff
 
-If `bulkCleanup=true`: use `bulkSince` (default 90 days ago). Ignore
-`last-run` for this run. **Do not update `last-run`** in Step 5 either —
-this is a one-shot backlog pass and the next normal scheduled run should
-still pick up where the regular cadence left off.
+If `bulkCleanup=true`: use `bulkSince` (default 90 days ago). Ignore the
+stored cursor for this run, and **do not write the cursor** in Step 5
+either. This is a one-shot backlog pass and the next normal scheduled run
+should still pick up where the regular cadence left off.
 
-Otherwise:
-- If `last-run` is set and parseable: use it (minus a 5-minute safety overlap
-  to catch races with delivery latency).
-- If not: default to 24 hours ago.
+Otherwise, call `email-tools:email_get_triage_cursor` with the `mailbox`
+parameter and **use the returned `since` verbatim**:
+
+```json
+{ "lastRunAt": "2026-08-12T09:30:00.000Z",
+  "since":     "2026-08-12T09:25:00.000Z",
+  "source":    "cursor" }
+```
+
+Do not recompute the window yourself. The 5 minute safety overlap (which
+catches mail delivered with a timestamp fractionally before the previous
+run recorded) and the 24 hour fallback when no cursor exists are both
+applied inside the tool. `source` is `"cursor"` or `"fallback"` and is
+worth mentioning in the run report.
+
+If the tool comes back unknown, an older `email-tools` is installed than
+this skill expects. Fall back to 24 hours ago, carry on, and say so in
+the report rather than failing the run.
 
 ### 3. Search for new mail
 
@@ -179,43 +189,82 @@ c. **Match against Auto-triage** — if any rule matches:
      with the same UID after the move succeeds.
    - Increment `movedCount`. Continue to next message.
 
-d. **No match** — surface to review queue and, when `looseMode=true`,
-   auto-move strong-signal candidates:
+d. **No match** — count the sender as an unknown worth a rule, and when
+   `looseMode=true`, auto-move strong-signal candidates.
+
+   "Count" here means tally it in memory for the run report in Step 6.
+   There is nowhere to write it: the operator's actual worklist is
+   computed live by the Morning Brief and the Email page from unread mail
+   minus ruled senders, so it already includes everything you would have
+   written down and stays correct after they act on it.
 
    - Has `List-Unsubscribe` header → strong signal it's a marketing list:
      - If `looseMode=true`: call `email_move` to `<triageLabel>` and (if
        `markRead=true`) `email_mark_read`. Increment `movedCount`. Still
-       add the sender to the review queue so the operator can graduate it
-       to the rules doc on the next pass.
-     - Else: add sender to review queue (with count). Leave the message
-       in INBOX.
+       count the sender, so the report names it as a rule candidate.
+     - Else: count the sender. Leave the message in INBOX.
    - Sender address matches `noreply@`, `no-reply@`, `notifications@`,
      `marketing@`, `news@`, `mailer@`, `bounces@`, `info@`:
-     - If `looseMode=true`: auto-move and mark read (as above). Still add
-       to review queue.
-     - Else: add sender to review queue (moderate signal). Leave in INBOX.
-   - Otherwise: leave it alone. Don't pollute the review queue with normal
-     person-to-person mail. `looseMode` does NOT touch person-to-person
-     mail — that's the floor we never cross.
+     - If `looseMode=true`: auto-move and mark read (as above). Still
+       count the sender.
+     - Else: count the sender (moderate signal). Leave in INBOX.
+   - Otherwise: leave it alone, and don't count it. Normal
+     person-to-person mail is not a rule candidate. `looseMode` does NOT
+     touch person-to-person mail — that's the floor we never cross.
 
-### 5. Update rules document (Review queue only)
+### 5. Record the cursor
 
-The rules-home document is now used **only** for the Review queue
-section. Auto-triage / Keep-always rules live in the email-tools
-plugin DB (see Step 1) and must not be written from this skill.
+Call `email-tools:email_set_triage_cursor` with the `mailbox` parameter
+and no `lastRunAt` (it defaults to now).
 
-- Set `last-run:` to current UTC ISO timestamp — **except when
-  `bulkCleanup=true`**, in which case leave `last-run` alone (per Step 2,
-  bulk cleanups must not disturb the regular cadence's cursor).
-- For each entry in the review queue this run, **merge** with the existing
-  Review queue section: if the same sender is already there, increment
-  the count; otherwise add a new line.
-- **Never modify** the Auto-triage / Keep-always / Mute sections of the
-  document if they exist — they are deprecated legacy state. The
-  operator's per-sender classifications live in the DB and are reflected
-  back in the UI's icon styling, not in this Markdown.
-- Save back via `PUT /api/issues/<PARENT_ID>/documents/email-triage-rules`
-  with body `{ title, format: "markdown", body: <new-markdown> }`.
+**Skip this entirely when `bulkCleanup=true`** — per Step 2, a backlog
+pass must not disturb the regular cadence's cursor.
+
+That is the whole step. Do not write any document. The review queue is
+not stored anywhere: the Morning Brief and the Email page compute it live
+from unread mail minus senders already covered by a rule, so writing a
+copy would only create something that can go stale and disagree with what
+the operator sees.
+
+If the setter reports that it refused to move the cursor backwards,
+that means a newer run already recorded a later timestamp. Leave it be,
+note it in the report, and do not pass `force`.
+
+### 5b. Tombstone the retired rules document (one-time)
+
+Older installs still have a `email-triage-rules` document on the
+rules-home issue holding stale sender lists that contradict the database.
+Retire it once, then never touch it again.
+
+Skip this step entirely if `PARENT_ID` from Step 1 is null/empty.
+
+Fetch `GET /api/issues/<PARENT_ID>/documents/email-triage-rules`. On 404,
+do nothing (nothing to retire). If it exists and its body already
+contains `<!-- retired:email-triage-rules -->`, do nothing.
+
+Otherwise `PUT` it back with this body, plus a `changeSummary` of
+"Retired: rules moved to the email-tools database":
+
+```markdown
+<!-- retired:email-triage-rules -->
+
+# Retired
+
+This document no longer holds anything.
+
+- **Sender rules** live in the email-tools plugin database. Manage them
+  with the Auto-triage / Keep / Mute buttons on the Email page or the
+  Morning Brief.
+- **The triage cursor** lives in plugin state, read and written by
+  `email_get_triage_cursor` / `email_set_triage_cursor`.
+- **The review queue** is computed live from unread mail minus ruled
+  senders, so there is nothing to store.
+
+Previous contents remain in this document's revision history.
+```
+
+Do not attempt to DELETE the document. That route requires board auth and
+an agent does not have it.
 
 ### 6. Report
 
@@ -224,24 +273,29 @@ for this routine fire — NOT the rules-home / parent issue). Use
 `PAPERCLIP_ISSUE_ID` from the heartbeat env, not the parent issue ID.
 
 ```
-Email triage — <mailbox> — <UTC timestamp>
-- Processed: <N> new messages since <last-run>
+Email triage - <mailbox> - <UTC timestamp>
+- Processed: <N> new messages since <since> (<source>)
 - Auto-moved to <triageLabel>: <movedCount>
-- New senders surfaced to review queue: <newReviewCount>
+- Unknown senders worth a rule: <newReviewCount>
 - Skipped (kept in INBOX): <leftAloneCount>
 - Errors: <errorCount> (see below)
 
-Top review-queue candidates this run:
+Top candidates for a rule this run:
   - <count> from <sender>
   - <count> from <sender>
   ... (top 5)
 
-Review and graduate senders in the rules document on issue <PARENT_ID>.
+Set rules with the Auto-triage / Keep / Mute buttons on the Email page
+or the Morning Brief.
 ```
 
-Including the top-5 review-queue candidates in the comment means the
-operator can see what's pending without opening anything. If
-`errorCount > 0`, list the first 5 errors with UID + message instead.
+`<since>` and `<source>` come from `email_get_triage_cursor` in Step 2,
+so a run that fell back to the 24 hour window says so plainly instead of
+looking identical to one that used a real cursor.
+
+Including the top-5 candidates in the comment means the operator can see
+what's pending without opening anything. If `errorCount > 0`, list the
+first 5 errors with UID + message instead.
 
 ## How to invoke the email-tools plugin from a heartbeat
 
@@ -271,7 +325,9 @@ curl -s -X POST \
 
 Tool names use `<pluginId>:<toolName>` — so `email-tools:email_search`,
 `email-tools:email_fetch`, `email-tools:email_mark_read`,
-`email-tools:email_move`.
+`email-tools:email_move`, `email-tools:email_list_rules`,
+`email-tools:email_get_triage_cursor`, and
+`email-tools:email_set_triage_cursor`.
 
 ## Rule matching syntax
 
@@ -297,26 +353,26 @@ is case-insensitive against the relevant header.
 - IMAP transient errors (network, `[ETIMEOUT]`) — retry the per-message
   step up to 3 times with exponential backoff. Don't retry the whole
   workflow.
-- Rules document parse error — fall back to "no rules" mode (act on
-  nothing, add everything triage-eligible to review queue), and surface a
-  comment warning the operator that the rules document needs cleanup.
-- Rules document missing (404) — auto-create with the empty template via
-  `PUT`, treat as no rules for this run.
+- `email_list_rules` fails — do not guess. Abort the run with an error
+  comment rather than proceeding in "no rules" mode, which would treat
+  every keep-always sender as unclassified.
+- `email_set_triage_cursor` refuses the write (cursor would move
+  backwards) — a newer run already recorded a later timestamp. Not an
+  error. Note it and finish normally.
 
 ## After running
 
-- Sender rules live in the email-tools plugin DB. The operator graduates
-  entries from the Review queue → Auto-triage or Keep-always via the UI
-  buttons in the Email view, MorningBrief, or UnifiedInbox; those views
-  write the rule directly to the DB via `email.set-rule`. Next run picks
-  up the new rules automatically via `email_list_rules`.
+- Sender rules live in the email-tools plugin DB. The operator sets them
+  with the Auto-triage / Keep / Mute buttons on the Email page, the
+  Morning Brief, or the Portfolio equivalents; those write straight to the
+  DB via `email.set-rule`. Rules are also learned automatically when the
+  operator drags mail into `_paperclip/triage` from any mail client. The
+  next run picks all of it up via `email_list_rules`.
 - Once a sender pattern is consistently triaged, recommend the operator
   install a **provider-side filter** (Gmail Filter / Outlook Rule) so the
-  message never even hits INBOX. Skill output should call this out
-  explicitly when a sender has been auto-triaged for 14+ days with zero
-  human intervention. (Implementation: walk the Auto-triage section, look
-  at the `last-run` timestamps stored alongside each rule once the
-  operator starts adding them.)
+  message never even hits INBOX. Call this out explicitly when a sender
+  has been auto-triaged for 14+ days with zero human intervention. The
+  rule's `createdAt` from `email.list-rules` is the age to check.
 
 ## Out of scope
 
@@ -331,11 +387,12 @@ is case-insensitive against the relevant header.
 
 ## Pre-requisites for this skill to work
 
-- `email-tools` plugin v0.5.0+ installed and `ready`.
+- `email-tools` plugin v0.17.0+ installed and `ready`. Older versions lack
+  the cursor tools; the skill still runs but falls back to a 24 hour
+  window every time (see Step 2).
 - Target mailbox configured in plugin config with the calling company on
   its `allowedCompanies` list.
 - `Disallow moving messages` is OFF for that mailbox.
-- A rules-home issue exists in the same company, with the
-  `email-triage-rules` document present (or missing, in which case the
-  skill auto-creates it from the empty template).
-- The routine's `parentIssueId` is set to the rules-home issue's ID.
+- A rules-home issue in the same company with the routine's
+  `parentIssueId` pointing at it. Optional for triage itself; it is the
+  Briefs' mailbox registry and the target for the one-time tombstone.

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.16.22";
+const PLUGIN_VERSION = "0.17.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -602,7 +602,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
       name: "email_list_rules",
       displayName: "List Email Triage Rules",
       description:
-        "Return the operator's sender rules (auto-triage, keep-always, and mute) for a mailbox. The triage routine should call this at the start of every run to load rules from the DB — do NOT read the Markdown rules-home document. Returns { autoTriage: string[], keepAlways: string[], mute: string[] }. Muted senders are treated like keep-always for the triage agent (skip the message entirely); the difference is that the poll loop marks muted senders' new arrivals as read on receipt. Patterns are full email, @domain, or subject:keyword (case-insensitive substring match).",
+        "Return the operator's sender rules (auto-triage, keep-always, and mute) for a mailbox. The triage routine should call this at the start of every run. Returns { autoTriage: string[], keepAlways: string[], mute: string[] }. Muted senders are treated like keep-always for the triage agent (skip the message entirely); the difference is that the poll loop marks muted senders' new arrivals as read on receipt. Patterns are full email, @domain, or subject:keyword (case-insensitive substring match).",
       parametersSchema: {
         type: "object",
         properties: {
@@ -610,6 +610,49 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
             type: "string",
             description:
               "Mailbox identifier (e.g. 'personal'). Must be configured AND list the calling company under allowedCompanies.",
+          },
+        },
+        required: ["mailbox"],
+      },
+    },
+    {
+      name: "email_get_triage_cursor",
+      displayName: "Get Triage Cursor",
+      description:
+        "Return the point in time the triage routine should search from for a mailbox. Returns { lastRunAt: string|null, since: string, source: 'cursor'|'fallback' }. Use `since` verbatim as the search cutoff: it already subtracts the 5 minute safety overlap, and falls back to 24 hours ago when no cursor has been recorded yet. Replaces the old `last-run:` line in the Markdown rules-home document.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          mailbox: {
+            type: "string",
+            description:
+              "Mailbox identifier (e.g. 'personal'). Must be configured AND list the calling company under allowedCompanies.",
+          },
+        },
+        required: ["mailbox"],
+      },
+    },
+    {
+      name: "email_set_triage_cursor",
+      displayName: "Set Triage Cursor",
+      description:
+        "Record how far the triage routine got. Call once at the end of a successful run, and NOT when bulkCleanup is true (a backlog pass must not disturb the regular cadence). Defaults to the current time when lastRunAt is omitted. Refuses to move the cursor backwards unless force is true, so a slow or retried run cannot rewind it and cause the next run to reprocess everything in between.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          mailbox: {
+            type: "string",
+            description:
+              "Mailbox identifier (e.g. 'personal'). Must be configured AND list the calling company under allowedCompanies.",
+          },
+          lastRunAt: {
+            type: "string",
+            description: "ISO timestamp. Omit to use the current time.",
+          },
+          force: {
+            type: "boolean",
+            description:
+              "Allow moving the cursor backwards. Only for a deliberate reseed, never for a normal run.",
           },
         },
         required: ["mailbox"],
