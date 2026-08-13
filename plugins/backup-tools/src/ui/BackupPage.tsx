@@ -62,6 +62,29 @@ const cardStyle: CSSProperties = {
   borderRadius: 6,
 };
 
+// A failed fetch must not render as an empty state. Every tab below took
+// `data?.x ?? []` and showed "No backups yet" / "No destinations configured"
+// whether the worker returned nothing or failed outright — so a missing data
+// handler looked exactly like an empty table, and read as "working, nothing
+// here" for as long as it took someone to notice the numbers disagreed.
+function ErrorNote({ error }: { error: { message: string } }) {
+  return (
+    <div
+      style={{
+        padding: "12px 16px",
+        background: "color-mix(in oklab, var(--destructive, #b91c1c) 12%, var(--background, #fef2f2))",
+        border: "1px solid color-mix(in oklab, var(--destructive, #b91c1c) 40%, transparent)",
+        color: css.fg,
+        borderRadius: 6,
+        fontSize: 13,
+      }}
+    >
+      <strong style={{ color: css.danger }}>Couldn't load this tab.</strong>{" "}
+      {error.message}
+    </div>
+  );
+}
+
 function statusBadge(status: string) {
   const color = status === "succeeded" ? "#10b981" : status === "partial" ? "#f59e0b" : status === "running" ? "#3b82f6" : "#ef4444";
   return (
@@ -133,7 +156,7 @@ export function BackupPage(_props: PluginPageProps) {
 }
 
 function OverviewTab({ companyId: _companyId }: { companyId: string | null }) {
-  const { data, loading, refresh } = usePluginData<{ lastRun: Backup | null; nextRunAfter: string | null }>(
+  const { data, loading, error, refresh } = usePluginData<{ lastRun: Backup | null; nextRunAfter: string | null }>(
     "dashboard.health",
     {},
   );
@@ -142,6 +165,7 @@ function OverviewTab({ companyId: _companyId }: { companyId: string | null }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   if (loading) return <div>Loading…</div>;
+  if (error) return <ErrorNote error={error} />;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
@@ -206,8 +230,9 @@ function SchedulesTab() {
 }
 
 function DestinationsTab({ companyId }: { companyId: string | null }) {
-  const { data, loading } = usePluginData<{ destinations: Destination[] }>("destinations.list", { companyId });
+  const { data, loading, error } = usePluginData<{ destinations: Destination[] }>("destinations.list", { companyId });
   if (loading) return <div>Loading…</div>;
+  if (error) return <ErrorNote error={error} />;
   const dests = data?.destinations ?? [];
   if (dests.length === 0) return <div>No destinations configured.</div>;
   return (
@@ -233,8 +258,9 @@ function DestinationsTab({ companyId }: { companyId: string | null }) {
 }
 
 function HistoryTab({ companyId }: { companyId: string | null }) {
-  const { data, loading } = usePluginData<{ backups: Backup[] }>("backups.list", { companyId });
+  const { data, loading, error } = usePluginData<{ backups: Backup[] }>("backups.list", { companyId });
   if (loading) return <div>Loading…</div>;
+  if (error) return <ErrorNote error={error} />;
   const rows = data?.backups ?? [];
   if (rows.length === 0) return <div>No backups yet.</div>;
   return (

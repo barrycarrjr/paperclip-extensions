@@ -912,6 +912,38 @@ const plugin = definePlugin({
         nextRunAfter: dueRows[0]?.next_run_after ?? null,
       };
     });
+
+    // The History and Destinations tabs call these through usePluginData, which
+    // resolves against this registry — NOT the routeKey dispatch in
+    // onApiRequest, where `backups.list` and `destinations.list` also exist.
+    // Only the API side was ever wired up, so getData threw "no data handler
+    // registered" on every render and both tabs sat empty forever: History said
+    // "No backups yet" next to an Overview card reporting a successful backup.
+
+    ctx.data.register("backups.list", async (params: Record<string, unknown>) => {
+      const companyId = (params.companyId as string) ?? "";
+      const cfgNow = (await ctx.config.get()) as InstanceConfig;
+      if (!isCompanyAllowed(cfgNow.allowedCompanies, companyId)) {
+        throw new Error("[ECOMPANY_NOT_ALLOWED]");
+      }
+      const backups = await ctx.db.query(
+        `SELECT id, archive_uuid, cadence, schedule_id, status, started_at, completed_at, size_bytes
+         FROM ${TABLES.backups(ctx.db.namespace)} ORDER BY started_at DESC LIMIT 100`,
+      );
+      return { backups };
+    });
+
+    ctx.data.register("destinations.list", async (params: Record<string, unknown>) => {
+      const companyId = (params.companyId as string) ?? "";
+      const cfgNow = (await ctx.config.get()) as InstanceConfig;
+      if (!isCompanyAllowed(cfgNow.allowedCompanies, companyId)) {
+        throw new Error("[ECOMPANY_NOT_ALLOWED]");
+      }
+      const destinations = (cfgNow.destinations ?? [])
+        .filter((d) => d.enabled !== false)
+        .map((d) => ({ id: d.id, kind: d.kind, label: d.label }));
+      return { destinations };
+    });
   },
 
   // ─── API request dispatch ────────────────────────────────────────────────

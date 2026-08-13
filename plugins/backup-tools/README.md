@@ -128,6 +128,19 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.28** — The History and Destinations tabs show their contents. Both
+  called `usePluginData`, which resolves against `ctx.data.register()` — but
+  `backups.list` and `destinations.list` were only ever wired into the
+  `onApiRequest` route table, a separate registry that happens to accept the
+  same names. `getData` threw "no data handler registered" on every render, and
+  because each tab did `data?.rows ?? []` without checking the hook's `error`,
+  the failure rendered as a tidy empty state: History said "No backups yet"
+  directly beside an Overview card reporting a successful 54.9M backup.
+
+  Both providers are now registered, behind the same
+  `isCompanyAllowed(allowedCompanies, companyId)` gate the tools use, and every
+  tab renders load errors instead of falling through to an empty table.
+
 - **v0.1.27** — The Backups page is readable in dark mode, and the Overview card reports its
   cadence. Every colour on the page was a hardcoded light-mode hex, so the tab
   you were currently on was painted near-black against the dark theme's

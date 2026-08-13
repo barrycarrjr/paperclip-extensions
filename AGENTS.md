@@ -85,6 +85,43 @@ git diff HEAD~1 -- plugins/<plugin>/ | grep -E "version|PLUGIN_VERSION|README\.m
 
 If you see version / manifest changes but no README diff, stop and add one.
 
+### 4.2a Plugin UI rules (both of these have shipped broken before)
+
+**Colours come from the host's theme tokens. Never hardcode a hex.** Plugin
+pages render inside Paperclip's chrome, which flips between a light and a dark
+palette, so a fixed colour is only ever right in one of them. Use
+`var(--foreground)`, `var(--muted-foreground)`, `var(--border)`, `var(--card)`,
+`var(--card-foreground)`, `var(--background)`, `var(--input)`, `var(--primary)`
+/ `var(--primary-foreground)`, `var(--destructive)` /
+`var(--destructive-foreground)`, `var(--muted)` — with the old literal as a
+fallback (`var(--border, #e5e7eb)`) if you want one. Derive tints with
+`color-mix(in oklab, …)` against a token rather than picking a second fixed
+colour. Two failure modes to watch for, both of which reached operators:
+
+- Text that matches its background. backup-tools painted the **selected** tab
+  `#111827` on the dark theme's near-black page, so the one tab you could not
+  read was the tab you were on.
+- A fixed surface under theme-coloured text. gbp-reviews set a near-white card
+  background and let the name inherit `--foreground`, giving white on white.
+
+Status colours that pin **both** sides (a green badge with explicit white text)
+are fine in either theme — those are the exception, not licence for the rest.
+
+**`usePluginData` keys resolve against `ctx.data.register()`, not `onApiRequest`.**
+These are two separate registries that happily share names. Registering
+`backups.list` as an API `routeKey` does nothing for a page calling
+`usePluginData("backups.list")` — `getData` throws "no data handler registered"
+on every render. Whenever you add a `usePluginData` call, confirm a matching
+`ctx.data.register()` exists in the worker, and apply the same
+`isCompanyAllowed(cfg.allowedCompanies, companyId)` gate the tools use.
+
+**Render the hook's `error`. Never let a failure fall through to an empty state.**
+`data?.rows ?? []` followed by "No results yet" makes a broken fetch
+indistinguishable from a working empty table — that is exactly how the
+`backups.list` gap survived: History reported "No backups yet" beside an
+Overview card showing a successful backup. Branch on `error` before you branch
+on emptiness.
+
 ### 4.3 Releasing
 
 Releases are tag-driven via `.github/workflows/release.yml`. The workflow fires on any tag matching `v*`.
