@@ -893,8 +893,16 @@ const plugin = definePlugin({
 
     ctx.data.register("dashboard.health", async () => {
       const ns2 = ctx.db.namespace;
-      const [last] = await ctx.db.query<{ status: string; started_at: string; size_bytes: number | null }>(
-        `SELECT status, started_at, size_bytes FROM ${TABLES.backups(ns2)} ORDER BY started_at DESC LIMIT 1`,
+      const [last] = await ctx.db.query<{
+        status: string;
+        started_at: string;
+        size_bytes: number | null;
+        cadence: string;
+      }>(
+        // cadence is selected because the Overview card renders it. It was left
+        // out of this list, so the card printed a bare "Cadence:" with nothing
+        // after it.
+        `SELECT status, started_at, size_bytes, cadence FROM ${TABLES.backups(ns2)} ORDER BY started_at DESC LIMIT 1`,
       );
       const dueRows = await ctx.db.query<{ next_run_after: string }>(
         `SELECT next_run_after FROM ${TABLES.scheduleState(ns2)} ORDER BY next_run_after ASC LIMIT 1`,

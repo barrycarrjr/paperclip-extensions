@@ -78,10 +78,16 @@ export function ReviewDashboardPage(_props: PluginPageProps) {
         <div style={{ display: "grid", gap: "16px" }}>
           {data.locations.map((loc) => (
             <div key={loc.locationKey} style={{
-              border: "1px solid #e5e7eb",
+              border: "1px solid var(--border, #e5e7eb)",
               borderRadius: "8px",
               padding: "16px",
-              background: loc.unreplied > 0 ? "#fffbeb" : "#f9fafb",
+              // Tint the "needs attention" card off the amber accent rather than
+              // painting a fixed near-white surface — a light card under the
+              // dark theme put near-white text on a near-white background.
+              background: loc.unreplied > 0
+                ? "color-mix(in oklab, #f59e0b 14%, var(--card, #fffbeb))"
+                : "var(--card, #f9fafb)",
+              color: "var(--card-foreground, inherit)",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ margin: 0 }}>{loc.locationName}</h3>
@@ -96,7 +102,7 @@ export function ReviewDashboardPage(_props: PluginPageProps) {
                   {loc.unreplied === 0 ? "All replied ✓" : `${loc.unreplied} unreplied`}
                 </span>
               </div>
-              <div style={{ marginTop: "8px", fontSize: "14px", color: "#6b7280", display: "flex", gap: "16px" }}>
+              <div style={{ marginTop: "8px", fontSize: "14px", color: "var(--muted-foreground, #6b7280)", display: "flex", gap: "16px" }}>
                 <span>{"⭐".repeat(Math.round(loc.avgRating ?? 0))} {loc.avgRating?.toFixed(1) ?? "—"}/5 avg</span>
                 <span>{loc.totalReviews} total reviews</span>
               </div>

@@ -35,7 +35,7 @@ export function BackupHealthWidget() {
 
   if (loading) {
     return (
-      <div style={{ padding: 12, fontSize: 13, color: "#6b7280" }}>
+      <div style={{ padding: 12, fontSize: 13, color: "var(--muted-foreground, #6b7280)" }}>
         Loading backup status…
       </div>
     );
@@ -59,11 +59,11 @@ export function BackupHealthWidget() {
         />
         <strong style={{ fontSize: 14 }}>Backups</strong>
       </div>
-      <div style={{ fontSize: 13, color: "#374151" }}>
+      <div style={{ fontSize: 13, color: "var(--foreground, #374151)" }}>
         Last run: <b>{last?.status ?? "never"}</b>
         {last?.started_at ? <> · {timeAgo(last.started_at)} · {formatSize(last.size_bytes)}</> : null}
       </div>
-      <div style={{ fontSize: 12, color: "#6b7280" }}>
+      <div style={{ fontSize: 12, color: "var(--muted-foreground, #6b7280)" }}>
         Next scheduled: {next ? new Date(next).toUTCString() : "—"}
       </div>
     </div>
