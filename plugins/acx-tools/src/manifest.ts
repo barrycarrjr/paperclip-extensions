@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: "acx-tools",
   apiVersion: 1,
-  version: "0.1.5",
+  version: "0.1.6",
   displayName: "ACX Audiobook Tools",
   setupInstructions: "# Setup — ACX Tools\n\nSee the companion skill `acx-audiobook-publisher` for full setup and folder structure documentation.\n\nStore ACX credentials as Paperclip secrets: `ACX_EMAIL`, `ACX_PASSWORD`, `ACX_MFA_SECRET` (optional).",
   description: "Validate and publish audiobooks to Audible via ACX. Checks audio against ACX specs. Manages pending/published/error pipeline.",

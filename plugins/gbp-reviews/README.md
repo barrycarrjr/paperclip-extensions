@@ -6,11 +6,11 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
-- **Unreleased** — Location names are visible in dark mode. The location cards
-  painted a fixed near-white background while the name inherited the theme's
-  text colour, so under the dark theme the name was near-white on near-white.
-  The cards now use the host's `--card` surface, and the "needs attention"
-  variant tints that surface with amber instead of replacing it.
+- **v0.1.7** — Location names are visible in dark mode. The location cards painted a fixed
+  near-white background while the name inherited the theme's text colour, so
+  under the dark theme the name was near-white on near-white. The cards now use
+  the host's `--card` surface, and the "needs attention" variant tints that
+  surface with amber instead of replacing it.
 
 - **v0.1.6** — Rotating the OAuth credentials now takes effect on the next call.
 

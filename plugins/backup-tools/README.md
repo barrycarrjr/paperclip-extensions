@@ -128,16 +128,18 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
-- **Unreleased** — The Backups page is readable in dark mode, and the Overview
-  card reports its cadence. Every colour on the page was a hardcoded light-mode
-  hex, so the tab you were currently on was painted near-black on the dark
-  theme's near-black page — the selected tab was the one tab you could not
-  read. The page now reads the host's theme tokens (`--foreground`,
-  `--muted-foreground`, `--border`, `--card`, `--primary`, `--destructive`),
-  which is what the other plugin pages already do, so it follows light and dark
-  without a second palette. Separately, `dashboard.health` never selected the
-  `cadence` column the Overview card renders, so the card always printed a bare
-  "Cadence:" with nothing after it.
+- **v0.1.27** — The Backups page is readable in dark mode, and the Overview card reports its
+  cadence. Every colour on the page was a hardcoded light-mode hex, so the tab
+  you were currently on was painted near-black against the dark theme's
+  near-black page — the selected tab was the one tab you could not read. The
+  page now reads the host's theme tokens (`--foreground`, `--muted-foreground`,
+  `--border`, `--card`, `--primary`, `--destructive`), which is what the other
+  plugin pages already do, so it follows light and dark without a second
+  palette. Buttons also show a disabled state, which they previously did not.
+
+  Separately, `dashboard.health` never selected the `cadence` column the
+  Overview card renders, so the card always printed a bare "Cadence:" with
+  nothing after it. The column is now in the query.
 
 - **v0.1.26** — Failure alerts now say what actually went wrong, and stop
   piling up. The failure detail was being written to a field the platform

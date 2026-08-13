@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: "kdp-tools",
   apiVersion: 1,
-  version: "0.1.4",
+  version: "0.1.5",
   displayName: "KDP Tools",
   setupInstructions: `# Setup — KDP Tools
 

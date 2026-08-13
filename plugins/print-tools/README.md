@@ -6,6 +6,8 @@ Paperclip plugin that lets agents print plain-text content to any Windows printe
 
 ## Recent changes
 
+- **v0.1.25** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.24**: New `print_text` UI bridge action so operator surfaces can print without an agent run. Paperclip's email viewer uses it for its Print button. Same parameters and company allow-list gate as the `print_text` agent tool (the two share one implementation). Requires this version or later for the email Print button to work.
 
 - **v0.1.23** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

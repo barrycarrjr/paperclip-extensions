@@ -26,10 +26,27 @@ const REPO_ROOT = dirname(__dirname);
 const PLUGINS_DIR = join(REPO_ROOT, "plugins");
 
 const SPECIAL_NOTES = {
-  // v0.59.0: none. print-tools carries the release's real change (the
-  // print_text UI bridge action) but was bumped to 0.1.24 by hand with its
-  // own Recent-changes entry before this script ran, so it is reverted to
-  // that state after the run rather than double-bumped here.
+  // v0.65.0: backup-tools and gbp-reviews carry the release's real changes —
+  // both were unreadable under the dark theme. The other 22 are alignment bumps.
+  "backup-tools":
+    "The Backups page is readable in dark mode, and the Overview card reports its\n" +
+    "  cadence. Every colour on the page was a hardcoded light-mode hex, so the tab\n" +
+    "  you were currently on was painted near-black against the dark theme's\n" +
+    "  near-black page — the selected tab was the one tab you could not read. The\n" +
+    "  page now reads the host's theme tokens (`--foreground`, `--muted-foreground`,\n" +
+    "  `--border`, `--card`, `--primary`, `--destructive`), which is what the other\n" +
+    "  plugin pages already do, so it follows light and dark without a second\n" +
+    "  palette. Buttons also show a disabled state, which they previously did not.\n" +
+    "\n" +
+    "  Separately, `dashboard.health` never selected the `cadence` column the\n" +
+    "  Overview card renders, so the card always printed a bare \"Cadence:\" with\n" +
+    "  nothing after it. The column is now in the query.",
+  "gbp-reviews":
+    "Location names are visible in dark mode. The location cards painted a fixed\n" +
+    "  near-white background while the name inherited the theme's text colour, so\n" +
+    "  under the dark theme the name was near-white on near-white. The cards now use\n" +
+    "  the host's `--card` surface, and the \"needs attention\" variant tints that\n" +
+    "  surface with amber instead of replacing it.",
 };
 
 const DEFAULT_NOTE = "Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.";
