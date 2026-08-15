@@ -1285,7 +1285,7 @@ export function slackErrorCode(err: unknown): string | null {
 
 /**
  * Slack's own channel-name rules: lowercase, no spaces or dots, 80 chars.
- * Applied here so an agent asking for "M3 Orders" gets `m3-orders` instead of
+ * Applied here so an agent asking for "Acme Orders" gets `acme-orders` instead of
  * an `invalid_name_specials` rejection it cannot interpret.
  */
 export function normalizeChannelName(raw: string): string {

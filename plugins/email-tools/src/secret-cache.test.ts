@@ -93,7 +93,7 @@ test("mailboxes do not share cache entries", async () => {
   const cache = new SecretCache({ ttlMs: 60_000 });
 
   const personal = await cache.resolve("personal", "secret-a", async () => "personal-pass");
-  const work = await cache.resolve("m3-barry", "secret-a", async () => "work-pass");
+  const work = await cache.resolve("shared-inbox", "secret-a", async () => "work-pass");
 
   assert.equal(personal, "personal-pass");
   assert.equal(work, "work-pass");
@@ -116,7 +116,7 @@ test("a failed resolution is not cached and the next caller retries", async () =
 test("clear and invalidateMailbox drop cached values", async () => {
   const cache = new SecretCache({ ttlMs: 60_000 });
   await cache.resolve("personal", "secret-a", async () => "one");
-  await cache.resolve("m3-barry", "secret-b", async () => "two");
+  await cache.resolve("shared-inbox", "secret-b", async () => "two");
   assert.equal(cache.size, 2);
 
   cache.invalidateMailbox("personal");

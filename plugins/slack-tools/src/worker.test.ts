@@ -11,27 +11,27 @@ import { normalizeChannelName, slackErrorCode } from "./worker.js";
 
 describe("normalizeChannelName", () => {
   it("turns a human channel name into one Slack will accept", () => {
-    assert.equal(normalizeChannelName("M3 Orders"), "m3-orders");
-    assert.equal(normalizeChannelName("#m3-support"), "m3-support");
+    assert.equal(normalizeChannelName("Acme Orders"), "acme-orders");
+    assert.equal(normalizeChannelName("#acme-support"), "acme-support");
     assert.equal(normalizeChannelName("Print  Production"), "print-production");
   });
 
   it("strips characters Slack rejects rather than failing the call", () => {
-    assert.equal(normalizeChannelName("M3 / Escalations!"), "m3-escalations");
+    assert.equal(normalizeChannelName("Acme / Escalations!"), "acme-escalations");
     assert.equal(normalizeChannelName("orders@2026"), "orders-2026");
   });
 
   it("does not leave leading or trailing separators", () => {
-    assert.equal(normalizeChannelName("  -m3-orders-  "), "m3-orders");
+    assert.equal(normalizeChannelName("  -acme-orders-  "), "acme-orders");
     assert.equal(normalizeChannelName("...vendor..."), "vendor");
   });
 
   it("collapses runs of separators", () => {
-    assert.equal(normalizeChannelName("m3 --- orders"), "m3-orders");
+    assert.equal(normalizeChannelName("acme --- orders"), "acme-orders");
   });
 
   it("keeps names Slack already allows untouched", () => {
-    assert.equal(normalizeChannelName("m3-orders"), "m3-orders");
+    assert.equal(normalizeChannelName("acme-orders"), "acme-orders");
     assert.equal(normalizeChannelName("general"), "general");
   });
 

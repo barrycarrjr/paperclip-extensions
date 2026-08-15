@@ -45,7 +45,7 @@ The agent receives the user's request and must:
    harness; if neither is set, ask the user "what's your email?" before
    placing the call rather than guessing.
 2. **Capture the destination** verbatim from the user's message. Do NOT
-   reformat it — the plugin handles "(717) 577-1023", "555.123.4567",
+   reformat it — the plugin handles "(555) 555-0123", "555.123.4567",
    "5551234567", "+15551234567", and internal extensions all the same.
 3. **Confirm before dialing** if the destination would be expensive,
    international, or could be wrong — repeat back what you're about to

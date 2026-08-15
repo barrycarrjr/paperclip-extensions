@@ -267,7 +267,7 @@ export class V20XapiEngine implements ThreeCxEngine {
     exposeRecordings: boolean,
   ): Promise<{ calls: NormalizedCallRecord[]; nextCursor?: string }> {
     // 3CX v20's CallHistoryView OData implementation is broken in two ways
-    // confirmed against Carr Rock 3CX v20.0.x 2026-05-17:
+    // confirmed against a live 3CX v20.0.x 2026-05-17:
     //   - $filter on SegmentStartTime returns HTTP 500 ("SegmentStartTime
     //     ge 2026-05-17T04:00:00Z") and `date(SegmentStartTime) ge ...`
     //     returns empty
@@ -871,7 +871,7 @@ interface RawQueueAgent {
  * (one entry per configured park slot). The `Number` field carries the
  * dial code / slot identifier (e.g. `SP0`, `SP1`, `*0`, `*888`) that 3CX
  * stamps into the `Callee` field on a parked ActiveCall. Confirmed
- * against Carr Rock 3CX v20.0.x 2026-05-17.
+ * against a live 3CX v20.0.x 2026-05-17.
  */
 interface RawParkingSlot {
   Number?: string;
@@ -880,10 +880,10 @@ interface RawParkingSlot {
 
 /**
  * ActiveCall shape — what `GET /xapi/v1/ActiveCalls` returns. Confirmed
- * against Carr Rock 3CX v20.0.x 2026-05-17:
+ * against a live 3CX v20.0.x 2026-05-17:
  *   {
  *     "Id": 8,
- *     "Caller": "10000 Flowroute - M3 Printing (17175771023)",
+ *     "Caller": "10000 Flowroute - Example Co (15555550123)",
  *     "Callee": "SP0 Shared parking",
  *     "Status": "Talking",
  *     "LastChangeStatus": "2026-05-17T22:00:11Z",
@@ -1176,7 +1176,7 @@ export function applyOutboundPrefix(toNumber: string, filter: ScopeFilter): stri
  * to E.164 (`+1XXXXXXXXXX`). Accepts:
  *   "555.123.4567"  → "+15551234567"
  *   "555-123-4567"  → "+15551234567"
- *   "(717) 577-1023" → "+15551234567"
+ *   "(555) 123-4567" → "+15551234567"
  *   "5551234567"    → "+15551234567"   (10 digits → assume US/Canada)
  *   "15551234567"   → "+15551234567"   (11 digits leading 1)
  *   "+15551234567"  → "+15551234567"   (already E.164, passthrough)
@@ -1306,7 +1306,7 @@ function toParkedCall(
 /**
  * Extract the parenthesized phone number from a 3CX `Caller` string and
  * normalize to E.164. e.g.
- *   "10000 Flowroute - M3 Printing (17175771023)" → "+17175771023"
+ *   "10000 Flowroute - Example Co (15555550123)" → "+15555550123"
  *
  * Returns undefined if no parenthesized digits are found (e.g. internal
  * call with no PSTN segment).
@@ -1354,7 +1354,7 @@ function pickServerNow(calls: RawActiveCall[] | undefined): number {
 }
 
 function toActiveCall(r: RawActiveCall): NormalizedActiveCall {
-  // Confirmed live shape (Carr Rock 3CX v20.0.x):
+  // Confirmed live shape (3CX v20.0.x):
   //   Caller / Callee = "<segment_id> <display_name> (<phone_or_ext>)"
   //   EstablishedAt = ISO timestamp of current leg
   //   ServerNow = ISO timestamp at fetch time (skew-free)

@@ -2,7 +2,7 @@
  * Call history cache.
  *
  * 3CX v20's /xapi/v1/CallHistoryView is broken on our reference install
- * (Carr Rock 2026-05-17): `$filter` on SegmentStartTime returns HTTP 500,
+ * (live, 2026-05-17): `$filter` on SegmentStartTime returns HTTP 500,
  * `$orderby` is silently ignored, and the entity appears to stop at
  * SegmentId 330601 / 2025-06-28 — months out of date. The only XAPI
  * surface with reliably-current call metadata is /xapi/v1/Recordings.

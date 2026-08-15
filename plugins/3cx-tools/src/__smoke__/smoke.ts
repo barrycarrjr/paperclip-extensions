@@ -346,7 +346,7 @@ async function testParkedCallsRecognizesSharedParkingSlot() {
         value: [
           {
             Id: 8,
-            Caller: "10000 Flowroute - M3 Printing (17175771023)",
+            Caller: "10000 Flowroute - Example Co (15555550123)",
             Callee: "SP0 Shared parking",
             Status: "Talking",
             LastChangeStatus: established,
@@ -375,11 +375,11 @@ async function testParkedCallsRecognizesSharedParkingSlot() {
       !result.error &&
       parked.length === 1 &&
       first?.slot === "SP0" &&
-      first?.callerNumber === "+17175771023" &&
+      first?.callerNumber === "+15555550123" &&
       first?.parkedSinceSec === 47 &&
       first?.originalExtension === undefined
     ) {
-      ok(`pbx_parked_calls normalizes SP0 parked call: caller=+17175771023 parkedSinceSec=47`);
+      ok(`pbx_parked_calls normalizes SP0 parked call: caller=+15555550123 parkedSinceSec=47`);
     } else {
       fail("pbx_parked_calls SP0 normalized shape", JSON.stringify(result));
     }
@@ -410,7 +410,7 @@ async function testParkedCallsIgnoresNonParkedActiveCalls() {
         value: [
           {
             Id: 9,
-            Caller: "200 Carr, Barry (200)",
+            Caller: "200 Smith, Jane (200)",
             Callee: "307 Ramos, Christine",
             Status: "Talking",
             LastChangeStatus: "2026-05-17T22:00:00Z",

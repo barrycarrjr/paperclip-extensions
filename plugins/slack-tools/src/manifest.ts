@@ -438,7 +438,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           name: {
             type: "string",
             description:
-              "Channel name. Normalized automatically: 'M3 Orders' becomes 'm3-orders'. Max 80 chars.",
+              "Channel name. Normalized automatically: 'Acme Orders' becomes 'acme-orders'. Max 80 chars.",
           },
           isPrivate: {
             type: "boolean",

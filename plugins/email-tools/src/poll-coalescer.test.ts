@@ -107,13 +107,13 @@ test("mailboxes are scheduled independently", async () => {
   });
 
   coalescer.schedule("personal");
-  coalescer.schedule("m3-barry");
+  coalescer.schedule("shared-inbox");
   coalescer.schedule("personal");
-  coalescer.schedule("m3-barry");
+  coalescer.schedule("shared-inbox");
   await settle(coalescer);
 
   assert.equal(runs.length, 2);
-  assert.deepEqual([...runs].sort(), ["m3-barry", "personal"]);
+  assert.deepEqual([...runs].sort(), ["personal", "shared-inbox"]);
 });
 
 test("a failing poll is reported and does not wedge the mailbox", async () => {

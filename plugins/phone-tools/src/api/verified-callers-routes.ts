@@ -304,7 +304,7 @@ async function requestVerification(
 
   if (!e164Raw) return badRequest("Missing 'e164' phone number.");
   if (!/^\+[1-9]\d{6,14}$/.test(e164Raw)) {
-    return badRequest("Phone must be in E.164 format, e.g. +17175771023.");
+    return badRequest("Phone must be in E.164 format, e.g. +15555550123.");
   }
 
   const resolved = await resolveAccountByKey(ctx, input.companyId, accountKey);

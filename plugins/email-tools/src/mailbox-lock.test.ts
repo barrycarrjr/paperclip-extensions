@@ -61,7 +61,7 @@ test("different keys run in parallel", async () => {
 
   await Promise.all([
     withMailboxLock("personal", body),
-    withMailboxLock("m3-barry", body),
+    withMailboxLock("shared-inbox", body),
     withMailboxLock("ib-barry", body),
   ]);
 

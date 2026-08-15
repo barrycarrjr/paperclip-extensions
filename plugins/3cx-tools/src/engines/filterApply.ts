@@ -86,7 +86,7 @@ export function filterCallHistory(
   if (scope.mode !== "manual") return calls;
   return calls.filter((c) => {
     // 3CX v20's CallHistoryView populates Caller/Callee as display strings
-    // ("200 Carr, Barry" or "10000 Flowroute - M3 Printing (17175771023)")
+    // ("200 Smith, Jane" or "10000 Flowroute - Example Co (15555550123)")
     // rather than separate extension/DID fields. The mapper does its best
     // to extract the parenthesized number into fromNumber/toNumber, but
     // for internal-extension legs the first space-separated token IS the
@@ -155,8 +155,8 @@ export function recordingInScope(
 }
 
 /**
- * 3CX returns DIDs on Recording entries as bare digits ("12154636348"),
- * while the operator types them with a `+` prefix ("+12154636348") in
+ * 3CX returns DIDs on Recording entries as bare digits ("15555550147"),
+ * while the operator types them with a `+` prefix ("+15555550147") in
  * the configured `dids` list. Match in either direction by comparing
  * the bare-digits form.
  */
