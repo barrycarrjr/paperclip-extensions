@@ -6,6 +6,11 @@ import {
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
 import nodemailer from "nodemailer";
+import {
+  mapAttachmentsForNodemailer,
+  parseOutboundAttachments,
+  type OutboundAttachment,
+} from "./attachments.js";
 import { assertCompanyAccess, isCompanyAllowed } from "./companyAccess.js";
 import {
   fetchHeaders,
@@ -151,6 +156,8 @@ interface SendInput {
   bodyHtml?: string;
   inReplyTo?: string;
   references?: string[];
+  /** Validated wire shape (see parseOutboundAttachments); decoded to Buffers at send time. */
+  attachments?: OutboundAttachment[];
 }
 
 async function sendViaSmtp(rt: SmtpRuntime, input: SendInput): Promise<{
@@ -181,6 +188,10 @@ async function sendViaSmtp(rt: SmtpRuntime, input: SendInput): Promise<{
       references:
         input.references && input.references.length > 0
           ? input.references.map(ensureAngled).join(" ")
+          : undefined,
+      attachments:
+        input.attachments && input.attachments.length > 0
+          ? mapAttachmentsForNodemailer(input.attachments)
           : undefined,
     });
     return {
@@ -319,11 +330,14 @@ const plugin = definePlugin({
           in_reply_to?: string;
           references?: string[];
           reply_to?: string;
+          attachments?: unknown;
         };
         if (!p.mailbox) return { error: "mailbox is required" };
         if (!p.to) return { error: "to is required" };
         if (!p.subject) return { error: "subject is required" };
         if (p.body === undefined) return { error: "body is required" };
+        const attParse = parseOutboundAttachments(p.attachments);
+        if (!attParse.ok) return { error: attParse.error };
 
         const cfg = findConfigMailbox(config, p.mailbox);
         if (!cfg) return { error: `Mailbox "${p.mailbox}" not configured.` };
@@ -359,6 +373,7 @@ const plugin = definePlugin({
             bodyHtml: p.body_html,
             inReplyTo: p.in_reply_to,
             references: p.references,
+            attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
           });
           await ctx.telemetry.track("email_send", {
             mailbox: rt.key,
@@ -706,11 +721,14 @@ const plugin = definePlugin({
           body?: string;
           body_html?: string;
           replyAll?: boolean;
+          attachments?: unknown;
         };
         const gate = gateMailbox("email_reply", p.mailbox, runCtx, config);
         if (!gate.ok) return { error: gate.error };
         if (typeof p.uid !== "number") return { error: "uid is required" };
         if (typeof p.body !== "string") return { error: "body is required" };
+        const attParse = parseOutboundAttachments(p.attachments);
+        if (!attParse.ok) return { error: attParse.error };
         const folder = resolveFolder(gate.cfg, p.folder);
 
         let original: ParsedMessage | null;
@@ -763,6 +781,7 @@ const plugin = definePlugin({
             bodyHtml: p.body_html,
             inReplyTo: original.messageId ?? undefined,
             references: refsChain.length > 0 ? refsChain : undefined,
+            attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
           });
           await ctx.telemetry.track("email_reply", {
             mailbox: rt.key,
@@ -1047,6 +1066,41 @@ const plugin = definePlugin({
         const msg = await fetchParsedMessage(conn, folder, uid);
         if (!msg) throw new Error(`Message UID ${uid} not found in "${folder}"`);
         return msg;
+      });
+    });
+
+    // Returns one attachment's bytes, base64-encoded (drives the attachment
+    // chip download in the message pane). partId comes from the attachments
+    // metadata on email.fetch-message. getAttachment enforces the 25 MB cap.
+    ctx.data.register("email.get-attachment", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      const partId = typeof params.partId === "string" && params.partId ? params.partId : null;
+      if (!companyId || !mailboxKey || uid === null || !partId) {
+        throw new Error("companyId, mailbox, uid, and partId are required");
+      }
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.get-attachment",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      return actionPool.run(rt, async (conn) => {
+        const att = await getAttachment(conn, folder, uid, partId);
+        if (!att) throw new Error(`Attachment "${partId}" not found on UID ${uid} in "${folder}"`);
+        return {
+          name: att.filename,
+          mime: att.mime,
+          size: att.content.length,
+          contentBase64: att.content.toString("base64"),
+        };
       });
     });
 
@@ -1563,6 +1617,8 @@ const plugin = definePlugin({
       const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
       const replyAll = params.replyAll === true;
       const bodyHtml = typeof params.body_html === "string" ? params.body_html : undefined;
+      const attParse = parseOutboundAttachments(params.attachments);
+      if (!attParse.ok) throw new Error(attParse.error);
 
       const original = await withImapConnection(ctx, cfg, mailboxKey, (client) =>
         fetchParsedMessage(client, folder, uid),
@@ -1594,6 +1650,7 @@ const plugin = definePlugin({
         bodyHtml,
         inReplyTo: original.messageId ?? undefined,
         references: refsChain.length > 0 ? refsChain : undefined,
+        attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
       });
       return { ok: true, messageId: info.messageId };
     });
@@ -1618,6 +1675,8 @@ const plugin = definePlugin({
       const subject = typeof params.subject === "string" ? params.subject : null;
       const body = typeof params.body === "string" ? params.body : null;
       if (!to || !subject || !body) throw new Error("to, subject, and body are required");
+      const attParse = parseOutboundAttachments(params.attachments);
+      if (!attParse.ok) throw new Error(attParse.error);
       const rt = await buildSmtpRuntime(ctx, cfg, mailboxKey);
       const info = await sendViaSmtp(rt, {
         from: rt.smtpFrom,
@@ -1627,6 +1686,7 @@ const plugin = definePlugin({
         subject,
         body,
         bodyHtml: typeof params.body_html === "string" ? params.body_html : undefined,
+        attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
       });
       return { ok: true, messageId: info.messageId };
     });

@@ -18,6 +18,7 @@ import {
   resolveReplyCustomer,
 } from "./helpScoutClient.js";
 import { isCompanyAllowed } from "./companyAccess.js";
+import { findAttachmentMeta, validateOutboundAttachments } from "./attachments.js";
 import {
   isRuleType,
   isValidRulePattern,
@@ -313,6 +314,56 @@ const plugin = definePlugin({
           return {
             content: `Retrieved conversation ${p.conversationId}.`,
             data: resp.body,
+          };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "helpscout_get_attachment",
+      {
+        displayName: "Get Help Scout attachment",
+        description:
+          "Download one attachment from a conversation as base64, with filename/mimeType/size when known. Attachment IDs come from the thread metadata returned by helpscout_get_conversation with embed 'threads'.",
+        parametersSchema: {
+          type: "object",
+          properties: {
+            account: { type: "string" },
+            conversationId: { type: "string" },
+            attachmentId: { type: "string" },
+          },
+          required: ["conversationId", "attachmentId"],
+        },
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as {
+          account?: string;
+          conversationId?: string;
+          attachmentId?: string;
+        };
+        if (!p.conversationId) return { error: "[EINVALID_INPUT] `conversationId` is required" };
+        if (!p.attachmentId) return { error: "[EINVALID_INPUT] `attachmentId` is required" };
+
+        const r = await resolveOrError(ctx, runCtx, "helpscout_get_attachment", p.account);
+        if (!r.ok) return { error: r.error };
+
+        try {
+          const att = await fetchAttachment(r.resolved, p.conversationId, p.attachmentId);
+          await track(ctx, runCtx, "helpscout_get_attachment", r.resolved.accountKey, {
+            conversationId: p.conversationId,
+            attachmentId: p.attachmentId,
+          });
+          return {
+            content: `Retrieved attachment ${p.attachmentId}${att.fileName ? ` (${att.fileName})` : ""} from conversation ${p.conversationId}.`,
+            data: {
+              attachmentId: p.attachmentId,
+              fileName: att.fileName,
+              mimeType: att.mimeType,
+              size: att.size,
+              contentBase64: att.contentBase64,
+            },
           };
         } catch (err) {
           return { error: (err as Error).message };
@@ -639,6 +690,18 @@ const plugin = definePlugin({
                 required: ["type", "body"],
               },
             },
+            attachments: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  fileName: { type: "string" },
+                  mimeType: { type: "string" },
+                  contentBase64: { type: "string" },
+                },
+                required: ["fileName", "mimeType", "contentBase64"],
+              },
+            },
             idempotencyKey: { type: "string" },
           },
           required: ["subject", "customer", "threads"],
@@ -658,6 +721,7 @@ const plugin = definePlugin({
           assignTo?: string;
           tags?: string[];
           threads?: Array<{ type: "customer" | "reply" | "note"; body: string; customerEmail?: string }>;
+          attachments?: Array<{ fileName?: string; mimeType?: string; contentBase64?: string }>;
           idempotencyKey?: string;
         };
 
@@ -665,6 +729,13 @@ const plugin = definePlugin({
         if (!p.customer?.email) return { error: "[EINVALID_INPUT] `customer.email` is required" };
         if (!p.threads || p.threads.length === 0)
           return { error: "[EINVALID_INPUT] At least one entry in `threads` is required" };
+
+        let attachments: ReturnType<typeof validateOutboundAttachments> = undefined;
+        try {
+          attachments = validateOutboundAttachments(p.attachments);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
 
         const r = await resolveOrError(ctx, runCtx, "helpscout_create_conversation", p.account);
         if (!r.ok) return { error: r.error };
@@ -706,10 +777,13 @@ const plugin = definePlugin({
               firstName: p.customer.firstName,
               lastName: p.customer.lastName,
             },
-            threads: p.threads.map((t) => ({
+            // Help Scout attaches files per thread, so top-level attachments
+            // ride on the first (seed) thread.
+            threads: p.threads.map((t, i) => ({
               type: t.type,
               text: t.body,
               customer: t.customerEmail ? { email: t.customerEmail } : undefined,
+              attachments: i === 0 ? attachments : undefined,
             })),
             assignTo: p.assignTo ? Number(p.assignTo) : undefined,
             tags: tags.length > 0 ? tags : undefined,
@@ -726,6 +800,7 @@ const plugin = definePlugin({
           await track(ctx, runCtx, "helpscout_create_conversation", r.resolved.accountKey, {
             mailboxId: String(mailboxId),
             tags: tags.length,
+            attachments: attachments?.length ?? 0,
           });
           return {
             content: `Created conversation in mailbox ${mailboxId}.`,
@@ -753,6 +828,18 @@ const plugin = definePlugin({
             customerId: { type: "string" },
             cc: { type: "array", items: { type: "string" } },
             bcc: { type: "array", items: { type: "string" } },
+            attachments: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  fileName: { type: "string" },
+                  mimeType: { type: "string" },
+                  contentBase64: { type: "string" },
+                },
+                required: ["fileName", "mimeType", "contentBase64"],
+              },
+            },
             imported: { type: "boolean", default: false },
           },
           required: ["conversationId", "body"],
@@ -770,10 +857,18 @@ const plugin = definePlugin({
           customerId?: string;
           cc?: string[];
           bcc?: string[];
+          attachments?: Array<{ fileName?: string; mimeType?: string; contentBase64?: string }>;
           imported?: boolean;
         };
         if (!p.conversationId) return { error: "[EINVALID_INPUT] `conversationId` is required" };
         if (!p.body) return { error: "[EINVALID_INPUT] `body` is required" };
+
+        let attachments: ReturnType<typeof validateOutboundAttachments> = undefined;
+        try {
+          attachments = validateOutboundAttachments(p.attachments);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
 
         const r = await resolveOrError(ctx, runCtx, "helpscout_send_reply", p.account);
         if (!r.ok) return { error: r.error };
@@ -783,6 +878,7 @@ const plugin = definePlugin({
             text: p.body,
             cc: p.cc,
             bcc: p.bcc,
+            attachments,
             imported: !!p.imported,
             customer: await resolveReplyCustomer(r.resolved, p.conversationId, {
               customerId: p.customerId,
@@ -798,6 +894,7 @@ const plugin = definePlugin({
           await track(ctx, runCtx, "helpscout_send_reply", r.resolved.accountKey, {
             conversationId: p.conversationId,
             imported: !!p.imported,
+            attachments: attachments?.length ?? 0,
           });
           return {
             content: `Replied to conversation ${p.conversationId}.`,
@@ -1604,6 +1701,41 @@ const plugin = definePlugin({
       return resp.body ?? {};
     });
 
+    /**
+     * `helpscout.get-attachment` — one attachment's content as base64, for the
+     * UI's download/preview affordance on thread attachments. Return shape
+     * { fileName, mimeType, contentBase64 } is the wire contract the Email
+     * pages are built against; fileName/mimeType are null when the metadata
+     * lookup cannot find the attachment on the conversation's threads.
+     */
+    ctx.data.register("helpscout.get-attachment", async (params) => {
+      const companyId = requireCompanyId(params);
+      const p = params as {
+        accountKey?: string;
+        conversationId?: string;
+        attachmentId?: string;
+      };
+      if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
+      if (!p.attachmentId) throw new Error("[EINVALID_INPUT] `attachmentId` is required");
+      const r = await resolveOrErrorForBridge(
+        ctx,
+        companyId,
+        "helpscout.get-attachment",
+        p.accountKey,
+      );
+      if (!r.ok) throw new Error(r.error);
+      const att = await fetchAttachment(r.resolved, p.conversationId, p.attachmentId);
+      await trackBridge(ctx, companyId, "get-attachment", r.resolved.accountKey, {
+        conversationId: p.conversationId,
+        attachmentId: p.attachmentId,
+      });
+      return {
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        contentBase64: att.contentBase64,
+      };
+    });
+
     // ─── UI bridge: write-side actions ───────────────────────────────────
 
     /**
@@ -1624,12 +1756,14 @@ const plugin = definePlugin({
         customer?: { email?: string; firstName?: string; lastName?: string };
         status?: "active" | "pending" | "closed";
         tags?: string[];
+        attachments?: Array<{ fileName?: string; mimeType?: string; contentBase64?: string }>;
       };
       if (!p.subject?.trim()) throw new Error("[EINVALID_INPUT] `subject` is required");
       if (!p.body?.trim()) throw new Error("[EINVALID_INPUT] `body` is required");
       if (!p.customer?.email?.trim()) {
         throw new Error("[EINVALID_INPUT] `customer.email` is required");
       }
+      const attachments = validateOutboundAttachments(p.attachments);
 
       const r = await resolveOrErrorForBridge(
         ctx,
@@ -1655,7 +1789,9 @@ const plugin = definePlugin({
           lastName: p.customer.lastName,
         },
         // "reply" (not "customer") — this thread is us writing to them.
-        threads: [{ type: "reply", text: p.body, customer: { email: p.customer.email } }],
+        threads: [
+          { type: "reply", text: p.body, customer: { email: p.customer.email }, attachments },
+        ],
         tags: tags.length > 0 ? tags : undefined,
         imported: false,
       };
@@ -1671,6 +1807,7 @@ const plugin = definePlugin({
 
       await trackBridge(ctx, companyId, "create-conversation", r.resolved.accountKey, {
         mailboxId: String(mailboxId),
+        attachments: attachments?.length ?? 0,
       });
       return { ok: true, id, ...(resp.body ?? {}) };
     });
@@ -1686,10 +1823,12 @@ const plugin = definePlugin({
         customerId?: string;
         cc?: string[];
         bcc?: string[];
+        attachments?: Array<{ fileName?: string; mimeType?: string; contentBase64?: string }>;
         imported?: boolean;
       };
       if (!p.conversationId) throw new Error("[EINVALID_INPUT] `conversationId` is required");
       if (!p.body) throw new Error("[EINVALID_INPUT] `body` is required");
+      const attachments = validateOutboundAttachments(p.attachments);
 
       const r = await resolveOrErrorForBridge(
         ctx,
@@ -1703,6 +1842,7 @@ const plugin = definePlugin({
         text: p.body,
         cc: p.cc,
         bcc: p.bcc,
+        attachments,
         imported: !!p.imported,
         customer: await resolveReplyCustomer(r.resolved, p.conversationId, {
           customerId: p.customerId,
@@ -1717,6 +1857,7 @@ const plugin = definePlugin({
       );
       await trackBridge(ctx, companyId, "send-reply", r.resolved.accountKey, {
         conversationId: p.conversationId,
+        attachments: attachments?.length ?? 0,
       });
       return { ok: true, ...(resp.body ?? {}) };
     });
@@ -2039,6 +2180,54 @@ const plugin = definePlugin({
     return { status: "ok", message: "help-scout ready" };
   },
 });
+
+/**
+ * Fetch one attachment's base64 content plus best-effort metadata. The data
+ * endpoint only answers { data }, so filename/mimeType/size come from a
+ * second read of the conversation with threads embedded. That read is
+ * best-effort: the base64 already succeeded, so a failed metadata fetch
+ * degrades to nulls instead of failing the whole call.
+ */
+async function fetchAttachment(
+  resolved: ResolvedAccount,
+  conversationId: string,
+  attachmentId: string,
+): Promise<{
+  fileName: string | null;
+  mimeType: string | null;
+  size: number | null;
+  contentBase64: string;
+}> {
+  const dataResp = await helpScoutRequest<{ data?: string }>(
+    resolved,
+    `/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}/data`,
+  );
+  const contentBase64 = dataResp.body?.data;
+  if (typeof contentBase64 !== "string") {
+    throw new Error(
+      `[EHELP_SCOUT_INVALID] attachment ${attachmentId} data response did not include a base64 \`data\` field`,
+    );
+  }
+
+  let meta: ReturnType<typeof findAttachmentMeta> = null;
+  try {
+    const conv = await helpScoutRequest<Record<string, unknown>>(
+      resolved,
+      `/conversations/${encodeURIComponent(conversationId)}`,
+      { query: { embed: "threads" } },
+    );
+    meta = findAttachmentMeta(conv.body, attachmentId);
+  } catch {
+    // Metadata only. Keep the base64 result.
+  }
+
+  return {
+    fileName: meta?.fileName ?? null,
+    mimeType: meta?.mimeType ?? null,
+    size: meta?.size ?? null,
+    contentBase64,
+  };
+}
 
 function clampLimit(value: number | undefined, fallback: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;

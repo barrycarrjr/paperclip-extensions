@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.7.3** - Attachment support in both directions, closing what "Out of scope" used to list. New `helpscout_get_attachment` tool and `helpscout.get-attachment` bridge resource download one attachment's content as base64 via the Mailbox API's attachment-data endpoint, with the same account gating as `helpscout_get_conversation` (attachment metadata was already reaching callers inside each thread's `_embedded.attachments`). Replies and new conversations gain an `attachments` parameter, an array of `{ fileName, mimeType, contentBase64 }`, on `helpscout_send_reply`, `helpscout_create_conversation` and the matching bridge actions, with multiple files allowed, strict base64 validation and Help Scout's 10 MB per-file limit enforced before the API call. All mutations stay behind `allowMutations`.
+
 - **v0.7.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.7.1** - Fix the rules panel showing nothing. It listed accounts filtered by the company being viewed, but the plugin settings screen is instance-level: opening it from a company that owns no account of its own produced an empty list and a message claiming no account was configured, directly below a configuration form listing one. Rules are stored per company, so the panel now asks for each account together with the company its rules belong to, and works from anywhere. Adds the `helpscout.list-rule-scopes` bridge resource for this; it exposes nothing the configuration form on the same screen does not already show, and the bridge is board-gated.
@@ -81,14 +83,15 @@ gate.
 |---|---|---|
 | `helpscout_list_mailboxes` | read | Returns id/name/email; filtered by `allowedMailboxes`. |
 | `helpscout_find_conversation` | read | Search by mailbox / status / query / tag / assignedTo / since. |
-| `helpscout_get_conversation` | read | Single by ID; pass `embed=threads` to include bodies. |
+| `helpscout_get_conversation` | read | Single by ID; pass `embed=threads` to include bodies (and attachment metadata). |
+| `helpscout_get_attachment` | read | One attachment's content as base64, plus filename/mimeType/size when known. |
 | `helpscout_find_customer` | read | Search by email / query / firstName / lastName. |
 | `helpscout_find_user` | read | Help Scout users (operators), not end customers. |
 | `helpscout_get_day_report` | read | Day report. Cached 60 s. |
 | `helpscout_get_week_report` | read | 7-day report. Cached 60 s. |
 | `helpscout_get_custom_report` | read | Custom range. Optional grouping by tag/user/mailbox. |
-| `helpscout_create_conversation` | mutation | Idempotent on `idempotencyKey` (stored as a tag). |
-| `helpscout_send_reply` | mutation | Sends an email to the customer (or `imported=true` to record without sending). |
+| `helpscout_create_conversation` | mutation | Idempotent on `idempotencyKey` (stored as a tag). Optional `attachments`. |
+| `helpscout_send_reply` | mutation | Sends an email to the customer (or `imported=true` to record without sending). Optional `attachments`. |
 | `helpscout_add_note` | mutation | Internal note; customer never sees. |
 | `helpscout_change_status` | mutation | active / pending / closed / spam. |
 | `helpscout_assign_conversation` | mutation | Assign or unassign (userId=null). |
@@ -303,9 +306,15 @@ Same as every other paperclip plugin:
   discussion in `paperclip-extensions/plugin-plans/README.md`.
 - Beacon (chat widget) operations.
 - Workflow Builder.
-- File attachments on replies.
 - Bulk operations (tag many, close many) — could be added if a skill
   needs them.
+
+File attachments are supported since v0.7.x: download via
+`helpscout_get_attachment` (or the `helpscout.get-attachment` bridge
+key), and send via the `attachments` array on `helpscout_send_reply`,
+`helpscout_create_conversation`, and the matching bridge actions. Each
+attachment is `{ fileName, mimeType, contentBase64 }` and must decode
+to at most 10 MB (Help Scout's per-attachment limit).
 
 ## Versioning
 

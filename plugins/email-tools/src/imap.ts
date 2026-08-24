@@ -1,5 +1,10 @@
 import { ImapFlow, type FetchMessageObject, type SearchObject } from "imapflow";
-import { simpleParser, type AddressObject, type Attachment, type ParsedMail } from "mailparser";
+import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
+import {
+  ATTACHMENT_MAX_BYTES,
+  attachmentPartId,
+  collectAttachmentMeta,
+} from "./attachments.js";
 import { htmlToMarkdown } from "./markdown.js";
 
 export interface MailboxRuntime {
@@ -29,7 +34,7 @@ export interface ParsedMessage {
   text: string;
   html: string;
   markdown: string;
-  attachments: Array<{ name: string; mime: string; size: number; partId: string }>;
+  attachments: Array<{ name: string; mime: string; size: number; partId: string; inline: boolean }>;
 }
 
 export interface SearchInput {
@@ -62,8 +67,6 @@ export interface SearchResultItem {
   snippet: string;
   unseen: boolean;
 }
-
-const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
 // ImapFlow reports async socket failures ("Socket timeout", ECONNRESET) as an
 // 'error' event on the client — including while a pooled connection sits idle
@@ -166,17 +169,6 @@ function refsArray(parsed: ParsedMail): string[] {
   return Array.isArray(refs) ? refs : [refs];
 }
 
-function collectAttachments(
-  attachments: Attachment[],
-): Array<{ name: string; mime: string; size: number; partId: string }> {
-  return attachments.map((a, idx) => ({
-    name: a.filename ?? "(unnamed)",
-    mime: a.contentType ?? "application/octet-stream",
-    size: a.size ?? 0,
-    partId: a.cid ?? `att-${idx}`,
-  }));
-}
-
 function snippetFromText(text: string): string {
   if (!text) return "";
   return text.replace(/\s+/g, " ").trim().slice(0, 280);
@@ -210,7 +202,7 @@ export async function fetchParsedMessage(
       text,
       html,
       markdown: html ? htmlToMarkdown(html) : text,
-      attachments: collectAttachments(parsed.attachments ?? []),
+      attachments: collectAttachmentMeta(parsed.attachments ?? []),
     };
   } finally {
     lock.release();
@@ -281,7 +273,9 @@ export async function getAttachment(
     if (!msg || !msg.source) return null;
     const parsed = await simpleParser(msg.source);
     const attachments = parsed.attachments ?? [];
-    const found = attachments.find((a, idx) => (a.cid ?? `att-${idx}`) === partId);
+    // Same index-based derivation as collectAttachmentMeta, so the partId a
+    // caller got from a fetch resolves to the same part here.
+    const found = attachments.find((_, idx) => attachmentPartId(idx) === partId);
     if (!found) return null;
     const buf = found.content as Buffer;
     if (!buf) return null;

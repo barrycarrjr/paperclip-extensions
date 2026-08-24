@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.18.2";
+const PLUGIN_VERSION = "0.18.3";
 
 const mailboxItemSchema = {
   type: "object",
@@ -467,6 +467,24 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
           in_reply_to: { type: "string" },
           references: { type: "array", items: { type: "string" } },
           reply_to: { type: "string" },
+          attachments: {
+            type: "array",
+            description:
+              "Files to attach. Each decoded attachment is capped at 25 MB; multiple attachments are allowed.",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Filename shown to the recipient." },
+                mime: {
+                  type: "string",
+                  description:
+                    "MIME type, e.g. application/pdf. Optional; inferred from the filename when omitted.",
+                },
+                contentBase64: { type: "string", description: "File content, base64-encoded." },
+              },
+              required: ["name", "contentBase64"],
+            },
+          },
         },
         required: ["mailbox", "to", "subject", "body"],
       },
@@ -683,6 +701,24 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
           body: { type: "string", description: "Plain-text body." },
           body_html: { type: "string" },
           replyAll: { type: "boolean", default: false },
+          attachments: {
+            type: "array",
+            description:
+              "Files to attach. Each decoded attachment is capped at 25 MB; multiple attachments are allowed.",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Filename shown to the recipient." },
+                mime: {
+                  type: "string",
+                  description:
+                    "MIME type, e.g. application/pdf. Optional; inferred from the filename when omitted.",
+                },
+                contentBase64: { type: "string", description: "File content, base64-encoded." },
+              },
+              required: ["name", "contentBase64"],
+            },
+          },
         },
         required: ["mailbox", "uid", "body"],
       },

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.7.2";
+const PLUGIN_VERSION = "0.7.3";
 
 const accountItemSchema = {
   type: "object",
@@ -379,6 +379,28 @@ const manifest: PaperclipPluginManifestV1 & {
       },
     },
     {
+      name: "helpscout_get_attachment",
+      displayName: "Get Help Scout attachment",
+      description:
+        "Download one attachment from a conversation. Returns { attachmentId, fileName, mimeType, size, contentBase64 }; fileName/mimeType/size are null when the attachment cannot be matched on the conversation's threads. Attachment IDs come from the thread metadata returned by helpscout_get_conversation with embed 'threads'.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          account: { type: "string", description: "Account identifier. Optional." },
+          conversationId: {
+            type: "string",
+            description: "Conversation the attachment belongs to.",
+          },
+          attachmentId: {
+            type: "string",
+            description:
+              "Attachment ID, from `_embedded.attachments[].id` on a thread of the conversation.",
+          },
+        },
+        required: ["conversationId", "attachmentId"],
+      },
+    },
+    {
       name: "helpscout_create_conversation",
       displayName: "Create Help Scout conversation",
       description:
@@ -442,6 +464,23 @@ const manifest: PaperclipPluginManifestV1 & {
             },
             description: "First thread(s) to seed the conversation. At least one required.",
           },
+          attachments: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                fileName: { type: "string", description: "File name shown to the recipient." },
+                mimeType: { type: "string", description: "MIME type, e.g. 'application/pdf'." },
+                contentBase64: {
+                  type: "string",
+                  description: "File content as standard base64 (with padding, not a data: URL).",
+                },
+              },
+              required: ["fileName", "mimeType", "contentBase64"],
+            },
+            description:
+              "Optional file attachments, added to the first thread. Each must decode to at most 10 MB (Help Scout's per-attachment limit).",
+          },
           idempotencyKey: {
             type: "string",
             description:
@@ -469,6 +508,23 @@ const manifest: PaperclipPluginManifestV1 & {
           },
           cc: { type: "array", items: { type: "string" }, description: "CC recipients." },
           bcc: { type: "array", items: { type: "string" }, description: "BCC recipients." },
+          attachments: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                fileName: { type: "string", description: "File name shown to the recipient." },
+                mimeType: { type: "string", description: "MIME type, e.g. 'application/pdf'." },
+                contentBase64: {
+                  type: "string",
+                  description: "File content as standard base64 (with padding, not a data: URL).",
+                },
+              },
+              required: ["fileName", "mimeType", "contentBase64"],
+            },
+            description:
+              "Optional file attachments sent with the reply. Each must decode to at most 10 MB (Help Scout's per-attachment limit).",
+          },
           imported: {
             type: "boolean",
             default: false,
