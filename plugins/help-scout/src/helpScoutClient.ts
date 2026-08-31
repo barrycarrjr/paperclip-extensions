@@ -9,12 +9,18 @@ export interface ConfigAccount {
   defaultMailbox?: string;
   allowedMailboxes?: string[];
   allowedCompanies?: string[];
+  /** Wake-on-mail watcher (see watch.ts). */
+  watchEnabled?: boolean;
+  watchIssueId?: string;
+  watchCompanyId?: string;
+  watchMailboxId?: string;
 }
 
 export interface InstanceConfig {
   allowMutations?: boolean;
   accounts?: ConfigAccount[];
   defaultAccount?: string;
+  watchPollIntervalMinutes?: number;
 }
 
 const HELP_SCOUT_BASE = "https://api.helpscout.net/v2";

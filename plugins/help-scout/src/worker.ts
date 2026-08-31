@@ -31,6 +31,7 @@ import {
   resolveSince,
   triageCursorScope,
 } from "./triage-cursor.js";
+import { runWatch } from "./watch.js";
 
 /** Schema the host provisions for this plugin. */
 const NS = "plugin_help_scout_dcee45a1d3";
@@ -2173,6 +2174,16 @@ const plugin = definePlugin({
         imported,
       });
       return { ok: true, found: parsed.length, imported, existing };
+    });
+
+    // ─── Wake-on-mail watcher (scheduled job) ────────────────────────────
+    // Checks watch-enabled accounts for conversations past the triage cursor
+    // and requests a wakeup on the configured issue when any exist. A manual
+    // trigger from the jobs UI/API bypasses the interval gate so operators
+    // can force a check. See watch.ts for the full contract.
+    ctx.jobs.register("watch-new-mail", async (job) => {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      await runWatch(ctx, config, { bypassDueGate: job.trigger === "manual" });
     });
   },
 

@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.7.4** - A wake-on-mail watcher, so the triage agent stops polling. New scheduled job `watch-new-mail` (cron every minute, gated by the new instance setting 'Watch poll interval', default 2 minutes) checks each watch-enabled account for active conversations modified since the triage cursor: one Help Scout API call, no agent run. When mail exists it requests an assignment wakeup on the account's configured 'Issue to wake' (new per-account fields: 'Wake an issue when new mail arrives', 'Issue to wake', 'Watch company', 'Watch mailbox'), with an idempotency key carrying the newest modification stamp so repeat ticks over the same unread state collapse instead of stacking wakes. The watcher never advances the cursor; that stays the agent's move at the end of a successful triage run, so a wake nobody acted on can never skip mail. Motivation: a triage heartbeat woke ~1,400 times over three quiet days and found zero conversations; with the watcher the agent runs only when there is mail. Adds the `jobs.schedule` and `issues.wakeup` capabilities, so upgrading prompts for the two new grants.
+
 - **v0.7.3** - Attachment support in both directions, closing what "Out of scope" used to list. New `helpscout_get_attachment` tool and `helpscout.get-attachment` bridge resource download one attachment's content as base64 via the Mailbox API's attachment-data endpoint, with the same account gating as `helpscout_get_conversation` (attachment metadata was already reaching callers inside each thread's `_embedded.attachments`). Replies and new conversations gain an `attachments` parameter, an array of `{ fileName, mimeType, contentBase64 }`, on `helpscout_send_reply`, `helpscout_create_conversation` and the matching bridge actions, with multiple files allowed, strict base64 validation and Help Scout's 10 MB per-file limit enforced before the API call. All mutations stay behind `allowMutations`.
 
 - **v0.7.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -179,6 +181,43 @@ After step 3's save the same row reveals two new fields:
 
 Click **Save Configuration** again.
 
+## Wake-on-mail watcher
+
+Instead of the triage agent polling on its own schedule, the plugin can
+watch the account and wake the agent only when there is mail to triage.
+
+Per account, on the Configuration tab:
+
+- **Wake an issue when new mail arrives** - turns the watch on.
+- **Issue to wake** - UUID of the issue the triage routine lives on. It
+  must have an assigned agent and must not be closed or blocked, or the
+  wakeup request is refused by the host.
+- **Watch company (optional)** - derived automatically when 'Allowed
+  companies' lists exactly one company; required otherwise.
+- **Watch mailbox (optional)** - restricts the watch (and which triage
+  cursor it reads) to one mailbox.
+
+The `watch-new-mail` job runs every minute, honours the instance-level
+**Watch poll interval** (default 2 minutes), and makes one
+`GET /conversations?status=active&modifiedSince=<cursor>` call per
+watched account. Nothing found: no agent run happens at all. Mail
+found: it requests an assignment wakeup on the issue with a reason
+naming the count and the newest modification time. The watcher never
+advances the triage cursor; the agent still records it at the end of a
+successful run via `helpscout_set_triage_cursor`, which is also what
+stops the watcher re-waking for mail already handled.
+
+Pair it with issue instructions that drop fast self-polling: finish the
+triage cycle, record the cursor, keep exactly one long fallback wake
+pending (for example 60 minutes), and end the run. The single fallback
+wake matters on hosts whose liveness recovery re-wakes an idle
+in_progress issue that has nothing scheduled (Paperclip does, every 30
+seconds, as `issue_continuation_needed`); the watcher stays the fast
+path and the fallback almost never fires first.
+
+A manual run of the job (Jobs surface or the jobs trigger API) bypasses
+the interval gate, so a configuration change can be checked immediately.
+
 ## Tag normalization
 
 Help Scout tags are case-sensitive in the API but the UI displays them
@@ -303,7 +342,9 @@ Same as every other paperclip plugin:
 
 - Inbound webhooks (when a customer replies, etc.) — needs a
   Paperclip-level inbound HTTP path. See cross-plugin webhook
-  discussion in `paperclip-extensions/plugin-plans/README.md`.
+  discussion in `paperclip-extensions/plugin-plans/README.md`. The
+  `watch-new-mail` job (v0.7.4) covers the common case by polling: it
+  wakes the triage issue within the watch interval of mail arriving.
 - Beacon (chat widget) operations.
 - Workflow Builder.
 - Bulk operations (tag many, close many) — could be added if a skill

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.7.3";
+const PLUGIN_VERSION = "0.7.4";
 
 const accountItemSchema = {
   type: "object",
@@ -14,6 +14,10 @@ const accountItemSchema = {
     "defaultMailbox",
     "allowedMailboxes",
     "allowedCompanies",
+    "watchEnabled",
+    "watchIssueId",
+    "watchCompanyId",
+    "watchMailboxId",
   ],
   properties: {
     key: {
@@ -65,6 +69,33 @@ const accountItemSchema = {
       title: "Allowed companies",
       description:
         "Companies whose agents may call Help Scout tools against this account. Tick 'Portfolio-wide' to allow every company; otherwise tick specific companies. Empty = unusable (fail-safe deny). A Help Scout account typically belongs to one LLC's support team, so prefer single-company lists.",
+    },
+    watchEnabled: {
+      type: "boolean",
+      title: "Wake an issue when new mail arrives",
+      description:
+        "When on, the 'Watch for new Help Scout mail' job checks this account on the 'Watch poll interval' and wakes the issue below the moment active conversations appear past the triage cursor. The check is a plain API call: no agent run happens unless there is mail.",
+      default: false,
+    },
+    watchIssueId: {
+      type: "string",
+      title: "Issue to wake",
+      description:
+        "UUID of the Paperclip issue the triage routine lives on. The watcher requests an assignment wakeup on it when new mail exists, so the issue must have an assigned agent and must not be closed or blocked. Required when the watch is enabled.",
+    },
+    watchCompanyId: {
+      type: "string",
+      title: "Watch company (optional)",
+      description:
+        "UUID of the company the 'Issue to wake' belongs to. Leave blank when 'Allowed companies' above lists exactly one company (it is derived). Required when the account is portfolio-wide or lists several companies.",
+    },
+    watchMailboxId: {
+      type: "string",
+      title: "Watch mailbox (optional)",
+      description:
+        "Restrict the watch to one mailbox and use that mailbox's triage cursor. Leave blank to watch the whole account.",
+      "x-paperclip-optionsFrom": { actionKey: "list-mailboxes" },
+      "x-paperclip-showWhenAllPresent": ["clientIdRef", "clientSecretRef"],
     },
   },
 } as const;
@@ -182,11 +213,22 @@ const manifest: PaperclipPluginManifestV1 & {
     "database.namespace.migrate",
     "database.namespace.read",
     "database.namespace.write",
+    "jobs.schedule",
+    "issues.wakeup",
   ],
   database: {
     namespaceSlug: "help_scout",
     migrationsDir: "migrations",
   },
+  jobs: [
+    {
+      jobKey: "watch-new-mail",
+      displayName: "Watch for new Help Scout mail",
+      description:
+        "Heartbeat that runs every minute and, when due per 'Watch poll interval', checks each watch-enabled account for active conversations modified since the triage cursor. When any exist it requests an assignment wakeup on that account's 'Issue to wake', so the triage agent runs only when there is mail. Read-only: it never advances the cursor (the agent does that at the end of a triage run).",
+      schedule: "* * * * *",
+    },
+  ],
   entrypoints: {
     worker: "./dist/worker.js",
     ui: "./dist/ui",
@@ -204,7 +246,7 @@ const manifest: PaperclipPluginManifestV1 & {
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["allowMutations", "defaultAccount", "accounts"],
+    propertyOrder: ["allowMutations", "defaultAccount", "watchPollIntervalMinutes", "accounts"],
     properties: {
       allowMutations: {
         type: "boolean",
@@ -223,6 +265,15 @@ const manifest: PaperclipPluginManifestV1 & {
         },
         description:
           "Identifier of the account used when an agent omits the `account` parameter in a tool call. Strict: if the calling company isn't in the default account's Allowed companies, the call fails with [ECOMPANY_NOT_ALLOWED] (no automatic fallback). Leave blank to require an explicit `account` on every call.",
+      },
+      watchPollIntervalMinutes: {
+        type: "number",
+        title: "Watch poll interval (minutes)",
+        description:
+          "How often watch-enabled accounts are checked for new mail. The scheduled job runs every minute and skips ticks that are not due yet. Default 2, min 1, max 60.",
+        default: 2,
+        minimum: 1,
+        maximum: 60,
       },
       accounts: {
         type: "array",
