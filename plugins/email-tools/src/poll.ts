@@ -11,6 +11,7 @@ import {
   type MailboxRuntime,
 } from "./imap.js";
 import { dispatchReceived, passesFilter } from "./dispatch.js";
+import { maybeRequestMailWake } from "./watch.js";
 import { withMailboxLock } from "./mailbox-lock.js";
 import { getAccessToken } from "./oauth.js";
 import { SecretCache } from "./secret-cache.js";
@@ -125,6 +126,9 @@ export async function runPoll(ctx: PluginContext, config: InstanceConfig): Promi
     try {
       const fetched = await pollOne(ctx, mailbox);
       totalFetched += fetched;
+      // Wake-on-mail: only dispatched messages count (auto-triaged and muted
+      // mail never wakes the agent). Never throws.
+      await maybeRequestMailWake(ctx, mailbox, fetched);
     } catch (err) {
       totalErrors += 1;
       ctx.logger.error("email-tools poll error", {

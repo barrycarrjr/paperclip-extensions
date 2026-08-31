@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.18.3";
+const PLUGIN_VERSION = "0.18.4";
 
 const mailboxItemSchema = {
   type: "object",
@@ -38,6 +38,8 @@ const mailboxItemSchema = {
     "filterFromContains",
     "filterSubjectContains",
     "disallowMove",
+    "watchEnabled",
+    "watchIssueId",
     // Advanced overrides
     "imapPort",
     "imapSecure",
@@ -106,6 +108,19 @@ const mailboxItemSchema = {
       description:
         "When true, the plugin polls this mailbox on the global interval and also opens an IMAP IDLE connection for push notifications. Leave false for send-only mailboxes.",
       default: false,
+    },
+    watchEnabled: {
+      type: "boolean",
+      title: "Wake an issue when mail needs attention",
+      description:
+        "When on (and 'Enable receive' is on), each poll tick that dispatches at least one message (after the auto-triage and mute sender rules) requests an assignment wakeup on the 'Issue to wake' below, so the triage agent runs on real mail instead of a schedule. Adds no IMAP traffic. Pair it with issue instructions that keep one long fallback wake pending (see the README's wake-on-mail section).",
+      default: false,
+    },
+    watchIssueId: {
+      type: "string",
+      title: "Issue to wake",
+      description:
+        "UUID of the Paperclip issue the mailbox triage routine lives on. The wakeup is requested in the 'Ingest company'. The issue must have an assigned agent and must not be closed or blocked by other issues. Required when the watch is on.",
     },
     ingestCompanyId: {
       type: "string",
@@ -331,6 +346,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
     "jobs.schedule",
     "events.emit",
     "issues.create",
+    "issues.wakeup",
     "plugin.state.read",
     "plugin.state.write",
     "database.namespace.migrate",

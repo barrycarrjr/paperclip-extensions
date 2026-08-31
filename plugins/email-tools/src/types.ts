@@ -44,6 +44,9 @@ export interface ConfigMailbox {
   filterFromContains?: string[];
   filterSubjectContains?: string[];
   disallowMove?: boolean;
+  /** Wake-on-mail watcher (see watch.ts). */
+  watchEnabled?: boolean;
+  watchIssueId?: string;
 }
 
 export interface InstanceConfig {

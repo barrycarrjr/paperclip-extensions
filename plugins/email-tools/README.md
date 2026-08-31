@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.18.4** - Wake-on-mail. Two new per-mailbox fields, 'Wake an issue when mail needs attention' and 'Issue to wake', make each poll tick that dispatches at least one message (after the auto-triage and mute sender rules run in code) request an assignment wakeup on the configured issue in the mailbox's Ingest company. The triage agent then runs when there is mail needing attention instead of sweeping on a schedule; auto-triaged and muted mail never wakes it. Piggybacks on the existing poll loop, so it adds no IMAP traffic; each dispatched batch produces exactly one wake, with the issue's own long fallback wake as the backstop. Mirrors the help-scout plugin's watch-new-mail feature (its v0.7.4). Adds the `issues.wakeup` capability, so upgrading prompts for one new grant. Ships dark: the watch is off for every mailbox until an operator flips it on.
+
 - **v0.18.3** - Attachment support in both directions. Received attachments were already listed as metadata; the new `email.get-attachment` bridge resource lets the Email pages download the actual file (same 25 MB cap as `email_get_attachment`, same mailbox gating as the other bridge keys). Sending gains an `attachments` parameter, an array of `{ name, mime?, contentBase64 }`, on `email_send`, `email_reply`, `email.send-new` and `email.send-reply`, with multiple files allowed, strict base64 validation and a 25 MB per-file limit. Attachment metadata rows now carry an `inline` flag so UIs can hide signature images and tracking pixels, and the `partId` token is derived deterministically per message (`att-<index>`) instead of preferring the Content-ID header, which could collide.
 
 - **v0.18.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -171,6 +173,36 @@ Find company UUIDs via `GET /api/companies` or the company list URL.
 
 Save. The worker auto-restarts and the new config takes effect on the
 next `email_send` call.
+
+## Wake-on-mail watcher
+
+Instead of the mailbox triage agent sweeping on a routine schedule, the
+plugin can wake the agent only when mail actually needs attention.
+
+Per mailbox, on the Configuration tab:
+
+- **Wake an issue when mail needs attention** - turns the watch on. Only
+  meaningful when 'Enable receive' is on for the mailbox.
+- **Issue to wake** - UUID of the issue the triage routine lives on. It
+  must have an assigned agent and must not be closed or blocked by other
+  issues, or the wakeup request is refused by the host. The wakeup is
+  requested in the mailbox's Ingest company.
+
+How it decides: the existing poll loop already fetches new messages and
+applies the sender rules in code, so a poll tick's dispatched count is
+exactly "mail that needs attention". Auto-triaged noise and muted
+senders never wake the agent. When the count is above zero, the plugin
+requests one assignment wakeup; because the poll cursor advances with
+the fetch, each batch wakes exactly once.
+
+Pair it with issue instructions that drop fast self-polling: finish the
+triage cycle, keep exactly one long fallback wake pending (for example
+60 minutes), and end the run. The fallback bounds the delay if a wake
+lands while the agent is unavailable, and it satisfies hosts whose
+liveness recovery re-wakes an idle in_progress issue that has nothing
+scheduled (Paperclip does, every 30 seconds). Parking the issue as
+"blocked" while idle keeps that scan away entirely; wakeups still reach
+a blocked issue as long as no other issue blocks it.
 
 ## Migrating from v0.2.0
 
