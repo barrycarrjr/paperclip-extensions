@@ -158,6 +158,26 @@ Call `email-tools:email_search` with:
   `unseen` parameter only when `unreadOnly=false`.
 - `limit`: 200
 
+**Read the results from `result.data.items`.** The response looks like this:
+
+```json
+{ "result": {
+    "content": "12 message(s)",
+    "data": { "ok": true, "mailbox": "support", "folder": "INBOX",
+              "items": [ { "uid": 9571, "from": "...", "subject": "..." } ],
+              "truncated": false } } }
+```
+
+The array is `items`. It is NOT called `messages`, `results`, or `emails`.
+This matters more than it looks: in PowerShell `$search.messages.Count` on a
+missing property is `0`, not an error, so reading the wrong name reports an
+empty inbox on every run, for ever, while real mail sits untriaged and the
+cursor advances past it. That exact bug ran undetected against a live
+mailbox (2026-09-01). **Cross-check every search against `result.content`,
+which states the count in words: if `content` says "2 message(s)" and your
+parsed array is empty, you have the wrong field name — stop and report it
+rather than concluding the inbox is empty.**
+
 If the result is exactly 200, repeat with the most recent date in the result
 set as the new `since`, until you get fewer than 200 (you've caught up). Cap
 total messages processed at 1000 per run (5000 when `bulkCleanup=true`) —
@@ -322,6 +342,13 @@ curl -s -X POST \
       runContext: { agentId: $agent, runId: $run, companyId: $company }
     }')"
 ```
+
+Every tool answers in the same envelope: `result.content` is a human-readable
+summary and `result.data` holds the payload. Read the payload out of the
+field the tool actually documents (`email_search` returns `data.items`; see
+Step 3) and sanity-check it against `result.content` before acting on an
+empty list. A shell that returns `0` for a missing property will otherwise
+turn a typo into a silently empty inbox.
 
 Tool names use `<pluginId>:<toolName>` — so `email-tools:email_search`,
 `email-tools:email_fetch`, `email-tools:email_mark_read`,
