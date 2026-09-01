@@ -135,12 +135,28 @@ function buildSearchObject(q: SearchInput): SearchObject {
   return obj;
 }
 
+/**
+ * Enforce the strict greater-than contract on a UID list.
+ *
+ * RFC 3501 interprets a UID range `n:*` as spanning n through the highest
+ * UID in the mailbox, and when n exceeds that highest UID the range STILL
+ * matches the single newest message. So a search built from `uidGt` returns
+ * the newest existing message forever once a mailbox goes quiet: every poll
+ * tick counted one phantom "new" message, and once wake-on-mail acted on
+ * that count (v0.18.4) it woke the triage agents on every tick all night.
+ * The search range narrows the candidates; this filter is the contract.
+ */
+export function enforceUidGt(uids: number[], uidGt: number | undefined): number[] {
+  if (uidGt === undefined || uidGt <= 0) return uids;
+  return uids.filter((u) => u > uidGt);
+}
+
 export async function searchMessages(client: ImapFlow, q: SearchInput): Promise<number[]> {
   const lock = await client.getMailboxLock(q.folder);
   try {
     const result = await client.search(buildSearchObject(q), { uid: true });
     if (!result) return [];
-    return result.slice().sort((a, b) => a - b);
+    return enforceUidGt(result.slice().sort((a, b) => a - b), q.uidGt);
   } finally {
     lock.release();
   }

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.18.4";
+const PLUGIN_VERSION = "0.18.5";
 
 const mailboxItemSchema = {
   type: "object",
