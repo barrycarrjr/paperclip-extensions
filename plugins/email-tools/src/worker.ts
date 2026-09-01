@@ -27,6 +27,14 @@ import {
 } from "./imap.js";
 import { mergeSearchResults, planFolderScope, type SearchHit } from "./search-scope.js";
 import {
+  nonBlank,
+  resolveOwnAddress,
+  resolveSmtpFrom,
+  resolveSmtpHost,
+  resolveSmtpUser,
+  withoutOwnAddress,
+} from "./smtp-identity.js";
+import {
   describeInvalidPattern,
   isRuleType,
   isValidRulePattern,
@@ -70,17 +78,22 @@ function findConfigMailbox(config: InstanceConfig, key: string): ConfigMailbox |
   return (config.mailboxes ?? []).find((m) => (m.key ?? "").toLowerCase() === lower);
 }
 
-function deriveSmtpHost(imapHost: string): string {
-  return imapHost.startsWith("imap.") ? "smtp." + imapHost.slice(5) : imapHost;
-}
+// Superseded by `deriveSmtpHost` in ./smtp-identity.ts, which the resolvers
+// there call. Kept as the undo path.
+// function deriveSmtpHost(imapHost: string): string {
+//   return imapHost.startsWith("imap.") ? "smtp." + imapHost.slice(5) : imapHost;
+// }
 
 async function buildSmtpRuntime(
   ctx: PluginContext,
   cfg: ConfigMailbox,
   key: string,
 ): Promise<SmtpRuntime> {
-  if (!cfg.imapHost) throw new Error(`Mailbox "${key}": imapHost is required.`);
-  if (!cfg.user) throw new Error(`Mailbox "${key}": user is required.`);
+  // Whitespace counts as not set. A field holding only spaces used to pass
+  // these guards and then resolve to an empty sender, which the mail server
+  // rejects with a message naming no setting the operator could go and fix.
+  if (!nonBlank(cfg.imapHost)) throw new Error(`Mailbox "${key}": imapHost is required.`);
+  if (!nonBlank(cfg.user)) throw new Error(`Mailbox "${key}": user is required.`);
   const smtpPort = typeof cfg.smtpPort === "number" ? cfg.smtpPort : 465;
   if (!Number.isFinite(smtpPort) || smtpPort <= 0 || smtpPort > 65535) {
     throw new Error(`Mailbox "${key}": invalid smtpPort ${smtpPort}.`);
@@ -102,13 +115,13 @@ async function buildSmtpRuntime(
 
   return {
     key,
-    smtpHost: cfg.smtpHost ?? deriveSmtpHost(cfg.imapHost),
+    smtpHost: resolveSmtpHost(cfg),
     smtpPort,
     smtpSecure,
-    smtpUser: cfg.smtpUser ?? cfg.user,
+    smtpUser: resolveSmtpUser(cfg),
     smtpPass,
     accessToken,
-    smtpFrom: cfg.smtpFrom ?? cfg.user,
+    smtpFrom: resolveSmtpFrom(cfg),
   };
 }
 
@@ -741,7 +754,7 @@ const plugin = definePlugin({
         }
         if (!original) return { error: "original message not found" };
 
-        const ourAddress = (gate.cfg.smtpFrom ?? gate.cfg.user ?? "").toLowerCase();
+        const ourAddress = resolveOwnAddress(gate.cfg);
         const replyTo = original.fromAddress
           ? [original.fromAddress]
           : original.from
@@ -752,7 +765,7 @@ const plugin = definePlugin({
           const merged = [...original.to, ...original.cc].flatMap((s) =>
             s.split(",").map((x) => x.trim()).filter(Boolean),
           );
-          cc = merged.filter((addr) => !addr.toLowerCase().includes(ourAddress));
+          cc = withoutOwnAddress(merged, ourAddress);
         }
 
         const subject = original.subject?.match(/^re:/i)
@@ -1625,14 +1638,14 @@ const plugin = definePlugin({
       );
       if (!original) throw new Error(`Message UID ${uid} not found in "${folder}"`);
 
-      const ourAddress = (cfg.smtpFrom ?? cfg.user ?? "").toLowerCase();
+      const ourAddress = resolveOwnAddress(cfg);
       const replyTo = original.fromAddress ? [original.fromAddress] : original.from ? [original.from] : [];
       let cc: string[] = [];
       if (replyAll) {
         const merged = [...original.to, ...original.cc].flatMap((s) =>
           s.split(",").map((x) => x.trim()).filter(Boolean),
         );
-        cc = merged.filter((addr) => !addr.toLowerCase().includes(ourAddress));
+        cc = withoutOwnAddress(merged, ourAddress);
       }
       const subject = original.subject?.match(/^re:/i) ? original.subject : `Re: ${original.subject ?? ""}`.trim();
       const refsChain = [...original.references];

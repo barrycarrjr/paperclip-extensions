@@ -7,6 +7,24 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.18.6** — A mailbox setting left blank now falls back the way an untouched one does.
+  The From address, SMTP username and SMTP host are all optional, and all are
+  documented as defaulting to the mailbox's own account. That defaulting only
+  held while a field had never been filled in. A field the operator opened and
+  then cleared is stored as an empty string, and the empty string was passed
+  straight through, so a mailbox with a cleared From address sent with no
+  sender address at all. Gmail refuses that with `550 5.0.0 Sender is not
+  allowed to send with empty mail_from`, which names nothing the operator
+  could connect to the field they had emptied. All three settings now treat
+  blank and absent alike, and a required field holding only spaces is reported
+  as missing instead of reaching the mail server.
+
+  The same blank address also broke reply-all. Every recipient was checked
+  against our own address so we could drop ourselves from the cc list, and
+  searching for an empty address matches everyone, so the whole cc list was
+  silently emptied rather than shortened by one. When the mailbox address is
+  unknown, every recipient is now kept.
+
 - **v0.18.5** - Fix a phantom "new mail" count that made wake-on-mail fire on every poll tick. The cursor search built a UID range of `cursor+1:*`, and RFC 3501 makes `n:*` match the mailbox's newest message even when n is beyond it, so a quiet mailbox returned its newest existing message forever: the poll counted 1 fetched message per tick, the cursor never advanced past it, and v0.18.4's watcher dutifully woke the triage agents every tick all night (483 wakes across three mailboxes; the fourth escaped only because its INBOX was empty). New `enforceUidGt` helper applies the strict greater-than contract to search results; the same fix also stops the triage-folder rule learner from re-reading the newest triage message on every tick. The phantom count predates the watcher and was invisible while `fetched` fed only telemetry and a dispatch mode of 'none'.
 
 - **v0.18.4** - Wake-on-mail. Two new per-mailbox fields, 'Wake an issue when mail needs attention' and 'Issue to wake', make each poll tick that dispatches at least one message (after the auto-triage and mute sender rules run in code) request an assignment wakeup on the configured issue in the mailbox's Ingest company. The triage agent then runs when there is mail needing attention instead of sweeping on a schedule; auto-triaged and muted mail never wakes it. Piggybacks on the existing poll loop, so it adds no IMAP traffic; each dispatched batch produces exactly one wake, with the issue's own long fallback wake as the backstop. Mirrors the help-scout plugin's watch-new-mail feature (its v0.7.4). Adds the `issues.wakeup` capability, so upgrading prompts for one new grant. Ships dark: the watch is off for every mailbox until an operator flips it on.
