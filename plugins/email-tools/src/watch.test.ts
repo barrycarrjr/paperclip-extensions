@@ -9,6 +9,7 @@
  */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import type { ConfigMailbox } from "./types.js";
 import { WATCH_CONTEXT_SOURCE, decideMailWake, maybeRequestMailWake } from "./watch.js";
@@ -88,6 +89,24 @@ test("maybeRequestMailWake logs a skip for a half-configured watch", async () =>
   assert.equal(m.wakeups.length, 0);
   assert.equal(m.warns.length, 1);
   assert.equal(m.warns[0].mailbox, "ib-barry");
+});
+
+test("the wake hook sits on the shared fetch path, not the scheduled one", () => {
+  // Placement regression guard. The wake call must live in pollOne, which both
+  // callers use, because idle.ts calls pollOne directly for IDLE-triggered
+  // polls. When the call sat in runPoll instead, mail arriving while an IDLE
+  // connection was live was fetched and the cursor advanced with no wake, and
+  // the next scheduled poll then found nothing new — the message was consumed
+  // in silence. No unit test of the helper itself can catch a wrong call site,
+  // so this asserts the shape of the source.
+  const src = readFileSync(new URL("./poll.ts", import.meta.url), "utf8");
+  const pollOneAt = src.indexOf("export async function pollOne");
+  const runPollAt = src.indexOf("export async function runPoll");
+  assert.ok(pollOneAt > 0 && runPollAt > 0, "both poll entry points should exist");
+
+  const calls = [...src.matchAll(/await maybeRequestMailWake\(/g)].map((m) => m.index ?? -1);
+  assert.equal(calls.length, 1, "exactly one wake call site, or a fetch could wake twice");
+  assert.ok(calls[0] > pollOneAt, "the wake call must be inside pollOne (the shared path)");
 });
 
 test("a refused wakeup is logged and swallowed", async () => {

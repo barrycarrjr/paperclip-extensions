@@ -126,9 +126,6 @@ export async function runPoll(ctx: PluginContext, config: InstanceConfig): Promi
     try {
       const fetched = await pollOne(ctx, mailbox);
       totalFetched += fetched;
-      // Wake-on-mail: only dispatched messages count (auto-triaged and muted
-      // mail never wakes the agent). Never throws.
-      await maybeRequestMailWake(ctx, mailbox, fetched);
     } catch (err) {
       totalErrors += 1;
       ctx.logger.error("email-tools poll error", {
@@ -567,6 +564,14 @@ export async function pollOne(ctx: PluginContext, mailbox: ConfigMailbox): Promi
           count: String(muted),
         });
       }
+      // Wake-on-mail lives HERE, not in runPoll, because IDLE-triggered polls
+      // call pollOne directly (idle.ts). With the call in runPoll only, mail
+      // that arrived while an IDLE connection was live was fetched and the
+      // cursor advanced without ever waking the agent, and the next scheduled
+      // poll then correctly found nothing new — so the mail was consumed in
+      // silence. Only dispatched messages count here: auto-triaged and muted
+      // mail must never wake anyone. Never throws.
+      await maybeRequestMailWake(ctx, mailbox, fetched);
       return fetched;
     } finally {
       await safeLogout(client);
