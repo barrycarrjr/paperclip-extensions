@@ -1,4 +1,5 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
+import { scopeLocationsForCompany } from "./locationScope.js";
 import { getOAuthClient, wrapGbpError } from "./gbpAuth.js";
 import {
   getAllReviews,
@@ -465,9 +466,43 @@ const plugin = definePlugin({
     );
 
     // ── Data: dashboard summary ───────────────────────────────────────────────
-    ctx.data.register("review-summary", async () => {
+    ctx.data.register("review-summary", async (params) => {
       const config = (await ctx.config.get()) as InstanceConfig;
-      const locations = config.locations ?? [];
+      const companyId = typeof params?.companyId === "string" ? params.companyId : null;
+
+      // Was unscoped: every company saw every location's counts, ratings and
+      // unreplied backlog. Locations already record the company they belong
+      // to; that field just was not consulted for reading. See
+      // locationScope.ts. The portfolio root still gets the roll-up, which is
+      // the one place a cross-company view belongs.
+      let isPortfolioRoot = false;
+      if (companyId) {
+        try {
+          const company = await ctx.companies.get(companyId);
+          // Read through a widened shape rather than off the SDK's Company
+          // type: the installed SDK in this plugin predates isPortfolioRoot,
+          // and the host sends it regardless. Same approach phone-tools uses
+          // for the agent "assistant" role, and it keeps this working across
+          // SDK versions in both directions.
+          isPortfolioRoot =
+            (company as unknown as { isPortfolioRoot?: boolean } | null)?.isPortfolioRoot === true;
+        } catch (err) {
+          // Cannot confirm this is HQ, so treat it as an ordinary company.
+          // The failure mode of guessing wrong the other way is showing one
+          // company another's data, which is the thing being fixed.
+          ctx.logger.warn("gbp-reviews: could not resolve company for scoping", {
+            companyId,
+            err: (err as Error).message,
+          });
+        }
+      }
+
+      const scoped = scopeLocationsForCompany({
+        companyId,
+        isPortfolioRoot,
+        locations: config.locations ?? [],
+      });
+      const locations = scoped.locations;
       const summaries: Array<{ locationKey: string; locationName: string; unreplied: number; avgRating: number | null; totalReviews: number }> = [];
 
       const ns = ctx.db.namespace;
@@ -486,7 +521,11 @@ const plugin = definePlugin({
         });
       }
 
-      return { locations: summaries, updatedAt: new Date().toISOString() };
+      return {
+        locations: summaries,
+        isRollup: scoped.isRollup,
+        updatedAt: new Date().toISOString(),
+      };
     });
 
     ctx.logger.info("GBP Reviews plugin started.");

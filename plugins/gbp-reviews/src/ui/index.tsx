@@ -1,4 +1,9 @@
-import { usePluginData, type PluginWidgetProps, type PluginPageProps } from "@paperclipai/plugin-sdk/ui";
+import {
+  useHostContext,
+  usePluginData,
+  type PluginWidgetProps,
+  type PluginPageProps,
+} from "@paperclipai/plugin-sdk/ui";
 
 interface LocationSummary {
   locationKey: string;
@@ -10,11 +15,18 @@ interface LocationSummary {
 
 interface ReviewSummaryData {
   locations: LocationSummary[];
+  /** True when this is HQ's cross-company roll-up rather than one company's. */
+  isRollup?: boolean;
   updatedAt: string;
 }
 
 export function ReviewSummaryWidget(_props: PluginWidgetProps) {
-  const { data, loading, error } = usePluginData<ReviewSummaryData>("review-summary");
+  const host = useHostContext();
+  // Same scoping as the full page. This widget had the identical unscoped
+  // call, so wherever it was placed it showed every company's locations.
+  const { data, loading, error } = usePluginData<ReviewSummaryData>("review-summary", {
+    companyId: host.companyId,
+  });
 
   if (loading) return <div style={{ padding: "12px", color: "#888" }}>Loading GBP review data…</div>;
   if (error) return <div style={{ padding: "12px", color: "#c00" }}>GBP Reviews: {error.message}</div>;
@@ -62,13 +74,20 @@ export function ReviewSummaryWidget(_props: PluginWidgetProps) {
 }
 
 export function ReviewDashboardPage(_props: PluginPageProps) {
-  const { data, loading, error } = usePluginData<ReviewSummaryData>("review-summary");
+  const host = useHostContext();
+  // Passed explicitly: the handler scopes on it and shows nothing without it,
+  // rather than falling back to every company's locations as it used to.
+  const { data, loading, error } = usePluginData<ReviewSummaryData>("review-summary", {
+    companyId: host.companyId,
+  });
 
   return (
     <div style={{ padding: "24px", maxWidth: "900px" }}>
       <h1 style={{ marginBottom: "8px" }}>GBP Review Dashboard</h1>
       <p style={{ color: "#888", marginBottom: "24px" }}>
-        Monitor and respond to Google Business Profile reviews across all portfolio locations.
+        {data?.isRollup
+          ? "Every location across the portfolio, because you are viewing from HQ."
+          : "Locations belonging to the company you are viewing."}
       </p>
 
       {loading && <p>Loading review data…</p>}

@@ -99,6 +99,13 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "database.namespace.write",
     "ui.page.register",
     "ui.dashboardWidget.register",
+    // Read-only, and needed for one thing: telling whether the company you
+    // are viewing from is the portfolio root, so the review dashboard can
+    // show HQ a cross-company roll-up while showing every other company only
+    // its own locations. Without it the dashboard cannot tell the two apart
+    // and would have to show everyone the same list, which is the leak this
+    // capability exists to close.
+    "companies.read",
   ],
   database: {
     migrationsDir: "migrations",
