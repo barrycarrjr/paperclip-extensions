@@ -1018,6 +1018,20 @@ const plugin = definePlugin({
           key: m.key ?? "",
           name: m.name ?? m.key ?? "",
           pollFolder: m.pollFolder ?? "INBOX",
+          // The address mail actually leaves as, so a composer can show the
+          // operator which identity they are about to send from instead of
+          // leaving it implicit in whichever mailbox happens to be selected.
+          //
+          // Uses the same resolver the send path uses rather than repeating
+          // its defaulting here. That defaulting is not obvious — an optional
+          // field the operator opened and cleared is saved as an empty string,
+          // which `??` would pass straight through — and a second copy that
+          // drifted would show one address while sending as another, which is
+          // worse than showing nothing.
+          // Empty, not undefined, is how the resolver says "not configured",
+          // so normalise it here — a caller checking for null would otherwise
+          // render a blank From line as though it were an address.
+          from: resolveSmtpFrom(m) || null,
         }));
       return { mailboxes };
     });
