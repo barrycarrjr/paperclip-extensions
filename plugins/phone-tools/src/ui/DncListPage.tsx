@@ -4,6 +4,7 @@ import {
   usePluginData,
   type PluginPageProps,
 } from "@paperclipai/plugin-sdk/ui";
+import { ScopeBanner } from "./ScopeBanner.js";
 import {
   Badge,
   EmptyState,
@@ -66,6 +67,7 @@ export function DncListPage(_props: PluginPageProps) {
 
   return (
     <PageContainer>
+      <ScopeBanner />
       <PageHeader
         title="DNC list"
         subtitle={

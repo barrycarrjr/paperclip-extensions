@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { useHostContext, type PluginPageProps } from "@paperclipai/plugin-sdk/ui";
+import { ScopeBanner } from "./ScopeBanner.js";
 import { CampaignsList } from "./CampaignsList.js";
 import { CampaignDetail } from "./CampaignDetail.js";
 import { CampaignWizard } from "./CampaignWizard.js";
@@ -52,6 +53,7 @@ export function CampaignsPage(_props: PluginPageProps) {
 
   return (
     <div style={pageRoot}>
+      <ScopeBanner />
       <header style={pageHeader}>
         <button
           type="button"

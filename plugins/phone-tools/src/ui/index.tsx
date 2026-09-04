@@ -12,3 +12,4 @@ export { PortfolioRollup } from "./PortfolioRollup.js";
 export { InboundRoutesPage } from "./InboundRoutesPage.js";
 export { DncListPage } from "./DncListPage.js";
 export { AuditLogPage } from "./AuditLogPage.js";
+export { ScopeBanner } from "./ScopeBanner.js";

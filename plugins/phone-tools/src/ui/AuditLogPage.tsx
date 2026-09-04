@@ -4,6 +4,7 @@ import {
   usePluginData,
   type PluginPageProps,
 } from "@paperclipai/plugin-sdk/ui";
+import { ScopeBanner } from "./ScopeBanner.js";
 import {
   Badge,
   EmptyState,
@@ -69,6 +70,7 @@ export function AuditLogPage(_props: PluginPageProps) {
 
   return (
     <PageContainer>
+      <ScopeBanner />
       <PageHeader
         title="Audit log"
         subtitle={loading ? "loading…" : `${filtered.length} of ${all.length} entries`}

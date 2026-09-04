@@ -23,6 +23,7 @@ import {
 import { handleDiyJambonzApi } from "./api/diy-jambonz-routes.js";
 import { recordSpend } from "./assistants/cost-cap.js";
 import { computeSidebarVisibility } from "./assistants/sidebar-visibility.js";
+import { describeAccountScope } from "./accountScope.js";
 import {
   addDncEntry,
   appendPacingOutcome,
@@ -796,6 +797,15 @@ const plugin = definePlugin({
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
       const config = (await ctx.config.get()) as InstanceConfig;
       return computeSidebarVisibility(companyId, config.accounts ?? []);
+    });
+
+    // Which PBX account is behind what you are looking at, and who else it
+    // serves. Read by the ScopeBanner on the phone pages so a shared account
+    // is visible as shared — see accountScope.ts for why that matters.
+    ctx.data.register("phone.account-scope", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const config = (await ctx.config.get()) as InstanceConfig;
+      return describeAccountScope(companyId, config.accounts ?? []);
     });
 
     // Phone tab visibility + summary on AgentDetail. Returns whether this
