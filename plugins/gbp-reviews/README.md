@@ -6,6 +6,23 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
+- **v0.1.8** — A company now sees only its own review locations.
+
+  The dashboard listed every configured location to every company. Its handler
+  looped the whole location list and never looked at the company the page was
+  opened in, so an operator in one company saw another's locations, review
+  counts, unreplied backlog and average rating. The dashboard widget made the
+  same unscoped call, so it leaked the same data wherever it was placed.
+
+  Every location already recorded the company it belongs to; that field was
+  used when creating review issues but never when reading them. It is now used
+  for both. The portfolio root still gets the cross-company roll-up, and the
+  page says which of the two you are looking at. Fails closed: no company in
+  context shows nothing rather than everything.
+
+  Adds the read-only `companies.read` capability, needed only to tell whether
+  the viewing company is the portfolio root.
+
 - **v0.1.7** — Location names are visible in dark mode. The location cards painted a fixed
   near-white background while the name inherited the theme's text colour, so
   under the dark theme the name was near-white on near-white. The cards now use

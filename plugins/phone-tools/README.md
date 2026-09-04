@@ -132,6 +132,21 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- **v0.7.14** — The phone pages say when the account behind them is shared.
+
+  Every other page in Paperclip is company-bound: what you see inside a company
+  is that company's. A PBX account is not — one account can be allow-listed to
+  every company at once, and then a call list, audit log or DNC list read
+  inside one company is really the shared account's. Nothing on screen said so.
+
+  A short note now appears when, and only when, an account you can reach serves
+  more than the company you are in, naming the account and saying whether it is
+  shared with every company or a specific number of them. Nothing is shown when
+  every reachable account belongs to this company alone.
+
+  This describes only; it does not restrict. `assertCompanyAccess` still
+  decides what a caller may touch and is unchanged.
+
 - **v0.7.13** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.7.12** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

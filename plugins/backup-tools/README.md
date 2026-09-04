@@ -128,6 +128,19 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.29** — The Backups page is readable in dark mode, and the Overview card reports its
+  cadence. Every colour on the page was a hardcoded light-mode hex, so the tab
+  you were currently on was painted near-black against the dark theme's
+  near-black page — the selected tab was the one tab you could not read. The
+  page now reads the host's theme tokens (`--foreground`, `--muted-foreground`,
+  `--border`, `--card`, `--primary`, `--destructive`), which is what the other
+  plugin pages already do, so it follows light and dark without a second
+  palette. Buttons also show a disabled state, which they previously did not.
+
+  Separately, `dashboard.health` never selected the `cadence` column the
+  Overview card renders, so the card always printed a bare "Cadence:" with
+  nothing after it. The column is now in the query.
+
 - **v0.1.28** — The History and Destinations tabs show their contents. Both
   called `usePluginData`, which resolves against `ctx.data.register()` — but
   `backups.list` and `destinations.list` were only ever wired into the

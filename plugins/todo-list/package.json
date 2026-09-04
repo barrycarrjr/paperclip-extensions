@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-todo-list",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A private personal to-do list. One line of text, a tick box, an optional due date. Scoped to the operator who wrote it rather than to a company, so the same list follows you everywhere. Quick capture from the sidebar without leaving the page you are on, and a one-click promote into a real issue.",
   "type": "module",
   "private": true,
