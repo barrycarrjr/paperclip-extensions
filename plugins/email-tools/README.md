@@ -7,6 +7,14 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.18.9** — The mailbox listing now carries the address each mailbox sends as.
+
+  The host's compose dialog and reply box show a From line before you send,
+  and they need the real address for it. Resolved through the same helper the
+  send path uses, so the line cannot show one address while the mail leaves
+  as another. A mailbox with no sending address configured reports null, and
+  the host shows the mailbox name instead of a blank line.
+
 - **v0.18.8** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.18.7** - Wake-on-mail now fires for mail that arrives over IMAP IDLE, which is most of it. The wake call sat in `runPoll`, the scheduled sweep, but an IDLE notification calls `pollOne` directly, so a message delivered while the IDLE connection was live was fetched and its cursor advanced with no wake requested, and the next scheduled poll then correctly found nothing new. The message was triaged by the sender rules if one matched and otherwise sat in the inbox unannounced: the agent was never told. Moving the call into `pollOne` covers both entry points and keeps it to one wake per fetch. Found by sending a real test message into a watched mailbox and watching the cursor advance while no wake appeared, which is the only way this surfaces: every unit test of the helper passed throughout, because the defect was the call site, not the logic. A source-shape test now pins the call to the shared path.
