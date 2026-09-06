@@ -6,6 +6,21 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
+- **v0.1.9** — Three security fixes to company scoping and the reply tool.
+
+  An account's empty allowed-companies list used to skip the check entirely,
+  letting any company use any Google account; it now denies, and "*" is the
+  explicit way to allow everyone. A review email whose business name matched
+  no location used to be filed under the first location regardless of how
+  many were configured, so one company's review opened an issue in another;
+  it is now skipped and logged unless only one location exists. The reply and
+  read tools used to put a caller-supplied review name straight into the
+  Google URL with no check that it belonged to the named location or that the
+  location belonged to the calling company; both are now checked and the name
+  is rebuilt from validated parts. Failures are reported as failures, the
+  local record after a post no longer silently fails, and the package now has
+  a test script so its 21 tests run in CI.
+
 - **v0.1.8** — A company now sees only its own review locations.
 
   The dashboard listed every configured location to every company. Its handler
