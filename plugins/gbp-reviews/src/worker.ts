@@ -1,6 +1,21 @@
+import { randomUUID } from "node:crypto";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import { resolveEmailLocation, scopeLocationsForCompany } from "./locationScope.js";
 import { canonicalReviewName, parseReviewName, reviewBelongsToLocation } from "./reviewName.js";
+import { accountLabel, buildDraftReply, postsAs } from "./draftReply.js";
+import { nextReplySource, type ReplySource } from "./replySource.js";
+import { postReplyGuarded, settlePendingAttempts, STALE_IN_FLIGHT_MS } from "./replyGuard.js";
+import { createDbReplyStore } from "./replyStore.js";
+import { requireCompanyScope, type CompanyScope } from "./hostScope.js";
+import { isCompanyAllowedForAccount } from "./companyAccess.js";
+import {
+  findPendingAttempt,
+  findReviewForLocation,
+  listReviewsForLocation,
+  resolveScopedLocation,
+  resolveScopedLocationForReview,
+  summaryForLocation,
+} from "./reviewQueries.js";
 
 /**
  * A tool result that the host will treat as a failure.
@@ -14,7 +29,15 @@ import { canonicalReviewName, parseReviewName, reviewBelongsToLocation } from ".
 function fail(message: string) {
   return { content: message, error: message };
 }
-import { getOAuthClient, wrapGbpError } from "./gbpAuth.js";
+/**
+ * A refusal for a page handler. Thrown rather than returned so the bridge
+ * reports it as a failure and the route's own log captures the reason. The
+ * sentence is what the person reads; the code is what the page maps on.
+ */
+function refuse(code: string, sentence: string): never {
+  throw new Error(`[${code}] ${sentence}`);
+}
+import { findAccount, getOAuthClient, wrapGbpError } from "./gbpAuth.js";
 import {
   getAllReviews,
   getReview,
@@ -29,7 +52,7 @@ import {
   markEmailRead,
   searchReviewEmails,
 } from "./emailPoller.js";
-import type { InstanceConfig, LocationConfig } from "./types.js";
+import type { GbpReview, InstanceConfig, LocationConfig } from "./types.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -42,8 +65,11 @@ function buildReviewIssueBody(
 ): string {
   const stars = starRatingToEmoji(starRating);
   const text = reviewText?.trim() || "_(no written review)_";
+  // The old instruction told people to comment "@CEO Agent reply approved",
+  // which nothing ever read. The Reviews page is the real path now; a review
+  // that arrived by email has no Google name yet, so it says how to get one.
   return [
-    `## ${stars} Review — ${locationName}`,
+    `## ${stars} Review: ${locationName}`,
     "",
     `**Reviewer:** ${reviewerName}`,
     `**Rating:** ${stars} (${starRatingToNumber(starRating)}/5)`,
@@ -59,29 +85,84 @@ function buildReviewIssueBody(
     "",
     "---",
     "",
-    "**To post this reply:** Edit the reply above if needed, then comment `@CEO Agent reply approved` or use the `gbp_reply_to_review` tool with the `reviewName` shown below.",
+    "**To reply:** open Reviews inside this company, pick the location and choose this review. If it is not listed yet, press Sync now.",
     "",
   ].join("\n");
 }
 
-function buildDraftReply(
-  businessName: string,
-  reviewerName: string,
-  starRating: string,
-  reviewText: string | undefined,
-): string {
-  const n = starRatingToNumber(starRating);
-  if (n >= 4) {
-    return `Thank you so much for the kind words, ${reviewerName}! We're thrilled you had a great experience at ${businessName}. We look forward to serving you again!`;
+// buildDraftReply lives in draftReply.ts now, where the Reviews page can share
+// it. It takes the numeric rating the table stores, so callers here convert.
+
+/** The plugin context, spelled out once instead of at every call site. */
+type PluginCtx = Parameters<Parameters<typeof definePlugin>[0]["setup"]>[0];
+
+/**
+ * Where a location's last sync time is kept: one instance-wide key per
+ * location.
+ *
+ * "Last synced" used to be MAX(updated_at) over that location's rows, which
+ * is the time of the last row change, not the last sync: posting a reply
+ * bumped it, and a location whose Google listing holds no reviews had no rows
+ * at all and so read as never synced however often it was pulled. The sync
+ * now records itself, so the time on the page is the time Google was read.
+ */
+function lastSyncStateKey(locationKey: string) {
+  return { scopeKind: "instance" as const, stateKey: `last-sync:${locationKey}` };
+}
+
+/** The recorded sync time for a location, or null when it has never been synced. */
+async function readLastSyncedAt(ctx: PluginCtx, locationKey: string): Promise<string | null> {
+  try {
+    const value = await ctx.state.get(lastSyncStateKey(locationKey));
+    return typeof value === "string" && value.length > 0 ? value : null;
+  } catch (err) {
+    ctx.logger.warn("gbp-reviews: could not read the last sync time", {
+      locationKey,
+      error: (err as Error).message,
+    });
+    return null;
   }
-  if (n === 3) {
-    return `Thank you for your feedback, ${reviewerName}. We're glad you chose ${businessName} and appreciate you sharing your thoughts. We're always working to improve, and your input helps us do that. We'd love the chance to exceed your expectations next time.`;
+}
+
+/**
+ * Who wrote the reply Google is showing, for a row whose stored reply text no
+ * longer matches it.
+ *
+ * nextReplySource answers 'google' whenever the live text differs from the
+ * text we stored. That is right for a reply written in Google's own console,
+ * and wrong for one Paperclip posted and then could not record locally: the
+ * list would then credit Google for a reply the audit table says a person
+ * wrote. So before settling for 'google', the audit table is asked whether a
+ * finished attempt on this review sent exactly this text, and its source
+ * wins. The extra read happens only when the text changed.
+ */
+async function replySourceForSyncedReply(
+  ctx: PluginCtx,
+  reviewName: string,
+  stored: { replyText: string | null; replySource: string | null },
+  liveText: string | null,
+): Promise<ReplySource | null> {
+  const guess = nextReplySource(
+    { replyText: stored.replyText, replySource: stored.replySource },
+    { replyText: liveText },
+  );
+  if (guess !== "google" || liveText === null || stored.replyText === liveText) return guess;
+  try {
+    const rows = await ctx.db.query<{ source: string }>(
+      `SELECT source FROM ${ctx.db.namespace}.reply_posts
+       WHERE review_name = $1 AND status = 'posted' AND reply_text = $2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [reviewName, liveText],
+    );
+    const source = rows[0]?.source;
+    if (source === "human" || source === "agent") return source;
+  } catch (err) {
+    ctx.logger.warn("gbp-reviews: could not check who posted this reply", {
+      reviewName,
+      error: (err as Error).message,
+    });
   }
-  // Low rating — more empathetic
-  const issueMention = reviewText?.trim()
-    ? `We take your concerns about ${reviewText.slice(0, 60)}… seriously.`
-    : "We take all feedback seriously.";
-  return `Thank you for letting us know about your experience, ${reviewerName}. ${issueMention} We'd like to make this right — please reach out to us directly so we can address your concerns. We value your business and hope to restore your confidence in ${businessName}.`;
+  return "google";
 }
 
 async function createReviewIssue(
@@ -98,8 +179,8 @@ async function createReviewIssue(
   const n = starRatingToNumber(starRating);
   const businessName = location.displayName;
 
-  const draftReply = buildDraftReply(businessName, reviewerName, starRating, reviewText);
-  const title = `${stars} ${n}-star Review — ${reviewerName} (${businessName})`;
+  const draftReply = buildDraftReply(businessName, reviewerName, starRatingToNumber(starRating), reviewText);
+  const title = `${stars} ${n}-star Review from ${reviewerName} (${businessName})`;
   const body = buildReviewIssueBody(reviewerName, starRating, reviewText, businessName, draftReply);
 
   try {
@@ -124,23 +205,46 @@ async function syncLocationReviews(
   ctx: Parameters<Parameters<typeof definePlugin>[0]["setup"]>[0],
   config: InstanceConfig,
   location: LocationConfig,
-): Promise<void> {
+): Promise<{ total: number; new: number; syncedAt: string }> {
   const ns = ctx.db.namespace;
   const oauth2 = await getOAuthClient(ctx, config, location.accountKey, location.targetCompanyId);
   const reviews = await getAllReviews(oauth2, location.googleAccountId, location.locationId);
 
   let newCount = 0;
   for (const review of reviews) {
-    const existing = await ctx.db.query<{ review_name: string }>(
-      `SELECT review_name FROM ${ns}.reviews WHERE review_name = $1`,
+    const existing = await ctx.db.query<{ review_name: string; reply_text: string | null; reply_source: string | null }>(
+      `SELECT review_name, reply_text, reply_source FROM ${ns}.reviews WHERE review_name = $1`,
       [review.name],
     );
 
     if (existing.length > 0) {
-      // Update reply status if it changed
+      // Update reply status if it changed. The source is kept only while the
+      // text on Google still matches what we recorded; a reply edited or
+      // written in Google's own console becomes 'google' so the list does not
+      // claim Paperclip wrote it, unless the audit table shows Paperclip sent
+      // exactly that text.
+      const stored = existing[0]!;
+      const replySource = await replySourceForSyncedReply(
+        ctx,
+        review.name,
+        { replyText: stored.reply_text, replySource: stored.reply_source },
+        review.reviewReply?.comment ?? null,
+      );
+      // The location key and the company are rewritten from the location this
+      // sync is running for. A location repointed at another company leaves
+      // its rows filed under the old one, and every read is constrained on
+      // the location's current company, so without this the rows are
+      // invisible everywhere and one sync cannot bring them back.
       await ctx.db.execute(
-        `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, updated_at = now() WHERE review_name = $3`,
-        [review.reviewReply?.comment ?? null, review.reviewReply?.updateTime ?? null, review.name],
+        `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, reply_source = $3, location_key = $4, company_id = $5, updated_at = now() WHERE review_name = $6`,
+        [
+          review.reviewReply?.comment ?? null,
+          review.reviewReply?.updateTime ?? null,
+          replySource,
+          location.key,
+          location.targetCompanyId,
+          review.name,
+        ],
       );
       continue;
     }
@@ -162,9 +266,18 @@ async function syncLocationReviews(
       );
     }
 
+    // A reply this row already carries the first time we see it was written
+    // somewhere other than Paperclip, so it is recorded as 'google' rather
+    // than left blank; a blank source made the list say plain "Replied" for
+    // a reply the same row would call "Replied in Google" a day later.
+    const firstSeenSource = nextReplySource(
+      { replyText: null, replySource: null },
+      { replyText: review.reviewReply?.comment ?? null },
+    );
+
     await ctx.db.execute(
-      `INSERT INTO ${ns}.reviews (review_name, location_key, company_id, reviewer_name, star_rating, review_text, reply_text, review_time, reply_time, paperclip_issue_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO ${ns}.reviews (review_name, location_key, company_id, reviewer_name, star_rating, review_text, reply_text, review_time, reply_time, reply_source, paperclip_issue_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         review.name,
         location.key,
@@ -175,10 +288,23 @@ async function syncLocationReviews(
         review.reviewReply?.comment ?? null,
         review.createTime,
         review.reviewReply?.updateTime ?? null,
+        firstSeenSource,
         issueId,
       ],
     );
     newCount++;
+  }
+
+  // The sync records itself, so "Last synced" is the time Google was read
+  // even for a location whose listing holds no reviews at all.
+  const syncedAt = new Date().toISOString();
+  try {
+    await ctx.state.set(lastSyncStateKey(location.key), syncedAt);
+  } catch (err) {
+    ctx.logger.warn("gbp-reviews: could not record the sync time", {
+      locationKey: location.key,
+      error: (err as Error).message,
+    });
   }
 
   ctx.logger.info("Synced location reviews", {
@@ -186,7 +312,47 @@ async function syncLocationReviews(
     total: reviews.length,
     new: newCount,
   });
+  return { total: reviews.length, new: newCount, syncedAt };
 }
+
+/**
+ * Whether the company the host checked is the portfolio root. Only the host
+ * knows, so it is asked; when it cannot answer the company is treated as an
+ * ordinary one, because guessing the other way would show one company
+ * another's reviews.
+ */
+async function isPortfolioRootCompany(
+  ctx: Parameters<Parameters<typeof definePlugin>[0]["setup"]>[0],
+  companyId: string,
+): Promise<boolean> {
+  try {
+    const company = await ctx.companies.get(companyId);
+    // Read through a widened shape rather than off the SDK's Company type:
+    // the installed SDK in this plugin predates isPortfolioRoot, and the
+    // host sends it regardless. Same approach phone-tools uses for the agent
+    // "assistant" role, and it keeps this working across SDK versions in
+    // both directions.
+    return (company as unknown as { isPortfolioRoot?: boolean } | null)?.isPortfolioRoot === true;
+  } catch (err) {
+    ctx.logger.warn("gbp-reviews: could not resolve company for scoping", {
+      companyId,
+      err: (err as Error).message,
+    });
+    return false;
+  }
+}
+
+/** The host-checked scope plus whether it is HQ, which every page handler needs first. */
+async function requirePageScope(
+  ctx: Parameters<Parameters<typeof definePlugin>[0]["setup"]>[0],
+  params: unknown,
+): Promise<{ scope: CompanyScope; isPortfolioRoot: boolean }> {
+  const scope = requireCompanyScope(params);
+  const isPortfolioRoot = await isPortfolioRootCompany(ctx, scope.companyId);
+  return { scope, isPortfolioRoot };
+}
+
+const LOCATION_NOT_VISIBLE = "That location is not one this company can see.";
 
 // ─── plugin definition ───────────────────────────────────────────────────────
 
@@ -323,17 +489,19 @@ const plugin = definePlugin({
           reply_text: string | null;
           review_time: string;
         }>(
-          `SELECT reviewer_name, star_rating, review_text, reply_text, review_time FROM ${ns}.reviews WHERE location_key = $1 AND review_time > $2 ORDER BY review_time DESC`,
-          [location.key, sevenDaysAgo],
+          // Constrained on the location's own company as well, the same
+          // line of defence the page reads use.
+          `SELECT reviewer_name, star_rating, review_text, reply_text, review_time FROM ${ns}.reviews WHERE location_key = $1 AND company_id = $2 AND review_time > $3 ORDER BY review_time DESC`,
+          [location.key, location.targetCompanyId, sevenDaysAgo],
         );
 
         if (newReviews.length === 0) continue;
 
         const unreplied = newReviews.filter((r) => !r.reply_text);
-        const avgRating = newReviews.reduce((s, r) => s + r.star_rating, 0) / newReviews.length;
+        const avgRating = newReviews.reduce((s, r) => s + Number(r.star_rating), 0) / newReviews.length;
 
         const lines: string[] = [
-          `## Weekly GBP Review Digest — ${location.displayName}`,
+          `## Weekly GBP Review Digest: ${location.displayName}`,
           "",
           `**Period:** Last 7 days  **Total new reviews:** ${newReviews.length}  **Avg rating:** ${"⭐".repeat(Math.round(avgRating))} (${avgRating.toFixed(1)}/5)  **Unreplied:** ${unreplied.length}`,
           "",
@@ -342,12 +510,12 @@ const plugin = definePlugin({
         if (unreplied.length > 0) {
           lines.push("### Unreplied reviews needing attention");
           for (const r of unreplied) {
-            lines.push(`- **${r.reviewer_name}** — ${"⭐".repeat(r.star_rating)} — "${(r.review_text ?? "").slice(0, 100)}${(r.review_text ?? "").length > 100 ? "…" : ""}"`);
+            lines.push(`- **${r.reviewer_name}** ${"⭐".repeat(Number(r.star_rating))} "${(r.review_text ?? "").slice(0, 100)}${(r.review_text ?? "").length > 100 ? "..." : ""}"`);
           }
           lines.push("");
         }
 
-        const digestTitle = `Weekly GBP Digest — ${location.displayName} (week of ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })})`;
+        const digestTitle = `Weekly GBP Digest: ${location.displayName} (week of ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })})`;
 
         try {
           await ctx.issues.create({
@@ -375,6 +543,14 @@ const plugin = definePlugin({
         const config = (await ctx.config.get()) as InstanceConfig;
         const location = (config.locations ?? []).find((l) => l.key === locationKey);
         if (!location) return { content: `[ELOCATION_NOT_FOUND] Location "${locationKey}" not configured.` };
+        // A location belongs to one company, and reading its reviews is
+        // reading that company's customers. Two companies sharing one Google
+        // account used to be enough for an agent in the first to list the
+        // second's reviews by naming its key. The reply tool and the get tool
+        // have always checked this; these two did not.
+        if (location.targetCompanyId !== runCtx.companyId) {
+          return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+        }
 
         try {
           const oauth2 = await getOAuthClient(ctx, config, location.accountKey, runCtx.companyId);
@@ -388,13 +564,13 @@ const plugin = definePlugin({
           const lines = reviews.map((r) => {
             const stars = starRatingToEmoji(r.starRating);
             const reviewer = r.reviewer.isAnonymous ? "Anonymous" : r.reviewer.displayName;
-            const text = r.comment ? `"${r.comment.slice(0, 120)}${r.comment.length > 120 ? "…" : ""}"` : "(no text)";
+            const text = r.comment ? `"${r.comment.slice(0, 120)}${r.comment.length > 120 ? "..." : ""}"` : "(no text)";
             const replied = r.reviewReply ? " ✅ replied" : " ❌ unreplied";
             return `- **${reviewer}** ${stars}${replied}\n  ${text}\n  _review name: ${r.name}_`;
           });
 
           return {
-            content: `**${location.displayName} — ${reviews.length} review(s)**\n\n${lines.join("\n\n")}`,
+            content: `**${location.displayName}: ${reviews.length} review(s)**\n\n${lines.join("\n\n")}`,
             data: { reviews, locationKey, totalCount: response.totalReviewCount },
           };
         } catch (err) {
@@ -432,7 +608,7 @@ const plugin = definePlugin({
           const reviewer = review.reviewer.isAnonymous ? "Anonymous" : review.reviewer.displayName;
 
           return {
-            content: `**${reviewer}** — ${stars}\n\n${review.comment ?? "(no text)"}\n\nPosted: ${review.createTime}\nReply: ${review.reviewReply?.comment ?? "none"}`,
+            content: `**${reviewer}** ${stars}\n\n${review.comment ?? "(no text)"}\n\nPosted: ${review.createTime}\nReply: ${review.reviewReply?.comment ?? "none"}`,
             data: review,
           };
         } catch (err) {
@@ -449,75 +625,69 @@ const plugin = definePlugin({
         const { reviewName, locationKey, replyText } = params as { reviewName: string; locationKey: string; replyText: string };
         const config = (await ctx.config.get()) as InstanceConfig;
 
-        if (!config.allowReplies) {
-          return fail("[EREPLIES_DISABLED] allowReplies is not enabled in plugin settings. Enable it to post replies.");
-        }
-
-        // Everything below treats the caller's input as untrusted. This is a
-        // public, irreversible write, and until 2026-09-06 the review name
-        // went straight into the Google URL with no shape check and no check
-        // that it belonged to the named location, so a caller authorised for
-        // one location could reply to any review the token could reach.
+        // Every rule about a public post (the allowReplies switch, the review
+        // name's shape, the location's own company, the text limits, the
+        // live overwrite check and the audit row) lives in replyGuard.ts and
+        // is shared with the Reviews page. The agent side is the strict one:
+        // it can never replace a reply that is already on Google, and its
+        // idempotency key is the run plus the review, so a run that retries
+        // the tool cannot post twice. The old checks that used to live here
+        // (2026-09-06) are all inside the guard now; locationKey is kept in
+        // the parameter shape for callers but the location is resolved from
+        // the review name itself, which is the only thing Google needs.
+        void locationKey;
         const parsed = parseReviewName(reviewName);
-        if (!parsed) return fail("[EINVALID_INPUT] reviewName is not a Google review resource name.");
-
-        const location = (config.locations ?? []).find((l) => l.key === locationKey);
-        if (!location) return fail(`[ELOCATION_NOT_FOUND] Location "${locationKey}" not configured.`);
-
-        // A location belongs to one company. The account-level allow-list
-        // (checked inside getOAuthClient) is not enough on its own: two
-        // companies sharing a Google account must still be kept to their own
-        // locations.
-        if (location.targetCompanyId !== runCtx.companyId) {
-          ctx.logger.warn("gbp_reply_to_review: location belongs to another company", {
-            locationKey,
-            companyId: runCtx.companyId,
-          });
-          return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
-        }
-
-        if (!reviewBelongsToLocation(parsed, location)) {
-          return fail(`[EINVALID_INPUT] That review is not under location "${locationKey}".`);
-        }
-
-        if (!replyText?.trim()) return fail("[EINVALID_INPUT] replyText cannot be empty.");
-        if (replyText.length > 4096) return fail("[EINVALID_INPUT] replyText exceeds 4096 character limit.");
+        const idempotencyKey = `run:${runCtx.runId || randomUUID()}:${parsed?.reviewId ?? String(reviewName)}`;
 
         try {
-          const oauth2 = await getOAuthClient(ctx, config, location.accountKey, runCtx.companyId);
-          const result = await postReply(oauth2, parsed, replyText.trim());
+          const receipt = await postReplyGuarded(
+            {
+              config,
+              store: createDbReplyStore(ctx.db),
+              getOAuthClient: (accountKey, companyId) => getOAuthClient(ctx, config, accountKey, companyId),
+              google: { getReview, postReply },
+              logger: ctx.logger,
+              now: () => new Date(),
+            },
+            {
+              source: "agent",
+              // The host stamps runContext.userId when a person drove this
+              // tool through the tools route, and leaves it empty for an
+              // agent running on its own. Passing it on means the audit row
+              // names the person as well as the agent, instead of the agent
+              // alone. It is read through a widened shape because the
+              // installed SDK's ToolRunContext predates the field while the
+              // host sends it, the same approach used for isPortfolioRoot.
+              scope: {
+                companyId: runCtx.companyId,
+                userId: (runCtx as unknown as { userId?: string | null }).userId ?? null,
+              },
+              agent: { agentId: runCtx.agentId ?? null, runId: runCtx.runId ?? null },
+              reviewName,
+              replyText,
+              idempotencyKey,
+              expectedReplyUpdateTime: null,
+              replaceExisting: false,
+            },
+          );
 
-          // Record it locally. This used to swallow every error, so a reply
-          // that was already public could leave the dashboard counting the
-          // review as unreplied until the next sync. Now a failure here is
-          // reported alongside the success it does not undo.
-          const ns = ctx.db.namespace;
-          let localWriteError: string | null = null;
-          try {
-            await ctx.db.execute(
-              `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, updated_at = now() WHERE review_name = $3`,
-              [replyText.trim(), result.updateTime, canonicalReviewName(parsed)],
-            );
-          } catch (dbErr) {
-            localWriteError = (dbErr as Error).message;
-            ctx.logger.error("gbp_reply_to_review: posted to Google but could not record locally", {
-              reviewName: canonicalReviewName(parsed),
-              err: localWriteError,
-            });
-          }
-          if (localWriteError) {
+          if (!receipt.recordedLocally) {
+            // The reply is public; the local table just does not know yet.
+            // Say both, rather than reporting a failed post.
             return {
-              content: `Reply posted publicly at ${result.updateTime}, but it could not be recorded locally (${localWriteError}). The dashboard may show this review as unreplied until the next sync.`,
-              data: { updateTime: result.updateTime, recordedLocally: false },
+              content: `Reply posted publicly to ${receipt.location.displayName} at ${receipt.postedAt}, but it could not be recorded locally. The dashboard may show this review as unreplied until the next sync.`,
+              data: { updateTime: receipt.postedAt, recordedLocally: false },
             };
           }
 
           return {
-            content: `✅ Reply posted successfully to ${location.displayName}.\n\nPosted at: ${result.updateTime}`,
-            data: result,
+            content: receipt.alreadyPosted
+              ? `This run already posted that reply to ${receipt.location.displayName} at ${receipt.postedAt}. Nothing was posted again.`
+              : `✅ Reply posted successfully to ${receipt.location.displayName}.\n\nPosted at: ${receipt.postedAt}`,
+            data: { comment: receipt.replyText, updateTime: receipt.postedAt, recordedLocally: true },
           };
         } catch (err) {
-          return { content: wrapGbpError(err) };
+          return fail(wrapGbpError(err));
         }
       },
     );
@@ -531,6 +701,12 @@ const plugin = definePlugin({
         const config = (await ctx.config.get()) as InstanceConfig;
         const location = (config.locations ?? []).find((l) => l.key === locationKey);
         if (!location) return { content: `[ELOCATION_NOT_FOUND] Location "${locationKey}" not configured.` };
+        // The sync creates review issues in the location's own company and
+        // reads Google with that company's allow-list, so an agent from
+        // another company must not be able to start one by naming the key.
+        if (location.targetCompanyId !== runCtx.companyId) {
+          return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+        }
 
         try {
           await syncLocationReviews(ctx, config, location);
@@ -543,57 +719,33 @@ const plugin = definePlugin({
 
     // ── Data: dashboard summary ───────────────────────────────────────────────
     ctx.data.register("review-summary", async (params) => {
+      // Scoped on the company the HOST checked (params.hostScope), never on
+      // the companyId the page put in params: a member of company A could
+      // send B there and used to be shown B's counts. No stamp means no
+      // data. The portfolio root still gets the roll-up, which is the one
+      // place a cross-company view belongs. See hostScope.ts and
+      // locationScope.ts.
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
       const config = (await ctx.config.get()) as InstanceConfig;
-      const companyId = typeof params?.companyId === "string" ? params.companyId : null;
-
-      // Was unscoped: every company saw every location's counts, ratings and
-      // unreplied backlog. Locations already record the company they belong
-      // to; that field just was not consulted for reading. See
-      // locationScope.ts. The portfolio root still gets the roll-up, which is
-      // the one place a cross-company view belongs.
-      let isPortfolioRoot = false;
-      if (companyId) {
-        try {
-          const company = await ctx.companies.get(companyId);
-          // Read through a widened shape rather than off the SDK's Company
-          // type: the installed SDK in this plugin predates isPortfolioRoot,
-          // and the host sends it regardless. Same approach phone-tools uses
-          // for the agent "assistant" role, and it keeps this working across
-          // SDK versions in both directions.
-          isPortfolioRoot =
-            (company as unknown as { isPortfolioRoot?: boolean } | null)?.isPortfolioRoot === true;
-        } catch (err) {
-          // Cannot confirm this is HQ, so treat it as an ordinary company.
-          // The failure mode of guessing wrong the other way is showing one
-          // company another's data, which is the thing being fixed.
-          ctx.logger.warn("gbp-reviews: could not resolve company for scoping", {
-            companyId,
-            err: (err as Error).message,
-          });
-        }
-      }
 
       const scoped = scopeLocationsForCompany({
-        companyId,
+        companyId: scope.companyId,
         isPortfolioRoot,
         locations: config.locations ?? [],
       });
-      const locations = scoped.locations;
       const summaries: Array<{ locationKey: string; locationName: string; unreplied: number; avgRating: number | null; totalReviews: number }> = [];
 
-      const ns = ctx.db.namespace;
-      for (const location of locations) {
-        const stats = await ctx.db.query<{ unreplied: number; avg_rating: number | null; total: number }>(
-          `SELECT COUNT(CASE WHEN reply_text IS NULL THEN 1 END) as unreplied, AVG(star_rating) as avg_rating, COUNT(*) as total FROM ${ns}.reviews WHERE location_key = $1`,
-          [location.key],
-        );
-        const s = stats[0];
+      for (const location of scoped.locations) {
+        // Read with the location's OWN company id, so a row filed under the
+        // wrong company is never counted, and HQ reads each location the
+        // same way its own company would.
+        const s = await summaryForLocation(ctx.db, location);
         summaries.push({
           locationKey: location.key,
           locationName: location.displayName,
-          unreplied: s?.unreplied ?? 0,
-          avgRating: s?.avg_rating ?? null,
-          totalReviews: s?.total ?? 0,
+          unreplied: s.unreplied,
+          avgRating: s.avgRating,
+          totalReviews: s.total,
         });
       }
 
@@ -601,6 +753,204 @@ const plugin = definePlugin({
         locations: summaries,
         isRollup: scoped.isRollup,
         updatedAt: new Date().toISOString(),
+      };
+    });
+
+    // ── Data: one location's reviews ─────────────────────────────────────────
+    ctx.data.register("review-list", async (params) => {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+
+      const resolved = resolveScopedLocation(config, scope, isPortfolioRoot, params.locationKey);
+      if (!resolved) refuse("ELOCATION_NOT_FOUND", LOCATION_NOT_VISIBLE);
+      const { location, isRollup, canPostFromHere } = resolved;
+      const account = findAccount(config, location.accountKey);
+
+      const [lastSyncedAt, reviews] = await Promise.all([
+        readLastSyncedAt(ctx, location.key),
+        listReviewsForLocation(ctx.db, location),
+      ]);
+
+      return {
+        location: { key: location.key, displayName: location.displayName },
+        // The label a person sees: the Google address when the settings
+        // carry it. A missing account still names its key so the page can
+        // say which one to configure.
+        account: { key: location.accountKey, label: account ? accountLabel(account) : location.accountKey },
+        lastSyncedAt,
+        canPostFromHere,
+        isRollup,
+        reviews,
+      };
+    });
+
+    // ── Data: one review, with what Google holds right now ───────────────────
+    ctx.data.register("review-detail", async (params) => {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+
+      // The name is trusted only after parsing, and the location comes from
+      // the name's own ids among the locations this company may see. One
+      // message whether the location is unknown or another company's.
+      const parsed = parseReviewName(params.reviewName);
+      if (!parsed) refuse("EINVALID_INPUT", "That is not a Google review this plugin can show.");
+      const resolved = resolveScopedLocationForReview(config, scope, isPortfolioRoot, parsed);
+      if (!resolved) refuse("ELOCATION_NOT_FOUND", LOCATION_NOT_VISIBLE);
+      const { location, isRollup, canPostFromHere } = resolved;
+
+      const review = await findReviewForLocation(ctx.db, canonicalReviewName(parsed), location);
+      if (!review) {
+        refuse("EREVIEW_NOT_FOUND", "That review is not in Paperclip yet. Press Sync now on its location, then open it again.");
+      }
+
+      // What Google holds right now. A reply written in Google's own console
+      // is invisible locally until the next sync, so the page shows the live
+      // one and the post action compares against it. When Google cannot be
+      // read the page says so and offers no Post button; it does not fail
+      // the whole screen, because the review and the suggested reply are
+      // still useful for copying into Google's console by hand.
+      let liveReply: { text: string; updateTime: string } | null = null;
+      let liveChecked = false;
+      let liveError: string | null = null;
+      let liveReview: GbpReview | null = null;
+      try {
+        const oauth2 = await getOAuthClient(ctx, config, location.accountKey, location.targetCompanyId);
+        const live = await getReview(oauth2, parsed);
+        liveReview = live;
+        liveReply = live.reviewReply ? { text: live.reviewReply.comment, updateTime: live.reviewReply.updateTime } : null;
+        liveChecked = true;
+      } catch (err) {
+        liveError = wrapGbpError(err);
+        ctx.logger.warn("gbp-reviews: could not read the review from Google", {
+          reviewName: review.reviewName,
+          error: liveError,
+        });
+      }
+
+      // Opening a review is also how a lost attempt gets settled. An attempt
+      // whose worker died, or whose connection dropped after the write, used
+      // to sit unsettled for ever and hide the Post button with it, because
+      // only a retry carrying that same key could clear it and the key lives
+      // in the browser tab. Now that Google has just been read, every such
+      // row on this review is compared against the live reply and told the
+      // truth. It is skipped when Google could not be read, because then
+      // there is nothing honest to compare against.
+      if (liveReview) {
+        try {
+          await settlePendingAttempts(
+            { store: createDbReplyStore(ctx.db), logger: ctx.logger, now: () => new Date() },
+            review.reviewName,
+            liveReview,
+          );
+        } catch (err) {
+          ctx.logger.warn("gbp-reviews: could not settle an earlier attempt on this review", {
+            reviewName: review.reviewName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      const account = findAccount(config, location.accountKey);
+      const pendingAttempt = await findPendingAttempt(ctx.db, review.reviewName, STALE_IN_FLIGHT_MS);
+
+      return {
+        review,
+        liveReply,
+        liveChecked,
+        liveError,
+        suggestedReply: buildDraftReply(location.displayName, review.reviewerName, review.starRating, review.reviewText ?? undefined),
+        // Computed here from the settings and never editable on the page.
+        postsAs: postsAs(location, account ?? { key: location.accountKey }),
+        posting: {
+          enabled: config.allowReplies === true,
+          // Two different problems, told apart. A location naming an account
+          // the settings do not hold is a missing account, not a refused one,
+          // and saying "not allowed for this company" about an account that
+          // is not there sends the reader looking for an allow-list entry
+          // that cannot exist.
+          accountFound: account != null,
+          accountAllowed: account ? isCompanyAllowedForAccount(account.allowedCompanies, location.targetCompanyId) : false,
+          // The key the location asks for, so a missing-account sentence can
+          // name it. It is what the reader has to look for in the settings.
+          accountKey: location.accountKey,
+        },
+        canPostFromHere,
+        isRollup,
+        pendingAttempt,
+        issueId: review.issueId,
+      };
+    });
+
+    // ── Action: post a reply from the Reviews page ───────────────────────────
+    ctx.actions.register("review-post-reply", async (params) => {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+
+      // HQ can read every location but never posts: a post's company decides
+      // the account allow-list and the audit trail, and from the roll-up it
+      // would be the wrong one.
+      if (isPortfolioRoot) refuse("EROLLUP_READ_ONLY", "Open this location's own company to reply.");
+
+      // The confirm panel mints the key and reuses it on retry; without one
+      // there is nothing to make a double click harmless.
+      const idempotencyKey = typeof params.idempotencyKey === "string" ? params.idempotencyKey.trim() : "";
+      if (idempotencyKey.length === 0 || idempotencyKey.length > 200) {
+        refuse("EINVALID_INPUT", "This attempt has no key. Open the review again and try once more.");
+      }
+      const expected = params.expectedReplyUpdateTime;
+      if (expected !== undefined && expected !== null && typeof expected !== "string") {
+        refuse("EINVALID_INPUT", "The reply you were shown could not be identified. Open the review again.");
+      }
+
+      // Everything else (the allowReplies switch, the name, the location's
+      // own company, the text, the live overwrite check, the audit row, the
+      // one PUT) is the shared guard, the same one the agent tool goes
+      // through. A refusal is thrown as-is so the bridge reports a failure.
+      return postReplyGuarded(
+        {
+          config,
+          store: createDbReplyStore(ctx.db),
+          getOAuthClient: (accountKey, companyId) => getOAuthClient(ctx, config, accountKey, companyId),
+          google: { getReview, postReply },
+          logger: ctx.logger,
+          now: () => new Date(),
+        },
+        {
+          source: "human",
+          scope,
+          reviewName: params.reviewName,
+          replyText: params.replyText,
+          idempotencyKey,
+          expectedReplyUpdateTime: typeof expected === "string" && expected.length > 0 ? expected : null,
+          replaceExisting: params.replaceExisting === true,
+        },
+      );
+    });
+
+    // ── Action: pull one location's reviews in now ───────────────────────────
+    ctx.actions.register("review-sync-location", async (params) => {
+      const scope = requireCompanyScope(params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+
+      // Only from the location's own company, never the roll-up: the sync
+      // creates issues in that company and uses its account allow-list.
+      const locationKey = typeof params.locationKey === "string" ? params.locationKey : "";
+      const location = (config.locations ?? []).find(
+        (l) => l.key === locationKey && l.targetCompanyId === scope.companyId,
+      );
+      if (!location) refuse("ELOCATION_NOT_FOUND", "That location is not this company's. Open the location's own company to sync it.");
+
+      const counts = await syncLocationReviews(ctx, config, location);
+      // Read back what was recorded rather than the time this handler happens
+      // to be at, so the page is told the same thing the next page load will
+      // be told.
+      const lastSyncedAt = await readLastSyncedAt(ctx, location.key);
+      return {
+        location: { key: location.key, displayName: location.displayName },
+        total: counts.total,
+        new: counts.new,
+        syncedAt: counts.syncedAt,
+        lastSyncedAt,
       };
     });
 
