@@ -62,3 +62,32 @@ export function scopeLocationsForCompany<T extends ScopedLocation>(
     isRollup: false,
   };
 }
+
+/**
+ * Which configured location a review EMAIL belongs to.
+ *
+ * Google's notification emails name the business, not the location id, so
+ * the match is by display name. The old code fell back to the first
+ * configured location whenever the name did not match, regardless of how
+ * many locations there were, which filed company B's review as an issue in
+ * company A. That is the write-side twin of the read-side leak fixed in
+ * v0.1.8.
+ *
+ * The fallback survives only where it cannot be wrong: exactly one location
+ * configured, so there is nothing else it could be. With several, a name
+ * that matches nothing returns null and the caller skips the email and logs
+ * it, so somebody can fix the display name. Guessing is not an option when
+ * the guess decides which company sees a customer's words.
+ */
+export function resolveEmailLocation<T extends { displayName?: string }>(
+  locations: readonly T[] | null | undefined,
+  businessName: string | null | undefined,
+): T | null {
+  if (!locations || locations.length === 0) return null;
+  const wanted = businessName?.trim().toLowerCase();
+  if (wanted) {
+    const match = locations.find((l) => l.displayName?.trim().toLowerCase() === wanted);
+    if (match) return match;
+  }
+  return locations.length === 1 ? locations[0]! : null;
+}

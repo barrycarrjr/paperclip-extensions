@@ -16,7 +16,8 @@
     "build": "node esbuild.config.mjs",
     "clean": "rimraf dist",
     "typecheck": "tsc --noEmit",
-    "grant": "tsx scripts/grant.ts"
+    "grant": "tsx scripts/grant.ts",
+    "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.427.0",

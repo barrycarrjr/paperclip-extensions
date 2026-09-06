@@ -1,5 +1,19 @@
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
-import { scopeLocationsForCompany } from "./locationScope.js";
+import { resolveEmailLocation, scopeLocationsForCompany } from "./locationScope.js";
+import { canonicalReviewName, parseReviewName, reviewBelongsToLocation } from "./reviewName.js";
+
+/**
+ * A tool result that the host will treat as a failure.
+ *
+ * Every error path here used to return `{ content: "[E...] ..." }`, which is
+ * success-shaped: the host saw a completed call with some text in it and
+ * never marked the reply as failed. ToolResult has an `error` field for
+ * exactly this. Using it means a refused or failed public post shows up as
+ * refused or failed, rather than as a run that went fine.
+ */
+function fail(message: string) {
+  return { content: message, error: message };
+}
 import { getOAuthClient, wrapGbpError } from "./gbpAuth.js";
 import {
   getAllReviews,
@@ -220,13 +234,21 @@ const plugin = definePlugin({
           const parsed = await fetchAndParseEmail(oauth2, msg.id);
           if (!parsed) continue;
 
-          // Match to a configured location by business name
-          const location = locations.find(
-            (l) => l.displayName.toLowerCase() === parsed.businessName.toLowerCase(),
-          ) ?? locations[0]; // Fall back to first location if only one configured
+          // Match to a configured location by business name. The comment on
+          // the old code said "fall back to the first location if only one is
+          // configured", but the code fell back regardless of how many there
+          // were, so a review email for company B's location opened an issue
+          // in company A. That is the write-side twin of the read-side leak
+          // fixed in v0.1.8. Now the fallback applies only when it is the
+          // only possible answer; otherwise the email is skipped and logged
+          // so somebody can fix the display name, rather than guessed at.
+          const location = resolveEmailLocation(locations, parsed.businessName);
 
           if (!location) {
-            ctx.logger.warn("poll-review-emails: no location match", { businessName: parsed.businessName });
+            ctx.logger.warn("poll-review-emails: no location match, skipped", {
+              businessName: parsed.businessName,
+              configuredLocations: locations.length,
+            });
             continue;
           }
 
@@ -392,8 +414,20 @@ const plugin = definePlugin({
         if (!location) return { content: `[ELOCATION_NOT_FOUND] Location "${locationKey}" not configured.` };
 
         try {
+          // Same checks as the reply tool: a well-formed name, a location
+          // this company owns, and a review that is actually under it. A read
+          // is not a public write, but the token can reach every location on
+          // the account, and reading another company's review is still a leak.
+          const parsed = parseReviewName(reviewName);
+          if (!parsed) return fail("[EINVALID_INPUT] reviewName is not a Google review resource name.");
+          if (location.targetCompanyId !== runCtx.companyId) {
+            return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+          }
+          if (!reviewBelongsToLocation(parsed, location)) {
+            return fail(`[EINVALID_INPUT] That review is not under location "${locationKey}".`);
+          }
           const oauth2 = await getOAuthClient(ctx, config, location.accountKey, runCtx.companyId);
-          const review = await getReview(oauth2, reviewName);
+          const review = await getReview(oauth2, parsed);
           const stars = starRatingToEmoji(review.starRating);
           const reviewer = review.reviewer.isAnonymous ? "Anonymous" : review.reviewer.displayName;
 
@@ -416,25 +450,67 @@ const plugin = definePlugin({
         const config = (await ctx.config.get()) as InstanceConfig;
 
         if (!config.allowReplies) {
-          return { content: "[EREPLIES_DISABLED] allowReplies is not enabled in plugin settings. Enable it to post replies." };
+          return fail("[EREPLIES_DISABLED] allowReplies is not enabled in plugin settings. Enable it to post replies.");
         }
 
-        const location = (config.locations ?? []).find((l) => l.key === locationKey);
-        if (!location) return { content: `[ELOCATION_NOT_FOUND] Location "${locationKey}" not configured.` };
+        // Everything below treats the caller's input as untrusted. This is a
+        // public, irreversible write, and until 2026-09-06 the review name
+        // went straight into the Google URL with no shape check and no check
+        // that it belonged to the named location, so a caller authorised for
+        // one location could reply to any review the token could reach.
+        const parsed = parseReviewName(reviewName);
+        if (!parsed) return fail("[EINVALID_INPUT] reviewName is not a Google review resource name.");
 
-        if (!replyText?.trim()) return { content: "[EINVALID_INPUT] replyText cannot be empty." };
-        if (replyText.length > 4096) return { content: "[EINVALID_INPUT] replyText exceeds 4096 character limit." };
+        const location = (config.locations ?? []).find((l) => l.key === locationKey);
+        if (!location) return fail(`[ELOCATION_NOT_FOUND] Location "${locationKey}" not configured.`);
+
+        // A location belongs to one company. The account-level allow-list
+        // (checked inside getOAuthClient) is not enough on its own: two
+        // companies sharing a Google account must still be kept to their own
+        // locations.
+        if (location.targetCompanyId !== runCtx.companyId) {
+          ctx.logger.warn("gbp_reply_to_review: location belongs to another company", {
+            locationKey,
+            companyId: runCtx.companyId,
+          });
+          return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+        }
+
+        if (!reviewBelongsToLocation(parsed, location)) {
+          return fail(`[EINVALID_INPUT] That review is not under location "${locationKey}".`);
+        }
+
+        if (!replyText?.trim()) return fail("[EINVALID_INPUT] replyText cannot be empty.");
+        if (replyText.length > 4096) return fail("[EINVALID_INPUT] replyText exceeds 4096 character limit.");
 
         try {
           const oauth2 = await getOAuthClient(ctx, config, location.accountKey, runCtx.companyId);
-          const result = await postReply(oauth2, reviewName, replyText.trim());
+          const result = await postReply(oauth2, parsed, replyText.trim());
 
-          // Update local DB
+          // Record it locally. This used to swallow every error, so a reply
+          // that was already public could leave the dashboard counting the
+          // review as unreplied until the next sync. Now a failure here is
+          // reported alongside the success it does not undo.
           const ns = ctx.db.namespace;
-          await ctx.db.execute(
-            `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, updated_at = now() WHERE review_name = $3`,
-            [replyText.trim(), result.updateTime, reviewName],
-          ).catch(() => { /* non-fatal if review not in DB yet */ });
+          let localWriteError: string | null = null;
+          try {
+            await ctx.db.execute(
+              `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, updated_at = now() WHERE review_name = $3`,
+              [replyText.trim(), result.updateTime, canonicalReviewName(parsed)],
+            );
+          } catch (dbErr) {
+            localWriteError = (dbErr as Error).message;
+            ctx.logger.error("gbp_reply_to_review: posted to Google but could not record locally", {
+              reviewName: canonicalReviewName(parsed),
+              err: localWriteError,
+            });
+          }
+          if (localWriteError) {
+            return {
+              content: `Reply posted publicly at ${result.updateTime}, but it could not be recorded locally (${localWriteError}). The dashboard may show this review as unreplied until the next sync.`,
+              data: { updateTime: result.updateTime, recordedLocally: false },
+            };
+          }
 
           return {
             content: `✅ Reply posted successfully to ${location.displayName}.\n\nPosted at: ${result.updateTime}`,

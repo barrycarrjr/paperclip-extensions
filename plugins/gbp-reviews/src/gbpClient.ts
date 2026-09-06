@@ -1,3 +1,4 @@
+import { canonicalReviewName, type ParsedReviewName } from "./reviewName.js";
 import type { GbpListReviewsResponse, GbpReview } from "./types.js";
 import type { OAuth2Client } from "google-auth-library";
 import { getAccessToken } from "./gbpAuth.js";
@@ -61,17 +62,20 @@ export async function getAllReviews(
 
 export async function getReview(
   oauth2Client: OAuth2Client,
-  reviewName: string,
+  review: ParsedReviewName,
 ): Promise<GbpReview> {
-  return gbpFetch(oauth2Client, `/${reviewName}`) as Promise<GbpReview>;
+  return gbpFetch(oauth2Client, `/${canonicalReviewName(review)}`) as Promise<GbpReview>;
 }
 
+// Takes a PARSED name on purpose: the only way to get one is through
+// parseReviewName, so a raw string from a caller can no longer reach the
+// URL path. See reviewName.ts.
 export async function postReply(
   oauth2Client: OAuth2Client,
-  reviewName: string,
+  review: ParsedReviewName,
   comment: string,
 ): Promise<{ comment: string; updateTime: string }> {
-  return gbpFetch(oauth2Client, `/${reviewName}/reply`, {
+  return gbpFetch(oauth2Client, `/${canonicalReviewName(review)}/reply`, {
     method: "PUT",
     body: { comment },
   }) as Promise<{ comment: string; updateTime: string }>;
@@ -79,9 +83,9 @@ export async function postReply(
 
 export async function deleteReply(
   oauth2Client: OAuth2Client,
-  reviewName: string,
+  review: ParsedReviewName,
 ): Promise<void> {
-  await gbpFetch(oauth2Client, `/${reviewName}/reply`, { method: "DELETE" });
+  await gbpFetch(oauth2Client, `/${canonicalReviewName(review)}/reply`, { method: "DELETE" });
 }
 
 export async function getGbpAccounts(
