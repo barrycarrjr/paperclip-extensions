@@ -1,15 +1,15 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "gbp-reviews";
-const PLUGIN_VERSION = "0.1.9";
+const PLUGIN_VERSION = "0.1.10";
 
-const SETUP_INSTRUCTIONS = `# Setup — Google Business Profile Reviews
+const SETUP_INSTRUCTIONS = `# Setup: Google Business Profile Reviews
 
-This plugin monitors GBP reviews for your portfolio companies and lets CEO agents reply directly from Paperclip.
+This plugin monitors GBP reviews for your portfolio companies and lets agents and people reply directly from Paperclip.
 
 ## What it does
-- **Phase 1**: Polls Gmail for GBP review notification emails → creates Paperclip issues with AI-drafted replies
-- **Phase 2**: Posts approved replies back to GBP via the My Business API
+- **Phase 1**: Polls Gmail for GBP review notification emails and creates Paperclip issues with suggested replies
+- **Phase 2**: Posts approved replies back to GBP via the My Business API, from an agent tool or from the Reviews page
 - **Phase 3**: Daily/weekly review digest, sentiment tracking, and dashboard
 
 ---
@@ -68,9 +68,9 @@ Under **GBP locations**, add each location:
 ---
 
 ## Troubleshooting
-- **\`invalid_grant\`** — re-run the grant script and update the refresh token secret.
-- **Missing Gmail permissions** — make sure the refresh token was obtained with the \`gmail.readonly\` scope.
-- **Reviews not appearing** — confirm the GBP account has Owner/Manager access to the location.
+- **\`invalid_grant\`**: re-run the grant script and update the refresh token secret.
+- **Missing Gmail permissions**: make sure the refresh token was obtained with the \`gmail.readonly\` scope.
+- **Reviews not appearing**: confirm the GBP account has Owner/Manager access to the location.
 `;
 
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
@@ -80,7 +80,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "GBP Reviews",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Google Business Profile review management. Detects incoming review emails, creates Paperclip issues with AI-drafted replies, posts replies via the GBP API, and surfaces a review dashboard.",
+    "Google Business Profile review management. Detects incoming review emails, creates Paperclip issues with suggested replies, posts replies via the GBP API from an agent or the Reviews page, and surfaces a review dashboard.",
   author: "Barry Carr",
   categories: ["automation", "connector"],
   capabilities: [
@@ -118,7 +118,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     {
       jobKey: "poll-review-emails",
       displayName: "Poll Gmail for new GBP review emails",
-      description: "Scans the configured Gmail inbox for GBP review notification emails and creates Paperclip issues with AI-drafted replies.",
+      description: "Scans the configured Gmail inbox for GBP review notification emails and creates Paperclip issues with suggested replies.",
       schedule: "*/15 * * * *",
     },
     {
@@ -141,7 +141,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       allowReplies: {
         type: "boolean",
         title: "Allow posting replies to GBP",
-        description: "Master switch. When off, the plugin drafts replies but never posts them — agents must manually post. Default: off.",
+        description: "Master switch. When off, nobody can post a reply from Paperclip, not agents and not people using the Reviews page; drafts are still shown. Default: off.",
         default: false,
       },
       gmailAccountKey: {
