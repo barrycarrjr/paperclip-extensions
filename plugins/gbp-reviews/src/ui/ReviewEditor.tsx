@@ -12,7 +12,12 @@
  * the review, the suggested reply and the text box stay so the words can be
  * copied into Google's console by hand.
  */
-import { useEffect, useMemo, useReducer, type CSSProperties } from "react";
+// Only names the host's React stand-in re-exports may be imported here. The
+// page is one module: a name the stand-in does not export fails at link time
+// and the whole file never runs, so the page registers nothing and the host
+// shows a placeholder. That is what happened in 0.1.10, which imported
+// useReducer. reactImports.test.ts pins the list.
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { usePluginAction, usePluginData, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import {
   MAX_REPLY_LENGTH,
@@ -82,11 +87,15 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
 
   const storage = useMemo(() => browserStorage(), []);
   const draftKey = draftStorageKey(companyId, reviewName);
-  const [state, dispatch] = useReducer(
-    (s: EditorState, e: EditorEvent) => reduceEditor(s, e),
-    draftKey,
-    (key) => initialEditorState(readDraft(storage, key)),
-  );
+  // useState plus a dispatch wrapper, not useReducer: the host's React
+  // stand-in does not forward useReducer. reduceEditor is unchanged and still
+  // decides every transition; the updater form hands it the newest state, so
+  // this behaves exactly as the reducer hook did, including two dispatches in
+  // one handler.
+  const [state, setState] = useState<EditorState>(() => initialEditorState(readDraft(storage, draftKey)));
+  const dispatch = useCallback((event: EditorEvent) => {
+    setState((s) => reduceEditor(s, event));
+  }, []);
 
   // Whatever is typed is kept in this browser until it is posted or cleared.
   useEffect(() => {

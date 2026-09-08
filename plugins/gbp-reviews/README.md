@@ -6,6 +6,23 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
+- **v0.1.11**: Fixes a blank Reviews page. The whole page failed to load in
+  v0.1.10 and showed a dashed placeholder instead.
+
+  Paperclip does not give a plugin's browser code the real React. It swaps
+  every `import ... from "react"` for a small stand-in that hands back a fixed
+  list of React names. The reply editor added in v0.1.10 asked that stand-in
+  for `useReducer`, which is not on the list. A browser checks those names
+  before it runs any of the file, so the one missing name stopped the entire
+  page from starting, not just the reply box, and nothing was left to register
+  the page with the host. v0.1.9 asked React for nothing and was unaffected.
+
+  The editor now keeps the same state in `useState` and calls the same
+  `reduceEditor` function through a small wrapper, so nothing about how the
+  reply box behaves has changed. A new test reads the imports in every source
+  file, and in the built bundle when one is present, and fails if any of them
+  asks for a name the stand-in does not hand back.
+
 - **v0.1.10**: People can reply to a review from the Reviews page, through one
   guarded path shared with the agent tool.
 
