@@ -205,9 +205,13 @@ async function syncLocationReviews(
   ctx: Parameters<Parameters<typeof definePlugin>[0]["setup"]>[0],
   config: InstanceConfig,
   location: LocationConfig,
+  skipCompanyCheck = false,
 ): Promise<{ total: number; new: number; syncedAt: string }> {
   const ns = ctx.db.namespace;
-  const oauth2 = await getOAuthClient(ctx, config, location.accountKey, location.targetCompanyId);
+  const oauth2 = await getOAuthClient(
+    ctx, config, location.accountKey, location.targetCompanyId,
+    skipCompanyCheck ? { skipCompanyCheck: true } : undefined,
+  );
   const reviews = await getAllReviews(oauth2, location.googleAccountId, location.locationId);
 
   let newCount = 0;
@@ -548,12 +552,24 @@ const plugin = definePlugin({
         // account used to be enough for an agent in the first to list the
         // second's reviews by naming its key. The reply tool and the get tool
         // have always checked this; these two did not.
+        let isCallerPortfolioRoot = false;
         if (location.targetCompanyId !== runCtx.companyId) {
-          return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+          // The portfolio root may list any location for the cross-company roll-up view,
+          // mirroring the dashboard's own scopeLocationsForCompany logic.
+          isCallerPortfolioRoot = await isPortfolioRootCompany(ctx, runCtx.companyId);
+          if (!isCallerPortfolioRoot) {
+            return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+          }
         }
 
         try {
-          const oauth2 = await getOAuthClient(ctx, config, location.accountKey, runCtx.companyId);
+          // Use the location's own company for OAuth. When the caller is the portfolio
+          // root the per-company allow-list check is skipped (same reasoning as the
+          // dashboard, which already has cross-company read via scopeLocationsForCompany).
+          const oauth2 = await getOAuthClient(
+            ctx, config, location.accountKey, location.targetCompanyId,
+            isCallerPortfolioRoot ? { skipCompanyCheck: true } : undefined,
+          );
           const response = await listReviews(oauth2, location.googleAccountId, location.locationId);
           const reviews = (response.reviews ?? []).filter((r) => includeReplied || !r.reviewReply);
 
@@ -704,12 +720,18 @@ const plugin = definePlugin({
         // The sync creates review issues in the location's own company and
         // reads Google with that company's allow-list, so an agent from
         // another company must not be able to start one by naming the key.
+        // Exception: the portfolio root may sync any location, the same way
+        // the dashboard's sync action lets HQ trigger pulls.
+        let isSyncCallerPortfolioRoot = false;
         if (location.targetCompanyId !== runCtx.companyId) {
-          return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+          isSyncCallerPortfolioRoot = await isPortfolioRootCompany(ctx, runCtx.companyId);
+          if (!isSyncCallerPortfolioRoot) {
+            return fail(`[ECOMPANY_NOT_ALLOWED] Location "${locationKey}" is not this company's.`);
+          }
         }
 
         try {
-          await syncLocationReviews(ctx, config, location);
+          await syncLocationReviews(ctx, config, location, isSyncCallerPortfolioRoot);
           return { content: `✅ Synced reviews for ${location.displayName}.` };
         } catch (err) {
           return { content: wrapGbpError(err) };
