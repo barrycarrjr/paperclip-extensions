@@ -7,6 +7,58 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.19.0** - Every message the plugin sends now leaves a copy in the
+  mailbox's Sent folder, and a reply or forward marks the message it answered,
+  so the replied and forwarded icons show in Outlook and other mail programs.
+
+  SMTP only delivers mail. Keeping a copy is the sending program's job: Gmail
+  and Microsoft 365 file one for anything sent through their SMTP servers, but
+  Rackspace files nothing, and the plugin never uploaded one. So mail sent from
+  Paperclip reached the recipient and left no record in the sender's own
+  mailbox; on one Rackspace mailbox the newest message in Sent Items was four
+  months old, although mail had been going out from Paperclip all along. All
+  four send paths (`email_send`, `email_reply`, `email.send-new`,
+  `email.send-reply`) now go through one function that sends, uploads a copy
+  marked read, and sets the mark. A test fails if a send path bypasses it.
+
+  The copy goes to the folder the mailbox's own mail programs use. Rackspace
+  mailboxes carry both "Sent" and "Sent Items", so with more than one Sent
+  folder the one holding the most mail wins, then the server's own `\Sent`
+  label, then the usual name. A new optional mailbox setting, **Sent folder**,
+  names it outright, and **Test connection** now reports which folder is used
+  and why. Gmail and Microsoft 365 are left to file their own copy unless
+  **Sent folder** is set. A copy already in the folder (same Message-ID) is
+  never uploaded twice.
+
+  Replies set `\Answered` on the original and forwards set `$Forwarded`. A
+  forward names its original with the new `forwardOf: { uid, folder, messageId? }`
+  on `email.send-new`, or `forward_of_uid` plus `forward_of_folder` (and
+  optionally `forward_of_message_id`) on `email_send`. The folder is required
+  because a UID only means something inside its own folder, and a Message-ID,
+  when known, is checked against the message before it is marked. An
+  `email_send` reply with `in_reply_to` marks the original when it is in the
+  watched folder and its Message-ID matches exactly (IMAP's header search alone
+  matches partial text). A mark is only reported as set once the server shows
+  it, and a server that says it cannot keep `$Forwarded` is reported once by
+  **Test connection** rather than warned about on every send. The copy uploads
+  on a short-lived connection of its own, so a large one cannot hold up the
+  mailbox's shared connection and the next send queued behind it.
+
+  None of this can fail a send. Once SMTP has accepted the message, a copy or
+  mark that did not happen comes back in the result (`sentCopy` / `original` on
+  the bridge actions, `sent_copy` / `original_mark` on the tools, plus a warning
+  in the tool's text) and in the plugin log. The follow-ups are only waited for
+  until 20 seconds into the call, because the host abandons a plugin call at 30
+  seconds and would report an already-sent message as failed, inviting a second
+  send. Anything still running then (a large attachment uploading twice, say)
+  comes back as `pending` and finishes on its own, with the outcome in the log.
+  For the same reason a send that has not started SMTP by 25 seconds refuses
+  with `[ESEND_TOO_LATE]` and sends nothing.
+
+  Message rows (`email.list-messages`, `email.search`, `email_search`) and
+  fetched messages (`email.fetch-message`, `email_fetch`) now carry `answered`
+  and `forwarded`, so the host's Email pages can show the same icons.
+
 - **v0.18.9** — The mailbox listing now carries the address each mailbox sends as.
 
   The host's compose dialog and reply box show a From line before you send,
@@ -268,9 +320,18 @@ its company list — use that as your migration TODO list.
 | `subject` | string | yes | |
 | `body` | string | yes | Plain text. Required even if `body_html` is set. |
 | `body_html` | string | no | HTML alternative |
-| `in_reply_to` | string | no | Message-ID being replied to |
+| `in_reply_to` | string | no | Message-ID being replied to. The original is marked answered when it is in the mailbox's poll folder. |
 | `references` | string[] | no | Older Message-IDs in the thread |
 | `reply_to` | string | no | Reply-To header override |
+| `forward_of_uid` | number | no | When forwarding a message from the mailbox: its UID. Marked `$Forwarded` after sending. |
+| `forward_of_folder` | string | with `forward_of_uid` | Folder the forwarded message is in. Required, because a UID only identifies a message within its own folder. |
+| `forward_of_message_id` | string | no | Message-ID of the forwarded message. When given, the message at that UID is only marked if its Message-ID matches. |
+
+Every send, from any tool or bridge action, saves a copy to the mailbox's Sent
+folder (see **v0.19.0** above for how the folder is chosen), except on Gmail and
+Microsoft 365, which keep their own copy unless the mailbox's **Sent folder**
+setting is filled in. `email_reply` and `email.send-reply` mark the original
+`\Answered`.
 
 `email_search`:
 
@@ -324,7 +385,10 @@ POST /api/plugins/tools/execute
 }
 ```
 
-Returns Message-ID + SMTP response on success, or `error` on failure.
+Returns Message-ID + SMTP response on success, or `error` on failure. The
+result also carries `sent_copy` (where the copy went, or why none was saved)
+and, for a reply or forward, `original_mark`. A missing copy or mark never turns
+a sent message into an error, since the mail has already gone.
 
 ## Error codes
 
@@ -333,6 +397,7 @@ Returns Message-ID + SMTP response on success, or `error` on failure.
 | `[ECOMPANY_NOT_ALLOWED]` | Calling company isn't in the mailbox's `allowedCompanies`, or the list is empty. |
 | `[<SMTP_CODE>]` | Wrapped from nodemailer / SMTP server (e.g. `[EAUTH]`, `[ETIMEDOUT]`, `[ESOCKET]`). |
 | `[SMTP_ERROR]` | Generic fallback when nodemailer didn't supply a code. |
+| `[ESEND_TOO_LATE]` | The call had used 25 of the host's 30 seconds before SMTP could start, so nothing was sent. Usually the mailbox's shared connection was busy or stalled (a large list loading, say) or signing in was slow. Safe to retry. |
 
 ## Authors
 

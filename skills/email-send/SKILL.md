@@ -79,6 +79,12 @@ Available parameters (all under `parameters`):
 | `in_reply_to` | string | no | Message-ID being replied to |
 | `references` | string[] | no | Older Message-IDs in the thread |
 | `reply_to` | string | no | Reply-To header override |
+| `forward_of_uid` | number | no | When forwarding an email from the mailbox, pass its UID so the original is marked forwarded (the icon the operator sees in Outlook) |
+| `forward_of_folder` | string | with `forward_of_uid` | Folder the forwarded email is in (the folder `email_search` returned it from). Required alongside `forward_of_uid` |
+| `forward_of_message_id` | string | no | The forwarded email's Message-ID (from `email_search` / `email_fetch`). Pass it when you have it: the original is then only marked if it matches |
+
+A copy of every email sent is saved to the mailbox's Sent folder
+automatically, so do not send a second copy to the operator as a record.
 
 To discover what mailbox identifiers are valid, look at the operator's
 `email-tools` plugin config (UI: `/instance/settings/plugins/email-tools`,

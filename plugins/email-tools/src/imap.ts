@@ -7,6 +7,19 @@ import {
 } from "./attachments.js";
 import { htmlToMarkdown } from "./markdown.js";
 
+/** The replied mark mail programs set on a message (an RFC 3501 system flag). */
+export const ANSWERED_FLAG = "\\Answered";
+/** The forwarded mark. Not a system flag: the IMAP keyword mail programs use for it. */
+export const FORWARDED_FLAG = "$Forwarded";
+
+/** Whether a flag set holds `flag`, ignoring case: servers may echo a keyword in another case. */
+export function hasFlag(flags: Iterable<string> | undefined, flag: string): boolean {
+  if (!flags) return false;
+  const wanted = flag.toLowerCase();
+  for (const f of flags) if (f.toLowerCase() === wanted) return true;
+  return false;
+}
+
 export interface MailboxRuntime {
   key: string;
   user: string;
@@ -35,6 +48,10 @@ export interface ParsedMessage {
   html: string;
   markdown: string;
   attachments: Array<{ name: string; mime: string; size: number; partId: string; inline: boolean }>;
+  /** Replied to, from any mail program (the \Answered flag). */
+  answered: boolean;
+  /** Forwarded, from any mail program (the $Forwarded keyword). */
+  forwarded: boolean;
 }
 
 export interface SearchInput {
@@ -66,6 +83,10 @@ export interface SearchResultItem {
   date: string;
   snippet: string;
   unseen: boolean;
+  /** Replied to, from any mail program (the \Answered flag). */
+  answered: boolean;
+  /** Forwarded, from any mail program (the $Forwarded keyword). */
+  forwarded: boolean;
 }
 
 // ImapFlow reports async socket failures ("Socket timeout", ECONNRESET) as an
@@ -219,6 +240,8 @@ export async function fetchParsedMessage(
       html,
       markdown: html ? htmlToMarkdown(html) : text,
       attachments: collectAttachmentMeta(parsed.attachments ?? []),
+      answered: hasFlag(msg.flags, ANSWERED_FLAG),
+      forwarded: hasFlag(msg.flags, FORWARDED_FLAG),
     };
   } finally {
     lock.release();
@@ -266,6 +289,8 @@ export async function fetchHeaders(
         date: date instanceof Date ? date.toISOString() : (date ?? ""),
         snippet,
         unseen: !msg.flags?.has("\\Seen"),
+        answered: hasFlag(msg.flags, ANSWERED_FLAG),
+        forwarded: hasFlag(msg.flags, FORWARDED_FLAG),
       });
     }
     out.sort((a, b) => (b.date < a.date ? -1 : 1));

@@ -6,13 +6,30 @@ import {
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
 import nodemailer from "nodemailer";
-import {
-  mapAttachmentsForNodemailer,
-  parseOutboundAttachments,
-  type OutboundAttachment,
-} from "./attachments.js";
+import { parseOutboundAttachments } from "./attachments.js";
 import { assertCompanyAccess, isCompanyAllowed } from "./companyAccess.js";
+import { toMailOptions, type SendInput } from "./mail-options.js";
 import {
+  assertTimeToSend,
+  copyMissing,
+  followUpBudget,
+  markMissing,
+  parseBridgeForwardOf,
+  parseToolForwardOf,
+} from "./delivery-policy.js";
+import {
+  awaitFollowUps,
+  buildSentCopy,
+  providerFilingSentCopy,
+  recordSend,
+  type MarkOutcome,
+  type MarkTarget,
+  type SentCopyInput,
+  type SentCopyOutcome,
+} from "./sent-copy.js";
+import {
+  ANSWERED_FLAG,
+  FORWARDED_FLAG,
   fetchHeaders,
   fetchParsedMessage,
   findTrashFolder,
@@ -21,6 +38,8 @@ import {
   listFolders,
   listSelectableFolders,
   moveMessages,
+  openConnection,
+  safeLogout,
   searchMessages,
   setSeenFlag,
   type ParsedMessage,
@@ -125,17 +144,6 @@ async function buildSmtpRuntime(
   };
 }
 
-function ensureAngled(id: string): string {
-  const t = id.trim();
-  if (!t) return t;
-  if (t.startsWith("<") && t.endsWith(">")) return t;
-  return `<${t}>`;
-}
-
-function toField(v: string | string[]): string {
-  return Array.isArray(v) ? v.join(", ") : v;
-}
-
 function normalizeUidArg(uid: unknown): number[] {
   if (typeof uid === "number" && Number.isFinite(uid)) return [Math.floor(uid)];
   if (Array.isArray(uid)) {
@@ -158,27 +166,18 @@ function parseDateArg(v: string | undefined): Date | undefined {
   return d;
 }
 
-interface SendInput {
-  from: string;
-  to: string | string[];
-  cc?: string | string[];
-  bcc?: string | string[];
-  replyTo?: string;
-  subject: string;
-  body: string;
-  bodyHtml?: string;
-  inReplyTo?: string;
-  references?: string[];
-  /** Validated wire shape (see parseOutboundAttachments); decoded to Buffers at send time. */
-  attachments?: OutboundAttachment[];
-}
-
-async function sendViaSmtp(rt: SmtpRuntime, input: SendInput): Promise<{
+interface SmtpSendResult {
   messageId: string;
   smtpResponse: string;
   accepted: string[];
   rejected: string[];
-}> {
+  /** The Date header the message went out with. */
+  date: Date;
+}
+
+// Only `deliver` below may call this. Calling it directly sends mail that
+// leaves no copy in the Sent folder; sent-copy.test.ts checks for that.
+async function sendViaSmtp(rt: SmtpRuntime, input: SendInput): Promise<SmtpSendResult> {
   const transporter = nodemailer.createTransport({
     host: rt.smtpHost,
     port: rt.smtpPort,
@@ -187,35 +186,155 @@ async function sendViaSmtp(rt: SmtpRuntime, input: SendInput): Promise<{
       ? { type: "OAuth2", user: rt.smtpUser, accessToken: rt.accessToken }
       : { user: rt.smtpUser, pass: rt.smtpPass },
   });
+  const date = new Date();
   try {
-    const info = await transporter.sendMail({
-      from: input.from,
-      to: toField(input.to),
-      cc: input.cc ? toField(input.cc) : undefined,
-      bcc: input.bcc ? toField(input.bcc) : undefined,
-      replyTo: input.replyTo,
-      subject: input.subject,
-      text: input.body,
-      html: input.bodyHtml,
-      inReplyTo: input.inReplyTo ? ensureAngled(input.inReplyTo) : undefined,
-      references:
-        input.references && input.references.length > 0
-          ? input.references.map(ensureAngled).join(" ")
-          : undefined,
-      attachments:
-        input.attachments && input.attachments.length > 0
-          ? mapAttachmentsForNodemailer(input.attachments)
-          : undefined,
-    });
+    const info = await transporter.sendMail(toMailOptions(input, date));
     return {
       messageId: info.messageId ?? "",
       smtpResponse: typeof info.response === "string" ? info.response : "",
       accepted: (info.accepted ?? []).map(String),
       rejected: (info.rejected ?? []).map(String),
+      date,
     };
   } finally {
     transporter.close();
   }
+}
+
+interface Delivery extends SmtpSendResult {
+  sentCopy: SentCopyOutcome;
+  /** Present when the message replied to or forwarded one in the mailbox. */
+  original?: MarkOutcome;
+}
+
+/**
+ * Send a message, then save a copy to the mailbox's Sent folder and mark the
+ * message it replied to or forwarded. Every send path goes through here.
+ *
+ * Throws only when the message was not sent. Once SMTP has accepted it, a
+ * failure to save the copy or set the mark is reported in the result and the
+ * plugin log, never thrown: the mail has gone, and an error would invite the
+ * operator (or an agent) to send it a second time. For the same reason the
+ * whole call is kept inside the host's time limit (see delivery-policy.ts): a
+ * send that is already too late does not start, and follow-ups still running
+ * near the limit are reported as pending and finish on their own.
+ */
+async function deliver(
+  ctx: PluginContext,
+  cfg: ConfigMailbox,
+  mailboxKey: string,
+  rt: SmtpRuntime,
+  input: SendInput,
+  mark: MarkTarget | undefined,
+  startedAt: number,
+): Promise<Delivery> {
+  assertTimeToSend(startedAt, Date.now());
+  const sent = await sendViaSmtp(rt, input);
+
+  // A 'Sent folder' set on the mailbox means upload there, whoever the
+  // provider is.
+  const filedBy = nonBlank(cfg.sentFolder) ? null : providerFilingSentCopy(rt.smtpHost, cfg.authType);
+  let sentCopy: SentCopyOutcome | undefined = filedBy ? { ok: true, filedBy } : undefined;
+  let copy: SentCopyInput | undefined;
+  if (!filedBy) {
+    try {
+      copy = {
+        raw: await buildSentCopy(toMailOptions(input, sent.date), sent.messageId),
+        messageId: sent.messageId,
+        date: sent.date,
+        configuredFolder: cfg.sentFolder,
+      };
+    } catch (err) {
+      sentCopy = { ok: false, error: `Could not build the copy: ${(err as Error).message}` };
+    }
+  }
+
+  let original: MarkOutcome | undefined;
+  if (copy || mark) {
+    const work = recordSend(
+      {
+        own: (fn) => withOwnImapConnection(ctx, cfg, mailboxKey, fn),
+        shared: (fn) => withImapConnection(ctx, cfg, mailboxKey, fn),
+      },
+      { copy, mark },
+    );
+    try {
+      const record = await awaitFollowUps(
+        work,
+        followUpBudget(startedAt, Date.now()),
+        (late, err) => {
+          if (late) {
+            logFollowUps(ctx, mailboxKey, sent.messageId, late.sentCopy, late.original);
+            ctx.logger.info("email-tools: follow-ups finished after the send had reported back", {
+              mailbox: mailboxKey,
+              messageId: sent.messageId,
+            });
+          } else {
+            ctx.logger.warn("email-tools: sent, but the follow-ups could not reach the mailbox", {
+              mailbox: mailboxKey,
+              messageId: sent.messageId,
+              error: (err as Error)?.message ?? String(err),
+            });
+          }
+        },
+      );
+      if (record) {
+        sentCopy = record.sentCopy ?? sentCopy;
+        original = record.original;
+      } else {
+        if (copy) sentCopy = { ok: false, pending: true };
+        if (mark) original = { ok: false, pending: true, flag: mark.flag, folder: mark.folder, uid: mark.uid };
+      }
+    } catch (err) {
+      const error = `Could not open the mailbox: ${(err as Error).message}`;
+      if (copy) sentCopy = { ok: false, error };
+      if (mark) original = { ok: false, flag: mark.flag, folder: mark.folder, uid: mark.uid, error };
+    }
+  }
+
+  const finalCopy = sentCopy ?? { ok: false, error: "No copy was attempted." };
+  logFollowUps(ctx, mailboxKey, sent.messageId, finalCopy, original);
+  return { ...sent, sentCopy: finalCopy, original };
+}
+
+function logFollowUps(
+  ctx: PluginContext,
+  mailboxKey: string,
+  messageId: string,
+  sentCopy: SentCopyOutcome | undefined,
+  original: MarkOutcome | undefined,
+): void {
+  if (copyMissing(sentCopy)) {
+    ctx.logger.warn("email-tools: sent, but no copy was saved to the Sent folder", {
+      mailbox: mailboxKey,
+      messageId,
+      error: sentCopy.error,
+    });
+  }
+  if (markMissing(original)) {
+    ctx.logger.warn("email-tools: sent, but the original message was not marked", {
+      mailbox: mailboxKey,
+      messageId,
+      flag: original.flag,
+      folder: original.folder,
+      uid: original.uid,
+      error: original.error,
+    });
+  }
+}
+
+/**
+ * What an agent needs to hear about the follow-ups, appended to a tool's
+ * one-line result. Silent when both worked, which is the normal case.
+ */
+function deliveryWarnings(d: Delivery): string {
+  const notes: string[] = [];
+  if (copyMissing(d.sentCopy)) notes.push(`No copy was saved to the Sent folder: ${d.sentCopy.error}`);
+  if (markMissing(d.original)) {
+    const what = d.original.flag === FORWARDED_FLAG ? "forwarded" : "answered";
+    notes.push(`The original message was not marked ${what}: ${d.original.error}`);
+  }
+  return notes.length > 0 ? ` Warning: ${notes.join(" ")}` : "";
 }
 
 async function withImapConnection<T>(
@@ -226,6 +345,24 @@ async function withImapConnection<T>(
 ): Promise<T> {
   const rt = await buildMailboxRuntime(ctx, cfg, key);
   return actionPool.run(rt, fn);
+}
+
+/**
+ * A connection of its own, logged out afterwards, for work too slow to put on
+ * the mailbox's shared one (see recordSend in sent-copy.ts).
+ */
+async function withOwnImapConnection<T>(
+  ctx: PluginContext,
+  cfg: ConfigMailbox,
+  key: string,
+  fn: (client: import("imapflow").ImapFlow) => Promise<T>,
+): Promise<T> {
+  const client = await openConnection(await buildMailboxRuntime(ctx, cfg, key));
+  try {
+    return await fn(client);
+  } finally {
+    await safeLogout(client);
+  }
 }
 
 function resolveFolder(cfg: ConfigMailbox, override: unknown): string {
@@ -325,6 +462,7 @@ const plugin = definePlugin({
         parametersSchema: {} as Record<string, unknown>,
       },
       async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
+        const startedAt = Date.now();
         const config = (await ctx.config.get()) as InstanceConfig;
         if (!config.allowSend) {
           return {
@@ -344,16 +482,28 @@ const plugin = definePlugin({
           references?: string[];
           reply_to?: string;
           attachments?: unknown;
+          forward_of_uid?: number;
+          forward_of_folder?: string;
+          forward_of_message_id?: string;
         };
         if (!p.mailbox) return { error: "mailbox is required" };
         if (!p.to) return { error: "to is required" };
         if (!p.subject) return { error: "subject is required" };
         if (p.body === undefined) return { error: "body is required" };
+        const forward = parseToolForwardOf(p.forward_of_uid, p.forward_of_folder, p.forward_of_message_id);
+        if (!forward.ok) return { error: forward.error };
         const attParse = parseOutboundAttachments(p.attachments);
         if (!attParse.ok) return { error: attParse.error };
 
         const cfg = findConfigMailbox(config, p.mailbox);
         if (!cfg) return { error: `Mailbox "${p.mailbox}" not configured.` };
+
+        // A forward names its original by UID. A reply sent through here names
+        // it only by Message-ID, so it is looked for in the watched folder.
+        const inReplyTo = str(p.in_reply_to);
+        const mark: MarkTarget | undefined =
+          forward.target ??
+          (inReplyTo ? { folder: resolveFolder(cfg, undefined), messageId: inReplyTo, flag: ANSWERED_FLAG } : undefined);
 
         try {
           assertCompanyAccess(ctx, {
@@ -375,25 +525,34 @@ const plugin = definePlugin({
         }
 
         try {
-          const info = await sendViaSmtp(rt, {
-            from: rt.smtpFrom,
-            to: p.to,
-            cc: p.cc,
-            bcc: p.bcc,
-            replyTo: p.reply_to,
-            subject: p.subject,
-            body: p.body,
-            bodyHtml: p.body_html,
-            inReplyTo: p.in_reply_to,
-            references: p.references,
-            attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
-          });
-          await ctx.telemetry.track("email_send", {
-            mailbox: rt.key,
-            companyId: runCtx.companyId,
-          });
+          const info = await deliver(
+            ctx,
+            cfg,
+            p.mailbox,
+            rt,
+            {
+              from: rt.smtpFrom,
+              to: p.to,
+              cc: p.cc,
+              bcc: p.bcc,
+              replyTo: p.reply_to,
+              subject: p.subject,
+              body: p.body,
+              bodyHtml: p.body_html,
+              inReplyTo: p.in_reply_to,
+              references: p.references,
+              attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
+            },
+            mark,
+            startedAt,
+          );
+          // Best effort: the mail has gone, so a telemetry hiccup must not come
+          // back as an error an agent would answer by sending again.
+          await ctx.telemetry
+            .track("email_send", { mailbox: rt.key, companyId: runCtx.companyId })
+            .catch(() => undefined);
           return {
-            content: `Sent. Message-ID ${info.messageId || "?"}`,
+            content: `Sent. Message-ID ${info.messageId || "?"}${deliveryWarnings(info)}`,
             data: {
               ok: true,
               mailbox: rt.key,
@@ -401,6 +560,8 @@ const plugin = definePlugin({
               smtp_response: info.smtpResponse,
               accepted: info.accepted,
               rejected: info.rejected,
+              sent_copy: info.sentCopy,
+              original_mark: info.original,
             },
           };
         } catch (err) {
@@ -408,7 +569,9 @@ const plugin = definePlugin({
           const code = e.code ? String(e.code) : "SMTP_ERROR";
           const message =
             (e.message ?? String(err)) + (e.responseCode ? ` (SMTP ${e.responseCode})` : "");
-          return { error: `[${code}] ${message}` };
+          // A message that already carries its own code ([ESEND_TOO_LATE])
+          // keeps it rather than being relabelled as an SMTP error.
+          return { error: /^\[E[A-Z_]+\]/.test(message) ? message : `[${code}] ${message}` };
         }
       },
     );
@@ -723,6 +886,7 @@ const plugin = definePlugin({
         parametersSchema: {} as Record<string, unknown>,
       },
       async (params, runCtx): Promise<ToolResult> => {
+        const startedAt = Date.now();
         const config = (await ctx.config.get()) as InstanceConfig;
         if (!config.allowSend) {
           return { error: "Sending is disabled. Set 'allowSend' true on the plugin settings page." };
@@ -785,23 +949,31 @@ const plugin = definePlugin({
         }
 
         try {
-          const info = await sendViaSmtp(rt, {
-            from: rt.smtpFrom,
-            to: replyTo,
-            cc: cc.length > 0 ? cc : undefined,
-            subject,
-            body: p.body,
-            bodyHtml: p.body_html,
-            inReplyTo: original.messageId ?? undefined,
-            references: refsChain.length > 0 ? refsChain : undefined,
-            attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
-          });
-          await ctx.telemetry.track("email_reply", {
-            mailbox: rt.key,
-            companyId: runCtx.companyId,
-          });
+          const info = await deliver(
+            ctx,
+            gate.cfg,
+            p.mailbox as string,
+            rt,
+            {
+              from: rt.smtpFrom,
+              to: replyTo,
+              cc: cc.length > 0 ? cc : undefined,
+              subject,
+              body: p.body,
+              bodyHtml: p.body_html,
+              inReplyTo: original.messageId ?? undefined,
+              references: refsChain.length > 0 ? refsChain : undefined,
+              attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
+            },
+            { folder, uid: p.uid, messageId: original.messageId ?? undefined, flag: ANSWERED_FLAG },
+            startedAt,
+          );
+          // Best effort, as in email_send: the reply has already gone.
+          await ctx.telemetry
+            .track("email_reply", { mailbox: rt.key, companyId: runCtx.companyId })
+            .catch(() => undefined);
           return {
-            content: `Replied. Message-ID ${info.messageId || "?"}`,
+            content: `Replied. Message-ID ${info.messageId || "?"}${deliveryWarnings(info)}`,
             data: {
               ok: true,
               mailbox: rt.key,
@@ -810,14 +982,15 @@ const plugin = definePlugin({
               accepted: info.accepted,
               rejected: info.rejected,
               repliedTo: original.messageId,
+              sent_copy: info.sentCopy,
+              original_mark: info.original,
             },
           };
         } catch (err) {
           const e = err as { code?: string; responseCode?: number; message?: string };
           const code = e.code ? String(e.code) : "SMTP_ERROR";
-          return {
-            error: `[${code}] ${(e.message ?? String(err)) + (e.responseCode ? ` (SMTP ${e.responseCode})` : "")}`,
-          };
+          const message = (e.message ?? String(err)) + (e.responseCode ? ` (SMTP ${e.responseCode})` : "");
+          return { error: /^\[E[A-Z_]+\]/.test(message) ? message : `[${code}] ${message}` };
         }
       },
     );
@@ -1622,6 +1795,7 @@ const plugin = definePlugin({
 
     // Sends a reply to a message via SMTP — bridge equivalent of the email_reply agent tool.
     ctx.actions.register("email.send-reply", async (params) => {
+      const startedAt = Date.now();
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
       const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
       const uid = typeof params.uid === "number" ? params.uid : null;
@@ -1668,22 +1842,33 @@ const plugin = definePlugin({
       }
 
       const rt = await buildSmtpRuntime(ctx, cfg, mailboxKey);
-      const info = await sendViaSmtp(rt, {
-        from: rt.smtpFrom,
-        to: replyTo,
-        cc: cc.length > 0 ? cc : undefined,
-        subject,
-        body,
-        bodyHtml,
-        inReplyTo: original.messageId ?? undefined,
-        references: refsChain.length > 0 ? refsChain : undefined,
-        attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
-      });
-      return { ok: true, messageId: info.messageId };
+      const info = await deliver(
+        ctx,
+        cfg,
+        mailboxKey,
+        rt,
+        {
+          from: rt.smtpFrom,
+          to: replyTo,
+          cc: cc.length > 0 ? cc : undefined,
+          subject,
+          body,
+          bodyHtml,
+          inReplyTo: original.messageId ?? undefined,
+          references: refsChain.length > 0 ? refsChain : undefined,
+          attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
+        },
+        { folder, uid, messageId: original.messageId ?? undefined, flag: ANSWERED_FLAG },
+        startedAt,
+      );
+      // The two follow-ups ride along so the Email pages can say when the copy
+      // or the replied mark did not happen; the send itself succeeded either way.
+      return { ok: true, messageId: info.messageId, sentCopy: info.sentCopy, original: info.original };
     });
 
     // Sends a new message via SMTP — bridge equivalent of the email_send agent tool.
     ctx.actions.register("email.send-new", async (params) => {
+      const startedAt = Date.now();
       const companyId = typeof params.companyId === "string" ? params.companyId : null;
       const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
       if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
@@ -1704,18 +1889,31 @@ const plugin = definePlugin({
       if (!to || !subject || !body) throw new Error("to, subject, and body are required");
       const attParse = parseOutboundAttachments(params.attachments);
       if (!attParse.ok) throw new Error(attParse.error);
+      // A forward is a new message that names the one it forwards, so that
+      // message can be marked forwarded once this one has gone.
+      const forward = parseBridgeForwardOf(params.forwardOf);
+      if (!forward.ok) throw new Error(forward.error);
+      const mark = forward.target;
       const rt = await buildSmtpRuntime(ctx, cfg, mailboxKey);
-      const info = await sendViaSmtp(rt, {
-        from: rt.smtpFrom,
-        to: to as string | string[],
-        cc: params.cc as string | string[] | undefined,
-        bcc: params.bcc as string | string[] | undefined,
-        subject,
-        body,
-        bodyHtml: typeof params.body_html === "string" ? params.body_html : undefined,
-        attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
-      });
-      return { ok: true, messageId: info.messageId };
+      const info = await deliver(
+        ctx,
+        cfg,
+        mailboxKey,
+        rt,
+        {
+          from: rt.smtpFrom,
+          to: to as string | string[],
+          cc: params.cc as string | string[] | undefined,
+          bcc: params.bcc as string | string[] | undefined,
+          subject,
+          body,
+          bodyHtml: typeof params.body_html === "string" ? params.body_html : undefined,
+          attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
+        },
+        mark,
+        startedAt,
+      );
+      return { ok: true, messageId: info.messageId, sentCopy: info.sentCopy, original: info.original };
     });
 
     idleManager = new IdleManager(ctx);

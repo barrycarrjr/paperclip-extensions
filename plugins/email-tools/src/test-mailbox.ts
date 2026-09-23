@@ -1,7 +1,10 @@
 import nodemailer from "nodemailer";
+import type { ImapFlow } from "imapflow";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { openConnection, safeLogout, type MailboxRuntime } from "./imap.js";
 import { getAccessToken } from "./oauth.js";
+import { providerFilingSentCopy, resolveSentFolder } from "./sent-copy.js";
+import { nonBlank, resolveSmtpHost } from "./smtp-identity.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 export interface TestCheck {
@@ -25,6 +28,94 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ result: T; durationMs: 
   const start = Date.now();
   const result = await fn();
   return { result, durationMs: Date.now() - start };
+}
+
+/**
+ * Which of the replied and forwarded marks this server keeps. The replied
+ * mark is a standard flag every server stores; the forwarded one is a keyword,
+ * and a server that stores no keywords drops it.
+ */
+export function markSupportCheck(permanentFlags: Set<string> | undefined): TestCheck {
+  const name = "imap.marks";
+  if (!permanentFlags) {
+    return { name, passed: true, message: "The server did not list the flags it keeps; marks are checked after each reply or forward." };
+  }
+  // An empty list is an answer, not a silence: this folder keeps no flags.
+  if (permanentFlags.size === 0) {
+    return { name, passed: true, message: "The server keeps no flags in this folder, so replies and forwards cannot be marked here." };
+  }
+  const listed = [...permanentFlags].join(" ");
+  if (permanentFlags.has("\\*") || [...permanentFlags].some((f) => f.toLowerCase() === "$forwarded")) {
+    return { name, passed: true, message: `Replied and forwarded marks can both be kept (server keeps: ${listed}).` };
+  }
+  return {
+    name,
+    passed: true,
+    message: `The server keeps only these flags, so no forwarded mark: ${listed}.`,
+  };
+}
+
+/**
+ * Where copies of sent mail will be saved. A mailbox that cannot keep a copy
+ * still sends, but the operator then cannot find what was sent, which is
+ * exactly the failure this check is here to show before it happens.
+ */
+export async function sentFolderCheck(client: ImapFlow, cfg: ConfigMailbox): Promise<TestCheck> {
+  const name = "imap.sent-folder";
+  const start = Date.now();
+  try {
+    const filedBy = nonBlank(cfg.sentFolder)
+      ? null
+      : providerFilingSentCopy(resolveSmtpHost(cfg), cfg.authType);
+    if (filedBy) {
+      return {
+        name,
+        passed: true,
+        message: `${filedBy} keeps its own copy of sent mail, so none is uploaded`,
+        durationMs: Date.now() - start,
+      };
+    }
+    const picked = await resolveSentFolder(client, cfg.sentFolder);
+    if (!picked) {
+      return {
+        name,
+        passed: false,
+        message: "No Sent folder found, so copies of sent mail cannot be saved. Name one in 'Sent folder'.",
+        durationMs: Date.now() - start,
+      };
+    }
+    // Asking for its size also proves it exists: a name typed into 'Sent
+    // folder' is otherwise taken on trust until the first send fails.
+    // imapflow answers false, not a throw, when the server refuses; that is
+    // "unknown", and printing it as 0 would invite someone to "fix" the choice.
+    const status = (await client.status(picked.path, { messages: true })) as { messages?: number } | false;
+    if (!status || typeof status.messages !== "number") {
+      // A folder found by listing the mailbox exists, so this is only a
+      // server that will not count it. A typed name is another matter.
+      const typed = !!nonBlank(cfg.sentFolder);
+      return {
+        name,
+        passed: !typed,
+        message: typed
+          ? `The server would not open "${picked.path}", the folder named in 'Sent folder'. Check the name: copies of sent mail cannot be saved until it is right.`
+          : `Copies of sent mail go to "${picked.path}" (the server would not say how many messages it holds): ${picked.reason}.`,
+        durationMs: Date.now() - start,
+      };
+    }
+    return {
+      name,
+      passed: true,
+      message: `Copies of sent mail go to "${picked.path}" (${status.messages} message${status.messages === 1 ? "" : "s"}): ${picked.reason}.`,
+      durationMs: Date.now() - start,
+    };
+  } catch (err) {
+    return {
+      name,
+      passed: false,
+      message: `Could not check the Sent folder: ${(err as Error).message}`,
+      durationMs: Date.now() - start,
+    };
+  }
 }
 
 export async function testMailbox(
@@ -107,9 +198,11 @@ export async function testMailbox(
           message: `Folder "${folder}" exists (${exists} message${exists === 1 ? "" : "s"})`,
           durationMs: openMs,
         });
+        checks.push(markSupportCheck(mb && typeof mb !== "boolean" ? mb.permanentFlags : undefined));
       } finally {
         lock.release();
       }
+      checks.push(await sentFolderCheck(client, cfg));
     } catch (err) {
       checks.push({
         name: "imap.folder",

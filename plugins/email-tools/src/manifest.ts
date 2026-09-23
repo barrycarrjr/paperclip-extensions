@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.18.9";
+const PLUGIN_VERSION = "0.19.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -48,6 +48,7 @@ const mailboxItemSchema = {
     "smtpSecure",
     "smtpUser",
     "smtpFrom",
+    "sentFolder",
   ],
   properties: {
     // ---- Identity & primary connection (required, top of form) ----
@@ -248,6 +249,12 @@ const mailboxItemSchema = {
       type: "string",
       title: "From address (optional)",
       description: "Defaults to the mailbox's user.",
+    },
+    sentFolder: {
+      type: "string",
+      title: "Sent folder (optional)",
+      description:
+        "Where copies of sent mail are saved, e.g. 'INBOX.Sent Items'. Leave blank to find it automatically: the folder the mail server marks as Sent, or, when there are several Sent folders, the one holding the most mail. Gmail and Microsoft 365 keep their own copy of what you send, so nothing is uploaded for them unless you fill this in. 'Test connection' shows which folder is in use.",
     },
   },
 } as const;
@@ -454,7 +461,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
       name: "email_send",
       displayName: "Send Email",
       description:
-        "Send a plain-text or HTML email via SMTP using one of the configured mailboxes. Returns the Message-ID and SMTP response.",
+        "Send a plain-text or HTML email via SMTP using one of the configured mailboxes. A copy is saved to the mailbox's Sent folder (sent_copy in the result says where, or why not). When forwarding a message, pass forward_of_uid so the original is marked forwarded; when replying with in_reply_to, the original is marked answered if it is in the mailbox's watched folder. Returns the Message-ID and SMTP response.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -483,6 +490,21 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
           in_reply_to: { type: "string" },
           references: { type: "array", items: { type: "string" } },
           reply_to: { type: "string" },
+          forward_of_uid: {
+            type: "number",
+            description:
+              "When this message forwards one from the mailbox: that message's UID. It is marked forwarded ($Forwarded) after sending, which is what shows the forwarded icon in Outlook and other mail clients.",
+          },
+          forward_of_folder: {
+            type: "string",
+            description:
+              "Folder the forwarded message is in, e.g. the folder email_search returned it from. Required with forward_of_uid, because a UID only identifies a message within its own folder.",
+          },
+          forward_of_message_id: {
+            type: "string",
+            description:
+              "Message-ID of the forwarded message (email_search and email_fetch return it). Optional but recommended: when given, the message at forward_of_uid is only marked if its Message-ID matches.",
+          },
           attachments: {
             type: "array",
             description:
@@ -707,7 +729,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
       name: "email_reply",
       displayName: "Reply to Email",
       description:
-        "Reply to a previously-fetched message. Looks up the original Message-ID and References, then sends with proper threading headers via the same SMTP path as email_send.",
+        "Reply to a previously-fetched message. Looks up the original Message-ID and References, then sends with proper threading headers via the same SMTP path as email_send. Saves a copy to the mailbox's Sent folder and marks the original answered (\\Answered), which is what shows the replied icon in Outlook and other mail clients.",
       parametersSchema: {
         type: "object",
         properties: {

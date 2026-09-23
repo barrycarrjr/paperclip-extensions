@@ -35,6 +35,12 @@ export interface ConfigMailbox {
   smtpSecure?: boolean;
   smtpUser?: string;
   smtpFrom?: string;
+  /**
+   * Folder copies of sent mail are saved to. Blank = found automatically (see
+   * sent-copy.ts). Setting it also makes Gmail and Microsoft 365 mailboxes
+   * upload a copy, which they otherwise leave to the provider.
+   */
+  sentFolder?: string;
   allowedCompanies?: string[];
   pollEnabled?: boolean;
   pollFolder?: string;
