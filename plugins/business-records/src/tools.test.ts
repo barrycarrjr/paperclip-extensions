@@ -20,7 +20,7 @@ import {
 import { companyAccessError, isCompanyAllowed } from "./companyAccess.js";
 import { createRecordsService, type IssueInfo, type RecordsDb, type RecordsService } from "./service.js";
 import { computeSidebarVisibility } from "./sidebar-visibility.js";
-import { TOOL_OPS, createToolHandlers, errorMessage, handleApiRequest, type HandlerDeps } from "./tools.js";
+import { TOOL_OPS, WRITE_ROUTES, createToolHandlers, errorMessage, handleApiRequest, statusForCode, type HandlerDeps } from "./tools.js";
 import { RecordsError } from "./validate.js";
 
 const HQ = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -292,4 +292,66 @@ test("a tool call from an allowed company reaches the service and returns conten
   assert.equal(result.error, undefined);
   assert.equal(result.content, "No businesses match.");
   assert.deepEqual(result.data, { businesses: [] });
+});
+
+// ---- Page write routes ----
+
+test("every page write route is declared in the manifest and has an operation behind it", () => {
+  const declared = (manifest.apiRoutes ?? []).map((r) => r.routeKey).filter((k) => !["businesses.list", "businesses.get", "overview"].includes(k));
+  assert.deepEqual(declared.sort(), Object.keys(WRITE_ROUTES).sort());
+  for (const route of manifest.apiRoutes ?? []) {
+    assert.equal(route.auth, "board", `${route.routeKey} is for signed-in people only`);
+  }
+});
+
+function recordingService() {
+  const seen: Array<{ op: string; params: Record<string, unknown> }> = [];
+  const record = (op: string) => async (_call: unknown, params: unknown) => {
+    seen.push({ op, params: params as Record<string, unknown> });
+    return { summary: `${op} done`, data: { ok: true } };
+  };
+  const service = new Proxy({} as RecordsService, { get: (_t, key) => record(String(key)) });
+  return { service, seen };
+}
+
+function writeInput(routeKey: string, extra: Partial<PluginApiRequestInput> = {}): PluginApiRequestInput {
+  return {
+    routeKey,
+    companyId: HQ,
+    params: { businessId: BIZ, documentId: BIZ, filingId: BIZ },
+    query: {},
+    body: { documentId: "someone-elses", businessId: "someone-elses", filingId: "someone-elses", title: "T" },
+    actor: { actorType: "user", userId: "user-1" },
+    ...extra,
+  } as unknown as PluginApiRequestInput;
+}
+
+test("page writes use the id from the path, never one smuggled in the body", async () => {
+  const { service, seen } = recordingService();
+  const { deps } = fakeDeps([HQ], service);
+  for (const key of ["businesses.status", "businesses.link", "documents.update", "documents.remove", "filings.update", "filings.status"]) {
+    const res = await handleApiRequest(deps, writeInput(key));
+    assert.equal(res.status, 200, key);
+    assert.equal((res.body as { summary?: string }).summary?.endsWith("done"), true);
+  }
+  for (const { op, params } of seen) {
+    const idKey = op === "updateDocument" || op === "removeDocument" ? "documentId" : op.includes("Filing") ? "filingId" : "businessId";
+    assert.equal(params[idKey], BIZ, `${op} got the path id`);
+  }
+  await handleApiRequest(deps, writeInput("businesses.create", { body: { id: BIZ, name: "X" } } as Partial<PluginApiRequestInput>));
+  assert.equal(seen.at(-1)!.op, "createBusiness", "the page creates, it never updates by id or by name");
+});
+
+test("page writes need a signed-in person, and refusals keep their meaning as HTTP statuses", async () => {
+  const { service, seen } = recordingService();
+  const { deps } = fakeDeps([HQ], service);
+  const res = await handleApiRequest(deps, writeInput("documents.remove", { actor: { actorType: "agent", agentId: "a" } } as unknown as Partial<PluginApiRequestInput>));
+  assert.equal(res.status, 403);
+  assert.equal(seen.length, 0);
+
+  assert.equal(statusForCode("EDOCUMENT_NOT_FOUND"), 404);
+  assert.equal(statusForCode("EDOCUMENT_IN_USE"), 409);
+  assert.equal(statusForCode("EDUPLICATE_DOCUMENT"), 409);
+  assert.equal(statusForCode("EPROOF_REQUIRED"), 400);
+  assert.equal(statusForCode("EINTERNAL"), 500);
 });

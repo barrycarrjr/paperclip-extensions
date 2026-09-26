@@ -100,7 +100,43 @@ function firstQuery(input: PluginApiRequestInput, key: string): string | undefin
   return Array.isArray(v) ? v[0] : v;
 }
 
-/** Board API routes for the page. Read-only in v1. */
+function bodyOf(input: PluginApiRequestInput): Record<string, unknown> {
+  const body = input.body;
+  return body && typeof body === "object" && !Array.isArray(body) ? { ...(body as Record<string, unknown>) } : {};
+}
+
+type RouteOp = (service: RecordsService, call: CallContext, input: PluginApiRequestInput) => Promise<OpResult>;
+
+/**
+ * The page's write routes. Each one runs the same service operation as the
+ * matching agent tool, so every rule (proof before a status or a filing is
+ * marked done, no full tax ids, no duplicates) applies to a person exactly as
+ * it does to the agent. The id in the path always wins over one in the body.
+ */
+export const WRITE_ROUTES: Record<string, RouteOp> = {
+  "businesses.create": (s, c, i) => s.createBusiness(c, bodyOf(i)),
+  "businesses.update": (s, c, i) => s.upsertBusiness(c, { ...bodyOf(i), id: i.params?.businessId }),
+  "businesses.status": (s, c, i) => s.setStatus(c, { ...bodyOf(i), businessId: i.params?.businessId }),
+  "businesses.link": (s, c, i) => s.linkIssue(c, { ...bodyOf(i), businessId: i.params?.businessId }),
+  "documents.create": (s, c, i) => s.addDocument(c, bodyOf(i)),
+  "documents.update": (s, c, i) => s.updateDocument(c, { ...bodyOf(i), documentId: i.params?.documentId }),
+  "documents.remove": (s, c, i) => s.removeDocument(c, { ...bodyOf(i), documentId: i.params?.documentId }),
+  "filings.create": (s, c, i) => s.upsertFiling(c, { ...bodyOf(i), filingId: undefined }),
+  "filings.update": (s, c, i) => s.upsertFiling(c, { ...bodyOf(i), filingId: i.params?.filingId }),
+  "filings.status": (s, c, i) => s.setFilingStatus(c, { ...bodyOf(i), filingId: i.params?.filingId }),
+};
+
+/** HTTP status for a refusal, by its [ECODE]. */
+export function statusForCode(code: string): number {
+  if (code === "EINTERNAL") return 500;
+  if (/_NOT_FOUND$/.test(code)) return 404;
+  if (code === "ECONFLICT" || code.startsWith("EDUPLICATE") || code === "EDOCUMENT_IN_USE" || code === "EDOCUMENT_ALREADY_REPLACED") {
+    return 409;
+  }
+  return 400;
+}
+
+/** Board API routes for the page. */
 export async function handleApiRequest(deps: HandlerDeps, input: PluginApiRequestInput): Promise<PluginApiResponse> {
   const config = await deps.getConfig();
   try {
@@ -135,13 +171,18 @@ export async function handleApiRequest(deps: HandlerDeps, input: PluginApiReques
       }
       case "overview":
         return { status: 200, body: await service.overview(call) };
-      default:
-        return { status: 404, body: { error: `Unknown plugin route: ${input.routeKey}` } };
+      default: {
+        const op = WRITE_ROUTES[input.routeKey];
+        if (!op) return { status: 404, body: { error: `Unknown plugin route: ${input.routeKey}` } };
+        // Writes are a person's own actions, so they need a signed-in user.
+        if (!call.actor.userId) return { status: 403, body: { error: "[EFORBIDDEN] Only a signed-in person can change records here." } };
+        const result = await op(service, call, input);
+        return { status: 200, body: { summary: result.summary, ...(result.data as Record<string, unknown>) } };
+      }
     }
   } catch (err) {
     const { message, code } = errorMessage(err, input.routeKey);
-    const status =
-      code === "EBUSINESS_NOT_FOUND" ? 404 : code === "EINVALID_INPUT" ? 400 : code === "EINTERNAL" ? 500 : 400;
+    const status = statusForCode(code);
     if (code === "EINTERNAL") deps.logger.error("business-records route failed", { route: input.routeKey, code });
     return { status, body: { error: message } };
   }

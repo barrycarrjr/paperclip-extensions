@@ -29,7 +29,7 @@ the plugin keeps an index that points at them.
 - 11 agent tools (listed below).
 - A **Corporate Operations** sidebar entry and page
   (`/:companyPrefix/corporate-operations`), shown only in allowed companies.
-- 3 read-only board API routes for the page.
+- 13 board API routes for the page: 3 reads and 10 edits.
 - Its own database namespace with five tables: `businesses`,
   `business_documents`, `business_filings`, `business_issue_links`,
   `business_history`.
@@ -341,7 +341,7 @@ already past due). Both together return filings matching either: the weekly
   "runContext": { "agentId": "...", "runId": "...", "companyId": "<HQ company id>" } }
 ```
 
-## API routes (board auth, read-only)
+## API routes (board auth)
 
 All take `?companyId=` and are refused with 403 `[ECOMPANY_NOT_ALLOWED]` for
 companies outside the allow-list.
@@ -352,6 +352,26 @@ companies outside the allow-list.
 | `GET /api/plugins/business-records/api/businesses/:businessId` | `{ business, history, documents, filings, links, today }` (history newest first, current documents, all filings) |
 | `GET /api/plugins/business-records/api/overview` | `{ today, overdueFilings, filingsDueSoon (30 days), documentsRenewingSoon (60 days, including lapsed) }` across every business in the company |
 
+The page's edits. Each needs a signed-in person (403 `[EFORBIDDEN]` otherwise)
+and runs the same operation as the matching tool, so every rule above applies
+to a person exactly as it does to the agent. The id in the path always wins
+over one in the body. Each returns `{ summary, ...the tool's data }`; a refusal
+returns its `[ECODE]` with 400, 404 (not found) or 409 (conflict, duplicate,
+in use).
+
+| Route | Same as |
+|---|---|
+| `POST /businesses` | `business_upsert` (always creates or matches by name, never by id) |
+| `PATCH /businesses/:businessId` | `business_upsert` with that id |
+| `POST /businesses/:businessId/status` | `business_set_status` |
+| `POST /businesses/:businessId/links` | `business_link_issue` |
+| `POST /documents` | `business_add_document` |
+| `PATCH /documents/:documentId` | edit a document's type, title, issuer, dates or notes (page only) |
+| `POST /documents/:documentId/remove` | remove a document from the record (page only) |
+| `POST /filings` | `business_filing_upsert` (new filing) |
+| `PATCH /filings/:filingId` | `business_filing_upsert` with that id |
+| `POST /filings/:filingId/status` | `business_filing_set_status` |
+
 ## The page
 
 **Needs attention** at the top (overdue filings in red, filings due in 30
@@ -360,7 +380,22 @@ business: statuses with as-of dates and sources, documents (newest first,
 renewal within 60 days highlighted, lapsed in red), filings (next due first,
 overdue in red, each with its proof document or "No proof on file"), linked
 cases (links to the issue), and the history. API errors show in a banner at
-the top. The page is read-only; changes go through the agent tools.
+the top.
+
+Everything on it can be changed there too: add or edit a business, change a
+status, add, edit or remove a document, add or edit a filing and change its
+status. Adding a document uploads the file to one of the business's linked
+issues (or picks a file already there); with no linked issue the page offers
+to create a records issue. Clicking a document opens it in a viewer (PDFs,
+images and text inline, arrow keys to step through, Escape to close). A
+refusal shows in the form in plain words, with tool names left out.
+
+**Removing a document** is soft: the row stays for history and the file stays
+on its issue, but it is no longer listed or counted and cannot be cited as
+proof. Removal is refused while a status or a filing cites the document
+(`[EDOCUMENT_IN_USE]`), so proof can never disappear from under a proven
+status. If the removed document had replaced an older one, the older one is
+current again. Adding the same file again brings the removed record back.
 
 ## Error codes
 
@@ -377,6 +412,9 @@ the top. The page is read-only; changes go through the agent tools.
 | `[EFILING_NOT_FOUND]` | No filing with that id in the calling company. |
 | `[EDOCUMENT_NOT_FOUND]` | `replacesDocumentId` is not a document of this business, or a document-kind source for a non-proof status points at nothing. |
 | `[EDOCUMENT_ALREADY_REPLACED]` | The document to replace has already been replaced. |
+| `[EDOCUMENT_IN_USE]` | A document cannot be removed while a status or a filing cites it as proof. The message names which. |
+| `[EDUPLICATE_DOCUMENT]` | Changing a document's type would make it a second record of the same file as that type. |
+| `[EFORBIDDEN]` | A page edit came without a signed-in person. |
 | `[ECONFLICT]` | The record changed while the call was running. Read it again and retry. |
 | `[EINTERNAL]` | Unexpected failure. The message carries no field values. |
 
@@ -398,7 +436,12 @@ the top. The page is read-only; changes go through the agent tools.
   before the insert, not a database constraint.
 - **Linked company ids are not checked** against the companies table; they are
   validated as UUIDs only.
-- **Read-only page.** v1 has no editing in the UI and no delete anywhere.
+- **Agents cannot edit or remove documents.** Those two actions are on the page
+  only; the agent adds a replacement instead. Nothing is ever hard-deleted.
+- **Text is stored as typed.** HTML entities in input (`&amp;` and the like)
+  are turned back into characters; migration `003` cleaned the rows written
+  before that. History rows are never rewritten, so old ones are cleaned when
+  shown.
 - **"Today"** is the worker process's local date.
 
 ## Development
@@ -424,6 +467,16 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 `vendor/sdk/` through `pnpm.overrides`.
 
 ## Recent changes
+
+- **0.2.0** (2026-09-26) Everything on the Corporate Operations page can now
+  be changed there: add or edit a business, change a status, add (with a file
+  upload), edit or remove a document, add or edit a filing and change its
+  status. Every edit runs the same rules as the agent's tools, so proof is
+  still needed before a status or filing is marked done. Documents show their
+  file name and open in a viewer instead of a new tab. Removing a document is
+  soft and refused while it proves something. Text sent with HTML entities
+  ("Profit &amp; Loss") is stored as plain characters, and migration
+  `003_page_editing.sql` cleans the rows already written that way.
 
 - **0.1.2** (2026-09-26) The preparer value for the business owner is now
   `owner` instead of a personal name. Migration `002_owner_preparer.sql`

@@ -172,8 +172,21 @@ export function preparerLabel(preparer: string | null | undefined): string {
   return PREPARER_LABELS[preparer] ?? humanize(preparer).toLowerCase();
 }
 
+/**
+ * History is append-only, so rows written before input was cleaned still hold
+ * HTML entities ("Profit &amp; Loss"). Show them as the characters they mean.
+ */
+function plainText(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 function quoted(value: string | null): string {
-  return value ? `"${value}"` : "";
+  return value ? `"${plainText(value)}"` : "";
 }
 
 /** One plain sentence for a history row, without the timestamp. */
@@ -203,6 +216,15 @@ export function describeHistory(h: Pick<HistoryApi, "kind" | "field" | "oldValue
     case "document_replaced":
       if (!h.oldValue || h.oldValue === h.newValue) return `${quoted(h.newValue)} replaced by a newer copy${asOf}`;
       return `${quoted(h.oldValue)} replaced by ${quoted(h.newValue)}${asOf}`;
+    case "document_updated": {
+      const what = h.field ? ` (${h.field})` : "";
+      if (h.oldValue && h.newValue && h.oldValue !== h.newValue) {
+        return `Document ${quoted(h.oldValue)} renamed to ${quoted(h.newValue)}${what}`;
+      }
+      return `Document ${quoted(h.newValue ?? h.oldValue)} edited${what}`;
+    }
+    case "document_removed":
+      return `Document removed: ${quoted(h.oldValue)}`;
     default:
       return `${humanize(h.kind)}${h.newValue ? `: ${h.newValue}` : ""}${asOf}`;
   }

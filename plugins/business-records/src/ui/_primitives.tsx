@@ -8,13 +8,14 @@
  * emits (for example a one-off grid template) silently does nothing. Check a
  * new class against the live stylesheet before relying on it.
  */
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import type React from "react";
+import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 
 export function cn(...parts: Array<string | undefined | false | null>): string {
   return parts.filter(Boolean).join(" ");
 }
 
-type ButtonVariant = "default" | "outline" | "ghost";
+type ButtonVariant = "default" | "outline" | "ghost" | "destructive";
 type ButtonSize = "default" | "sm" | "xs";
 
 const BUTTON_BASE =
@@ -25,6 +26,7 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   outline:
     "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
   ghost: "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+  destructive: "bg-destructive text-white hover:bg-destructive/90",
 };
 
 const BUTTON_SIZE: Record<ButtonSize, string> = {
@@ -133,4 +135,118 @@ const DOT_TONE: Record<"good" | "warn" | "neutral" | "unknown" | "bad", string> 
 /** A small status dot, like the agent status dots elsewhere in Paperclip. */
 export function Dot({ tone, label }: { tone: keyof typeof DOT_TONE; label?: string }) {
   return <span aria-label={label} title={label} className={cn("inline-block size-2 shrink-0 rounded-full", DOT_TONE[tone])} />;
+}
+
+const SELECT_CLASS = cn(INPUT_CLASS, "pr-8");
+
+export function Select({
+  className,
+  options,
+  placeholder,
+  ...props
+}: Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "children"> & {
+  options: ReadonlyArray<{ value: string; label: string }>;
+  placeholder?: string;
+}) {
+  return (
+    <select className={cn(SELECT_CLASS, className)} {...props}>
+      {placeholder !== undefined && <option value="">{placeholder}</option>}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className={cn(
+        "flex min-h-16 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-ring focus-visible:ring-[3px]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** A labelled form control with an optional hint underneath. */
+export function Field({
+  label,
+  hint,
+  children,
+  className,
+}: {
+  label: string;
+  hint?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={cn("block space-y-1", className)}>
+      <span className="text-xs font-medium text-foreground">{label}</span>
+      {children}
+      {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
+    </label>
+  );
+}
+
+/**
+ * An inline editing panel: a title, the fields, an error line and Save / Cancel.
+ * Submitting runs `onSave`; a thrown error is shown in the panel and the
+ * fields keep what was typed.
+ */
+export function FormPanel({
+  title,
+  saveLabel = "Save",
+  onSave,
+  onCancel,
+  children,
+  destructive = false,
+}: {
+  title: string;
+  saveLabel?: string;
+  onSave: () => Promise<void>;
+  onCancel: () => void;
+  children: ReactNode;
+  destructive?: boolean;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      className="space-y-3 rounded-md border border-border bg-muted/30 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (saving) return;
+        setSaving(true);
+        setError(null);
+        onSave()
+          .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+          .finally(() => setSaving(false));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onCancel();
+      }}
+    >
+      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+      {children}
+      {error && <ErrorBanner message={error} />}
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={saving}
+          variant={destructive ? "destructive" : "default"}
+        >
+          {saving ? "Saving..." : saveLabel}
+        </Button>
+      </div>
+    </form>
+  );
 }

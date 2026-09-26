@@ -194,11 +194,26 @@ export function parseOptionalUuid(raw: unknown, field: string): string | null | 
   return parseUuid(raw, field);
 }
 
+/**
+ * Turn HTML entities back into the characters they stand for. Agents sometimes
+ * send text escaped for a web page ("Profit &amp; Loss"), and the record should
+ * hold what a person would type. &amp; goes last so "&amp;lt;" becomes "&lt;",
+ * not "<".
+ */
+export function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 export function parseText(raw: unknown, field: string, max = 2000): string {
   if (typeof raw !== "string" || raw.trim().length === 0) {
     throw invalid(`${field} is required and must be non-empty text.`);
   }
-  const trimmed = raw.trim();
+  const trimmed = decodeEntities(raw.trim());
   if (trimmed.length > max) throw invalid(`${field} is longer than ${max} characters.`);
   return trimmed;
 }
@@ -208,7 +223,7 @@ export function parseOptionalText(raw: unknown, field: string, max = 2000): stri
   if (raw === undefined) return undefined;
   if (raw === null) return null;
   if (typeof raw !== "string") throw invalid(`${field} must be text.`);
-  const trimmed = raw.trim();
+  const trimmed = decodeEntities(raw.trim());
   if (trimmed.length === 0) return null;
   if (trimmed.length > max) throw invalid(`${field} is longer than ${max} characters.`);
   return trimmed;

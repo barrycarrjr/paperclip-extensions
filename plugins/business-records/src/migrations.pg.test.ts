@@ -66,4 +66,35 @@ if (!DATABASE_URL) {
     await assert.rejects(insert("barry", "2027"), /business_filings_preparer_check/);
     await insert("owner", "2028");
   });
+
+  test("003 turns stored HTML entities back into characters and allows the new history kinds", async () => {
+    const company = randomUUID();
+    const business = randomUUID();
+    await pool.query(
+      `INSERT INTO ${schema}.businesses (id, company_id, name, relationship, notes) VALUES ($1, $2, 'Entity Test LLC', 'owned', 'Seller Q&amp;A notes')`,
+      [business, company],
+    );
+    await pool.query(
+      `INSERT INTO ${schema}.business_documents (company_id, business_id, doc_type, title, issue_id, notes)
+       VALUES ($1, $2, 'other', '2025 Profit &amp; Loss &lt;QuickBooks&gt;', $3, 'a &quot;draft&quot; &amp;amp; more')`,
+      [company, business, randomUUID()],
+    );
+
+    await migration("003_page_editing.sql");
+
+    const doc = (await pool.query(`SELECT title, notes, removed_at FROM ${schema}.business_documents WHERE business_id = $1`, [business])).rows[0];
+    assert.equal(doc.title, "2025 Profit & Loss <QuickBooks>");
+    assert.equal(doc.notes, 'a "draft" &amp; more', "decoded once, the same as new input");
+    assert.equal(doc.removed_at, null);
+    const biz = (await pool.query(`SELECT notes FROM ${schema}.businesses WHERE id = $1`, [business])).rows[0];
+    assert.equal(biz.notes, "Seller Q&A notes");
+
+    for (const kind of ["document_updated", "document_removed"]) {
+      await pool.query(`INSERT INTO ${schema}.business_history (company_id, business_id, kind) VALUES ($1, $2, $3)`, [company, business, kind]);
+    }
+    await assert.rejects(
+      pool.query(`INSERT INTO ${schema}.business_history (company_id, business_id, kind) VALUES ($1, $2, 'made_up')`, [company, business]),
+      /business_history_kind_check/,
+    );
+  });
 }

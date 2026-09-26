@@ -23,6 +23,11 @@ import {
   buildListHistory,
   buildListLinks,
   buildMarkReplaced,
+  buildClearReplacedBy,
+  buildFilingsCitingDocument,
+  buildRemoveDocument,
+  buildRestoreDocument,
+  buildUpdateDocument,
   buildSetFilingStatus,
   buildSetStatus,
   buildUpdateBusiness,
@@ -97,6 +102,7 @@ const READS: Array<{ name: string; stmt: SqlStatement }> = [
   { name: "getLink", stmt: buildGetLink(NS, CO, BIZ, ID2) },
   { name: "listLinks", stmt: buildListLinks(NS, CO, BIZ) },
   { name: "listHistory", stmt: buildListHistory(NS, CO) },
+  { name: "filingsCitingDocument", stmt: buildFilingsCitingDocument(NS, CO, ID2) },
   { name: "listHistory (filtered)", stmt: buildListHistory(NS, CO, { businessId: BIZ, since: "2026-01-01T00:00:00.000Z", limit: 5 }) },
 ];
 
@@ -137,6 +143,10 @@ const WRITES: Array<{ name: string; stmt: SqlStatement }> = [
     name: "setFilingStatus (not_required)",
     stmt: buildSetFilingStatus(NS, CO, ID2, { status: "not_required", proofDocumentId: null, extendedDueDate: null, reason: "r", source: { kind: "official_guidance", url: "https://example.gov" } }, "upcoming"),
   },
+  { name: "updateDocument", stmt: buildUpdateDocument(NS, CO, ID2, { docType: "tax_return", title: "T", issuingBody: null, documentDate: "2026-01-01", renewalDate: null, notes: "n" }) },
+  { name: "removeDocument", stmt: buildRemoveDocument(NS, CO, ID2, "duplicate") },
+  { name: "restoreDocument", stmt: buildRestoreDocument(NS, CO, ID2, { title: "T", issuingBody: null, documentDate: null, renewalDate: null, notes: null }) },
+  { name: "clearReplacedBy", stmt: buildClearReplacedBy(NS, CO, ID2) },
   { name: "insertLink", stmt: buildInsertLink(NS, CO, BIZ, ID2, "records") },
   { name: "updateLinkRole", stmt: buildUpdateLinkRole(NS, CO, BIZ, ID2, "case:notice") },
   {
@@ -219,4 +229,18 @@ test("addDays does calendar arithmetic in UTC", () => {
   assert.equal(addDays("2026-03-01", -1), "2026-02-28");
   assert.equal(addDays("2024-02-28", 1), "2024-02-29");
   assert.equal(addDays("2026-09-26", 60), "2026-11-25");
+});
+
+test("removed documents never show in lists or lookups, but the duplicate check still finds them", () => {
+  assert.match(buildGetDocument(NS, CO, ID2).text, /d.removed_at IS NULL/);
+  assert.match(buildListDocuments(NS, CO).text, /d.removed_at IS NULL/);
+  const dup = buildFindDuplicateDocument(NS, CO, { businessId: BIZ, issueId: ID2, docType: "other", attachmentRef: "a", title: "t", documentDate: null, idempotencyKey: null });
+  assert.doesNotMatch(dup.text, /removed_at IS NULL/);
+  assert.match(dup.text, /d.removed_at/);
+});
+
+test("a document edit or removal only touches a row still on the record", () => {
+  assert.match(buildUpdateDocument(NS, CO, ID2, { title: "T" }).text, /AND removed_at IS NULL$/);
+  assert.match(buildRemoveDocument(NS, CO, ID2, null).text, /AND removed_at IS NULL$/);
+  assert.throws(() => buildUpdateDocument(NS, CO, ID2, {}));
 });

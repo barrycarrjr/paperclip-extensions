@@ -272,7 +272,7 @@ export function buildSetStatus(
 
 const DOCUMENT_COLUMNS = `d.id, d.company_id, d.business_id, d.doc_type, d.title, d.issuing_body,
   d.document_date::text AS document_date, d.renewal_date::text AS renewal_date, d.issue_id,
-  d.attachment_ref, d.replaced_by, d.idempotency_key, d.notes, d.created_at, b.name AS business_name`;
+  d.attachment_ref, d.replaced_by, d.idempotency_key, d.notes, d.created_at, d.removed_at, b.name AS business_name`;
 
 function documentFrom(ns: string): string {
   return `${ns}.business_documents d JOIN ${ns}.businesses b ON b.id = d.business_id AND b.company_id = d.company_id`;
@@ -282,7 +282,7 @@ export function buildGetDocument(ns: string, companyId: string, documentId: stri
   const { p, c } = start(companyId);
   const id = p.add(documentId);
   return {
-    text: `SELECT ${DOCUMENT_COLUMNS} FROM ${documentFrom(ns)} WHERE d.company_id = ${c} AND d.id = ${id}`,
+    text: `SELECT ${DOCUMENT_COLUMNS} FROM ${documentFrom(ns)} WHERE d.company_id = ${c} AND d.id = ${id} AND d.removed_at IS NULL`,
     params: p.values,
   };
 }
@@ -291,6 +291,9 @@ export function buildGetDocument(ns: string, companyId: string, documentId: stri
  * Find a document that an add_document call would duplicate: same idempotency
  * key, or same attachment filed as the same type on the same issue, or (when
  * there is no attachment reference) same issue, type, title and date.
+ *
+ * Removed documents are included on purpose: the unique indexes still hold
+ * their slot, so adding the same file again brings the removed row back.
  */
 export function buildFindDuplicateDocument(
   ns: string,
@@ -390,7 +393,7 @@ export interface DocumentFilter {
 
 export function buildListDocuments(ns: string, companyId: string, f: DocumentFilter = {}): SqlStatement {
   const { p, c } = start(companyId);
-  const where = [`d.company_id = ${c}`];
+  const where = [`d.company_id = ${c}`, "d.removed_at IS NULL"];
   if (f.businessId) where.push(`d.business_id = ${p.add(f.businessId)}`);
   if (f.docType) where.push(`d.doc_type = ${p.add(f.docType)}`);
   if (!f.includeReplaced) where.push("d.replaced_by IS NULL");
@@ -404,6 +407,85 @@ export function buildListDocuments(ns: string, companyId: string, f: DocumentFil
     params: p.values,
   };
 }
+
+export interface DocumentUpdate {
+  docType?: DocType;
+  title?: string;
+  issuingBody?: string | null;
+  documentDate?: string | null;
+  renewalDate?: string | null;
+  notes?: string | null;
+}
+
+/** Edit the descriptive fields of a document still on the record. */
+export function buildUpdateDocument(ns: string, companyId: string, documentId: string, u: DocumentUpdate): SqlStatement {
+  const { p, c } = start(companyId);
+  const sets: string[] = [];
+  if (u.docType !== undefined) sets.push(`doc_type = ${p.add(u.docType)}`);
+  if (u.title !== undefined) sets.push(`title = ${p.add(u.title)}`);
+  if (u.issuingBody !== undefined) sets.push(`issuing_body = ${p.add(u.issuingBody)}`);
+  if (u.documentDate !== undefined) sets.push(`document_date = ${p.add(u.documentDate)}::date`);
+  if (u.renewalDate !== undefined) sets.push(`renewal_date = ${p.add(u.renewalDate)}::date`);
+  if (u.notes !== undefined) sets.push(`notes = ${p.add(u.notes)}`);
+  if (sets.length === 0) throw new Error("buildUpdateDocument needs at least one field");
+  const id = p.add(documentId);
+  return {
+    text: `UPDATE ${ns}.business_documents SET ${sets.join(", ")} WHERE company_id = ${c} AND id = ${id} AND removed_at IS NULL`,
+    params: p.values,
+  };
+}
+
+/** Take a document off the record. The row and the file stay; only the record stops showing it. */
+export function buildRemoveDocument(ns: string, companyId: string, documentId: string, reason: string | null): SqlStatement {
+  const { p, c } = start(companyId);
+  const r = p.add(reason);
+  const id = p.add(documentId);
+  return {
+    text: `UPDATE ${ns}.business_documents SET removed_at = now(), removed_reason = ${r} WHERE company_id = ${c} AND id = ${id} AND removed_at IS NULL`,
+    params: p.values,
+  };
+}
+
+/** Bring a removed document back, with the details it is being added with this time. */
+export function buildRestoreDocument(
+  ns: string,
+  companyId: string,
+  documentId: string,
+  d: { title: string; issuingBody: string | null; documentDate: string | null; renewalDate: string | null; notes: string | null },
+): SqlStatement {
+  const { p, c } = start(companyId);
+  const t = p.add(d.title);
+  const ib = p.add(d.issuingBody);
+  const dd = p.add(d.documentDate);
+  const rd = p.add(d.renewalDate);
+  const n = p.add(d.notes);
+  const id = p.add(documentId);
+  return {
+    text: `UPDATE ${ns}.business_documents SET removed_at = NULL, removed_reason = NULL, title = ${t}, issuing_body = ${ib}, document_date = ${dd}::date, renewal_date = ${rd}::date, notes = ${n} WHERE company_id = ${c} AND id = ${id} AND removed_at IS NOT NULL`,
+    params: p.values,
+  };
+}
+
+/** When a replacing document is removed, the one it replaced is current again. */
+export function buildClearReplacedBy(ns: string, companyId: string, replacedById: string): SqlStatement {
+  const { p, c } = start(companyId);
+  const id = p.add(replacedById);
+  return {
+    text: `UPDATE ${ns}.business_documents SET replaced_by = NULL WHERE company_id = ${c} AND replaced_by = ${id}`,
+    params: p.values,
+  };
+}
+
+/** Filings that cite a document, as proof of filing or as the reason it is not required. */
+export function buildFilingsCitingDocument(ns: string, companyId: string, documentId: string): SqlStatement {
+  const { p, c } = start(companyId);
+  const id = p.add(documentId);
+  return {
+    text: `SELECT f.id, f.filing, f.period_label FROM ${ns}.business_filings f WHERE f.company_id = ${c} AND (f.proof_document_id = ${id} OR f.not_required_source->>'documentId' = ${id}::text) ORDER BY f.due_date LIMIT 20`,
+    params: p.values,
+  };
+}
+
 
 // ---- Filings ----
 

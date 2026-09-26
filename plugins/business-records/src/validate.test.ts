@@ -4,15 +4,18 @@ import {
   RecordsError,
   assertNoSensitiveIds,
   canonicalContacts,
+  decodeEntities,
   findSensitiveField,
   isDateOnly,
   looksLikeFullTaxId,
   parseContacts,
   parseDate,
   parseOptionalDate,
+  parseOptionalText,
   parseRole,
   parseStatusSource,
   parseTaxIdLast4,
+  parseText,
   parseTimestamp,
   todayLocal,
 } from "./validate.js";
@@ -177,4 +180,12 @@ test("link roles are short slugs", () => {
   assert.equal(parseRole("case:wind-down"), "case:wind-down");
   assert.equal(codeOf(() => parseRole("a role with spaces")), "EINVALID_INPUT");
   assert.equal(codeOf(() => parseRole("")), "EINVALID_INPUT");
+});
+
+test("text written with HTML entities is stored as the characters a person would type", () => {
+  assert.equal(decodeEntities("2025 Profit &amp; Loss"), "2025 Profit & Loss");
+  assert.equal(decodeEntities("Seller Q&amp;A &lt;draft&gt; &quot;v2&quot; owner&#39;s"), 'Seller Q&A <draft> "v2" owner\'s');
+  assert.equal(decodeEntities("&amp;lt;"), "&lt;", "only one level is decoded");
+  assert.equal(parseText(" P&amp;L ", "title"), "P&L");
+  assert.equal(parseOptionalText("A &amp; B", "notes"), "A & B");
 });

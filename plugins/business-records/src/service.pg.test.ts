@@ -486,4 +486,99 @@ if (!DATABASE_URL) {
     assert.equal(detailA.links.length, 1);
     assert.ok(detailA.history.length >= 2);
   });
+  test("editing a document from the page cleans HTML entities, writes one history row, and is company-scoped", async () => {
+    const biz = await createBusiness(A, "Example Page Edit LLC");
+    const doc = await addDoc(A, biz.id, { docType: "other", title: "2025 Profit &amp; Loss (QuickBooks)" });
+    assert.equal(doc.title, "2025 Profit & Loss (QuickBooks)", "entities are decoded on the way in");
+
+    const edited = await service.updateDocument(A, { documentId: doc.id, docType: "tax_return", title: "2025 P&L", documentDate: "2025-12-31" });
+    assert.deepEqual(edited.data.changed, ["type", "title", "document date"]);
+    assert.equal(edited.data.document.docType, "tax_return");
+    assert.equal(await count("business_history", "subject_id = $1 AND kind = 'document_updated'", [doc.id]), 1);
+
+    const again = await service.updateDocument(A, { documentId: doc.id, docType: "tax_return", title: "2025 P&L" });
+    assert.deepEqual(again.data.changed, []);
+    assert.equal(await count("business_history", "subject_id = $1 AND kind = 'document_updated'", [doc.id]), 1);
+
+    assert.equal(await codeOf(service.updateDocument(B, { documentId: doc.id, title: "Hijack" })), "EDOCUMENT_NOT_FOUND");
+  });
+
+  test("a document that proves a status or a filing cannot be removed until that changes", async () => {
+    const biz = await createBusiness(A, "Example Page Proof LLC");
+    const cert = await addDoc(A, biz.id);
+    await service.setStatus(A, {
+      businessId: biz.id,
+      field: "legal",
+      value: "active",
+      asOf: "2026-01-10",
+      source: { kind: "document", documentId: cert.id },
+    });
+    assert.equal(await codeOf(service.removeDocument(A, { documentId: cert.id })), "EDOCUMENT_IN_USE");
+
+    const confirmation = await addDoc(A, biz.id, { docType: "filing_confirmation", title: "Annual report confirmation" });
+    const filing = await service.upsertFiling(A, {
+      businessId: biz.id,
+      filing: "Annual report",
+      authority: "State",
+      periodLabel: "2026",
+      dueDate: "2026-06-30",
+    });
+    await service.setFilingStatus(A, { filingId: filing.data.filing.id, status: "filed", proofDocumentId: confirmation.id });
+    assert.equal(await codeOf(service.removeDocument(A, { documentId: confirmation.id })), "EDOCUMENT_IN_USE");
+    assert.equal(await count("business_documents", "id = ANY($1::uuid[]) AND removed_at IS NOT NULL", [[cert.id, confirmation.id]]), 0);
+  });
+
+  test("removing a document hides it everywhere, keeps the row and history, and adding the file again brings it back", async () => {
+    const biz = await createBusiness(A, "Example Page Remove LLC");
+    const ref = `file-${randomUUID()}.pdf`;
+    const doc = await addDoc(A, biz.id, { attachmentRef: ref, title: "Old bylaws", docType: "bylaws" });
+
+    assert.equal(await codeOf(service.removeDocument(B, { documentId: doc.id })), "EDOCUMENT_NOT_FOUND");
+    const removed = await service.removeDocument(A, { documentId: doc.id, reason: "wrong business" });
+    assert.match(removed.summary, /still on its issue/);
+    assert.equal(await count("business_documents", "id = $1 AND removed_at IS NOT NULL AND removed_reason = 'wrong business'", [doc.id]), 1);
+    assert.equal(await count("business_history", "subject_id = $1 AND kind = 'document_removed'", [doc.id]), 1);
+
+    const detail = await service.businessDetail(A, biz.id);
+    assert.equal(detail.documents.some((d) => d.id === doc.id), false);
+    assert.equal(await codeOf(service.removeDocument(A, { documentId: doc.id })), "EDOCUMENT_NOT_FOUND");
+    assert.notEqual(
+      await codeOf(
+        service.setStatus(A, { businessId: biz.id, field: "legal", value: "active", asOf: "2026-01-10", source: { kind: "document", documentId: doc.id } }),
+      ),
+      null,
+      "a removed document cannot be cited as proof",
+    );
+
+    const back = await service.addDocument(A, { businessId: biz.id, docType: "bylaws", title: "Bylaws", issueId: ISSUE_A, attachmentRef: ref });
+    assert.equal(back.data.created, true);
+    assert.equal(back.data.document.id, doc.id, "the removed row comes back rather than a second row");
+    assert.equal(back.data.document.title, "Bylaws");
+    assert.match(back.summary, /^Restored/);
+  });
+
+  test("removing a replacement makes the document it replaced current again", async () => {
+    const biz = await createBusiness(A, "Example Page Replace LLC");
+    const first = await addDoc(A, biz.id, { title: "Certificate, first copy" });
+    const second = await addDoc(A, biz.id, { title: "Certificate, corrected", replacesDocumentId: first.id });
+    let current = (await service.businessDetail(A, biz.id)).documents.map((d) => d.id);
+    assert.deepEqual(current, [second.id]);
+
+    const removed = await service.removeDocument(A, { documentId: second.id });
+    assert.deepEqual(removed.data.restoredDocumentIds, [first.id]);
+    current = (await service.businessDetail(A, biz.id)).documents.map((d) => d.id);
+    assert.deepEqual(current, [first.id]);
+  });
+  test("adding a business from the page refuses a name already on record instead of overwriting it", async () => {
+    const original = await createBusiness(A, "Example Page Name LLC", { notes: "keep me" });
+    assert.equal(
+      await codeOf(service.createBusiness(A, { name: "example page name llc", relationship: "prospect", notes: null })),
+      "EBUSINESS_NAME_TAKEN",
+    );
+    const after = (await service.getBusiness(A, { businessId: original.id })).data.business;
+    assert.equal(after.notes, "keep me");
+    assert.equal(after.relationship, "owned");
+    const fresh = await service.createBusiness(A, { name: "Example Page New LLC", relationship: "prospect" });
+    assert.equal(fresh.data.created, true);
+  });
 }

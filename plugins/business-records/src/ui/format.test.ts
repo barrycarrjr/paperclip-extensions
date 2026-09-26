@@ -149,3 +149,56 @@ test("statuses can be collapsed when nothing is proven, and attention counts gro
     { a: { overdue: 2, dueSoon: 0, renewals: 1 }, b: { overdue: 0, dueSoon: 1, renewals: 0 } },
   );
 });
+
+test("page edits read plainly in the history", () => {
+  assert.equal(
+    describeHistory({ kind: "document_updated", field: "type, title", oldValue: "2025 P - L", newValue: "2025 Profit & Loss", asOf: null }),
+    'Document "2025 P - L" renamed to "2025 Profit & Loss" (type, title)',
+  );
+  assert.equal(
+    describeHistory({ kind: "document_updated", field: "renewal date", oldValue: "Lease", newValue: "Lease", asOf: null }),
+    'Document "Lease" edited (renewal date)',
+  );
+  assert.equal(describeHistory({ kind: "document_removed", field: "other", oldValue: "Old copy", newValue: null, asOf: null }), 'Document removed: "Old copy"');
+});
+
+test("a new document's title starts from the file name, and the viewer knows what it can show", async () => {
+  const { titleFromFilename } = await import("./forms.js");
+  const { previewKind } = await import("./viewer.js");
+  assert.equal(titleFromFilename("2025 P - L.pdf"), "2025 P - L");
+  assert.equal(titleFromFilename("notes.v2.txt"), "notes.v2");
+  assert.equal(titleFromFilename(null), "");
+  assert.equal(previewKind("application/pdf"), "pdf");
+  assert.equal(previewKind("image/png"), "image");
+  assert.equal(previewKind("text/csv; charset=utf-8"), "text");
+  assert.equal(previewKind("application/vnd.openxmlformats-officedocument.wordprocessingml.document"), "none");
+});
+
+test("history written before input was cleaned shows plain characters, not HTML entities", () => {
+  assert.equal(
+    describeHistory({ kind: "document_added", field: "other", oldValue: null, newValue: "2025 Profit &amp; Loss", asOf: null }),
+    'Document added: "2025 Profit & Loss" (other)',
+  );
+});
+
+test("a refusal written for the agent reads plainly on the page", async () => {
+  const { readableError } = await import("./api.js");
+  const agentText =
+    '[EPROOF_REQUIRED] legal status active can only be set from a document on file. A user_reported source cannot set it. Upload the proof (for example the state approval) to the business records issue, add it with business_add_document, then call again with source {kind: "document", documentId}.';
+  assert.equal(
+    readableError(agentText),
+    "Legal status active can only be set from a document on file. Your own word cannot set it. Add the proof under Documents first, then choose it here.",
+  );
+  assert.equal(readableError("[EDOCUMENT_IN_USE] it is the proof for the filing X (2026)."), "It is the proof for the filing X (2026).");
+  assert.equal(readableError("Request failed (500)"), "Request failed (500)");
+});
+
+test("a one-sentence refusal loses its tool name but keeps its meaning", async () => {
+  const { readableError } = await import("./api.js");
+  assert.equal(
+    readableError(
+      "[EPROOF_REQUIRED] status filed needs proofDocumentId: the filed return confirmation, the acceptance, or the extension confirmation, added first with business_add_document.",
+    ),
+    "Status filed needs the filed return confirmation, the acceptance, or the extension confirmation. Add the proof under Documents first, then choose it here.",
+  );
+});

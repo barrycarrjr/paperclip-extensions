@@ -5,7 +5,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // manifest.test.ts fails if the two ever drift apart.
 
 const PLUGIN_ID = "business-records";
-const PLUGIN_VERSION = "0.1.2";
+const PLUGIN_VERSION = "0.2.0";
 
 const RELATIONSHIPS = ["owned", "prospect", "former", "other"];
 const STATUS_FIELDS = ["operating", "legal", "tax_account"];
@@ -190,6 +190,28 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
     },
+    // Page edits. Each runs the same service operation as the matching tool.
+    ...(
+      [
+        ["businesses.create", "POST", "/businesses"],
+        ["businesses.update", "PATCH", "/businesses/:businessId"],
+        ["businesses.status", "POST", "/businesses/:businessId/status"],
+        ["businesses.link", "POST", "/businesses/:businessId/links"],
+        ["documents.create", "POST", "/documents"],
+        ["documents.update", "PATCH", "/documents/:documentId"],
+        ["documents.remove", "POST", "/documents/:documentId/remove"],
+        ["filings.create", "POST", "/filings"],
+        ["filings.update", "PATCH", "/filings/:filingId"],
+        ["filings.status", "POST", "/filings/:filingId/status"],
+      ] as const
+    ).map(([routeKey, method, path]) => ({
+      routeKey,
+      method,
+      path,
+      auth: "board" as const,
+      capability: "api.routes.register" as const,
+      companyResolution: { from: "query" as const, key: "companyId" },
+    })),
   ],
   tools: [
     {

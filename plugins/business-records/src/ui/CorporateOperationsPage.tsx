@@ -2,7 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useHostContext, type PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import type { BusinessApi, DocumentApi, FilingApi, HistoryApi, LinkApi, StatusField } from "../domain.js";
 import { Badge, Button, Dot, Empty, EmptyState, ErrorBanner, Input, Section, cn } from "./_primitives.js";
-import { recordsApi, type BusinessDetail, type Overview } from "./api.js";
+import { hostApi, recordsApi, type BusinessDetail, type HostAttachment, type Overview } from "./api.js";
+import {
+  BusinessForm,
+  DocumentAddForm,
+  DocumentEditForm,
+  DocumentRemoveForm,
+  FilingForm,
+  FilingStatusForm,
+  StatusForm,
+} from "./forms.js";
+import { DocumentViewer } from "./viewer.js";
 import {
   RENEWAL_WINDOW_DAYS,
   STATUS_LABELS,
@@ -204,93 +214,229 @@ function BusinessList({
 
 // ---- Business detail parts ----
 
-function StatusesPart({ business, docTitles }: { business: BusinessApi; docTitles: Record<string, string> }) {
+/** What the detail view is currently editing, if anything. One form is open at a time. */
+type Editing =
+  | { kind: "business" }
+  | { kind: "status"; field?: StatusField }
+  | { kind: "addDocument" }
+  | { kind: "editDocument"; id: string }
+  | { kind: "removeDocument"; id: string }
+  | { kind: "addFiling" }
+  | { kind: "editFiling"; id: string }
+  | { kind: "filingStatus"; id: string }
+  | null;
+
+interface EditProps {
+  companyId: string;
+  editing: Editing;
+  setEditing: (next: Editing) => void;
+  /** Close the form and reload the business after a save. */
+  onSaved: () => void;
+}
+
+function StatusesPart({
+  business,
+  documents,
+  docTitles,
+  companyId,
+  editing,
+  setEditing,
+  onSaved,
+}: { business: BusinessApi; documents: DocumentApi[]; docTitles: Record<string, string> } & EditProps) {
+  const form =
+    editing?.kind === "status" ? (
+      <StatusForm
+        companyId={companyId}
+        business={business}
+        documents={documents}
+        initialField={editing.field}
+        onSaved={onSaved}
+        onCancel={() => setEditing(null)}
+      />
+    ) : null;
+  const action =
+    editing?.kind === "status" ? null : (
+      <Button variant="outline" size="xs" onClick={() => setEditing({ kind: "status" })}>
+        Change status
+      </Button>
+    );
   if (allStatusesUnknown(business)) {
     return (
-      <Section title="Statuses">
-        <Empty>
-          No status has been proven from a document yet. The agent sets these from documents on file: the state's
-          approval for legal status, the tax id letter for the tax account, a dissolution certificate or closure
-          letter when a business closes.
-        </Empty>
+      <Section title="Statuses" action={action}>
+        <div className="space-y-3">
+          {form}
+          <Empty>
+            No status has been proven from a document yet. Legal status and the tax account need a document on file to
+            be marked active, open or closed: the state's approval, the tax id letter, a dissolution certificate or a
+            closure letter.
+          </Empty>
+        </div>
       </Section>
     );
   }
   return (
-    <Section title="Statuses">
-      <dl className="grid gap-4 sm:grid-cols-3">
-        {(Object.keys(STATUS_LABELS) as StatusField[]).map((field) => {
-          const s = business.statuses[field];
-          return (
-            <div key={field} className="space-y-0.5">
-              <dt className="text-xs text-muted-foreground">{STATUS_LABELS[field]}</dt>
-              <dd className="text-sm font-medium">{humanize(s.value)}</dd>
-              <dd className="text-xs text-muted-foreground">{s.asOf ? `As of ${formatDate(s.asOf)}` : "No as-of date"}</dd>
-              <dd className="text-xs text-muted-foreground">Source: {describeSource(s.source, docTitles)}</dd>
-            </div>
-          );
-        })}
-      </dl>
+    <Section title="Statuses" action={action}>
+      <div className="space-y-3">
+        {form}
+        <dl className="grid gap-4 sm:grid-cols-3">
+          {(Object.keys(STATUS_LABELS) as StatusField[]).map((field) => {
+            const s = business.statuses[field];
+            return (
+              <div key={field} className="space-y-0.5">
+                <dt className="text-xs text-muted-foreground">{STATUS_LABELS[field]}</dt>
+                <dd className="text-sm font-medium">{humanize(s.value)}</dd>
+                <dd className="text-xs text-muted-foreground">{s.asOf ? `As of ${formatDate(s.asOf)}` : "No as-of date"}</dd>
+                <dd className="text-xs text-muted-foreground">Source: {describeSource(s.source, docTitles)}</dd>
+                <dd>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline hover:text-foreground"
+                    onClick={() => setEditing({ kind: "status", field })}
+                  >
+                    Change
+                  </button>
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      </div>
     </Section>
   );
 }
 
 function DocumentsPart({
+  business,
   documents,
+  links,
+  attachments,
   today,
-  companyPrefix,
+  onView,
+  companyId,
+  editing,
+  setEditing,
+  onSaved,
 }: {
+  business: BusinessApi;
   documents: DocumentApi[];
+  links: LinkApi[];
+  attachments: Record<string, HostAttachment>;
   today: string;
-  companyPrefix: string | null;
-}) {
+  onView: (index: number) => void;
+} & EditProps) {
   return (
-    <Section title="Documents" count={documents.length}>
-      {documents.length === 0 ? (
-        <Empty>No documents on file. Attach files to the business's records issue and the agent will index them here.</Empty>
-      ) : (
-        <ul className="divide-y divide-border">
-          {documents.map((d) => {
-            const tone = renewalTone(d.renewalDate, today);
-            return (
-              <li key={d.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
-                <div className="min-w-0">
-                  <a href={issueHref(companyPrefix, d.issueId)} className="font-medium hover:underline">
-                    {d.title}
-                  </a>
-                  <div className="text-xs text-muted-foreground">
-                    {humanize(d.docType)}
-                    {d.issuingBody ? ` from ${d.issuingBody}` : ""}
-                    {d.documentDate ? `, dated ${formatDate(d.documentDate)}` : ""}
-                    {d.attachmentRef ? `, file ${d.attachmentRef}` : ""}
+    <Section
+      title="Documents"
+      count={documents.length}
+      action={
+        editing?.kind === "addDocument" ? null : (
+          <Button variant="outline" size="xs" onClick={() => setEditing({ kind: "addDocument" })}>
+            Add document
+          </Button>
+        )
+      }
+    >
+      <div className="space-y-3">
+        {editing?.kind === "addDocument" && (
+          <DocumentAddForm
+            companyId={companyId}
+            business={business}
+            links={links}
+            documents={documents}
+            onSaved={onSaved}
+            onCancel={() => setEditing(null)}
+          />
+        )}
+        {documents.length === 0 ? (
+          <Empty>No documents on file yet. Add one here, or attach files to the business's records issue and ask the agent to file them.</Empty>
+        ) : (
+          <ul className="divide-y divide-border">
+            {documents.map((d, index) => {
+              const tone = renewalTone(d.renewalDate, today);
+              const file = d.attachmentRef ? attachments[d.attachmentRef] : undefined;
+              const isEditing = editing?.kind === "editDocument" && editing.id === d.id;
+              const isRemoving = editing?.kind === "removeDocument" && editing.id === d.id;
+              return (
+                <li key={d.id} className="space-y-2 py-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <button type="button" className="text-left font-medium hover:underline" onClick={() => onView(index)}>
+                        {d.title}
+                      </button>
+                      <div className="text-xs text-muted-foreground">
+                        {humanize(d.docType)}
+                        {d.issuingBody ? ` from ${d.issuingBody}` : ""}
+                        {d.documentDate ? `, dated ${formatDate(d.documentDate)}` : ""}
+                        {file?.originalFilename ? `, ${file.originalFilename}` : ""}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {d.renewalDate && (
+                        <Badge tone={tone === "bad" ? "bad" : tone === "warn" ? "warn" : "neutral"}>
+                          {describeRenewal(d.renewalDate, today)}
+                        </Badge>
+                      )}
+                      <Button variant="ghost" size="xs" onClick={() => setEditing({ kind: "editDocument", id: d.id })}>
+                        Edit
+                      </Button>
+                      <Button variant="ghost" size="xs" onClick={() => setEditing({ kind: "removeDocument", id: d.id })}>
+                        Remove
+                      </Button>
+                    </div>
                   </div>
-                </div>
-                {d.renewalDate && (
-                  <Badge tone={tone === "bad" ? "bad" : tone === "warn" ? "warn" : "neutral"}>{describeRenewal(d.renewalDate, today)}</Badge>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                  {isEditing && (
+                    <DocumentEditForm companyId={companyId} document={d} onSaved={onSaved} onCancel={() => setEditing(null)} />
+                  )}
+                  {isRemoving && (
+                    <DocumentRemoveForm companyId={companyId} document={d} onSaved={onSaved} onCancel={() => setEditing(null)} />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
     </Section>
   );
 }
 
 function FilingsPart({
+  business,
   filings,
+  documents,
   today,
   companyPrefix,
+  companyId,
+  editing,
+  setEditing,
+  onSaved,
 }: {
+  business: BusinessApi;
   filings: FilingApi[];
+  documents: DocumentApi[];
   today: string;
   companyPrefix: string | null;
-}) {
+} & EditProps) {
   const sorted = sortFilingsByDue(filings);
   return (
-    <Section title="Filings" count={filings.length}>
+    <Section
+      title="Filings"
+      count={filings.length}
+      action={
+        editing?.kind === "addFiling" ? null : (
+          <Button variant="outline" size="xs" onClick={() => setEditing({ kind: "addFiling" })}>
+            Add filing
+          </Button>
+        )
+      }
+    >
+      {editing?.kind === "addFiling" && (
+        <div className="mb-3">
+          <FilingForm companyId={companyId} business={business} onSaved={onSaved} onCancel={() => setEditing(null)} />
+        </div>
+      )}
       {sorted.length === 0 ? (
-        <Empty>No filings on the calendar yet. Ask the agent what this business has to file and it will build the list.</Empty>
+        <Empty>No filings on the calendar yet. Add one here, or ask the agent what this business has to file and it will build the list.</Empty>
       ) : (
         <ul className="divide-y divide-border">
           {sorted.map((f) => {
@@ -320,13 +466,45 @@ function FilingsPart({
                     </>
                   )}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {f.status === "not_required"
-                    ? `Not required: ${f.notRequiredReason ?? ""}`
-                    : f.proofDocumentId
-                      ? `Proof on file: ${f.proofTitle ?? f.proofDocumentId}`
-                      : "No proof on file"}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {f.status === "not_required"
+                      ? `Not required: ${f.notRequiredReason ?? ""}`
+                      : f.proofDocumentId
+                        ? `Proof on file: ${f.proofTitle ?? f.proofDocumentId}`
+                        : "No proof on file"}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Button variant="ghost" size="xs" onClick={() => setEditing({ kind: "filingStatus", id: f.id })}>
+                      Change status
+                    </Button>
+                    <Button variant="ghost" size="xs" onClick={() => setEditing({ kind: "editFiling", id: f.id })}>
+                      Edit
+                    </Button>
+                  </span>
                 </div>
+                {editing?.kind === "filingStatus" && editing.id === f.id && (
+                  <div className="pt-2">
+                    <FilingStatusForm
+                      companyId={companyId}
+                      filing={f}
+                      documents={documents}
+                      onSaved={onSaved}
+                      onCancel={() => setEditing(null)}
+                    />
+                  </div>
+                )}
+                {editing?.kind === "editFiling" && editing.id === f.id && (
+                  <div className="pt-2">
+                    <FilingForm
+                      companyId={companyId}
+                      business={business}
+                      filing={f}
+                      onSaved={onSaved}
+                      onCancel={() => setEditing(null)}
+                    />
+                  </div>
+                )}
               </li>
             );
           })}
@@ -383,9 +561,59 @@ function HistoryPart({ history }: { history: HistoryApi[] }) {
   );
 }
 
-function BusinessDetailView({ detail, companyPrefix }: { detail: BusinessDetail; companyPrefix: string | null }) {
+/**
+ * The host's attachment records for every issue the documents live on, keyed
+ * by attachment id, so a document can show its file name and open in the viewer.
+ */
+function useAttachments(documents: DocumentApi[]): Record<string, HostAttachment> {
+  const [byId, setById] = useState<Record<string, HostAttachment>>({});
+  const issueKey = useMemo(() => [...new Set(documents.map((d) => d.issueId))].sort().join(","), [documents]);
+  useEffect(() => {
+    if (!issueKey) {
+      setById({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(issueKey.split(",").map((issueId) => hostApi.listAttachments(issueId).catch(() => [] as HostAttachment[])))
+      .then((lists) => {
+        if (cancelled) return;
+        setById(Object.fromEntries(lists.flat().map((a) => [a.id, a])));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [issueKey]);
+  return byId;
+}
+
+function BusinessDetailView({
+  detail,
+  companyPrefix,
+  companyId,
+  onChanged,
+}: {
+  detail: BusinessDetail;
+  companyPrefix: string | null;
+  companyId: string;
+  onChanged: () => void;
+}) {
   const { business, documents, filings, links, history, today } = detail;
   const docTitles = useMemo(() => Object.fromEntries(documents.map((d) => [d.id, d.title])), [documents]);
+  const attachments = useAttachments(documents);
+  const [editing, setEditing] = useState<Editing>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // A different business closes any open form.
+  useEffect(() => setEditing(null), [business.id]);
+  const edit: EditProps = {
+    companyId,
+    editing,
+    setEditing,
+    onSaved: () => {
+      setEditing(null);
+      onChanged();
+    },
+  };
   const facts = [
     business.legalForm,
     business.formationState ? `formed in ${business.formationState}` : null,
@@ -394,10 +622,25 @@ function BusinessDetailView({ detail, companyPrefix }: { detail: BusinessDetail;
       : null,
     business.taxIdLast4 ? `tax id ending ${business.taxIdLast4}` : null,
   ].filter(Boolean);
+  if (editing?.kind === "business") {
+    return (
+      <BusinessForm
+        companyId={companyId}
+        business={business}
+        onSaved={edit.onSaved}
+        onCancel={() => setEditing(null)}
+      />
+    );
+  }
   return (
     <div className="space-y-4">
       <header>
-        <h2 className="text-lg font-semibold text-foreground">{business.name}</h2>
+        <div className="flex items-start justify-between gap-2">
+          <h2 className="text-lg font-semibold text-foreground">{business.name}</h2>
+          <Button variant="outline" size="xs" onClick={() => setEditing({ kind: "business" })}>
+            Edit details
+          </Button>
+        </div>
         <p className="text-sm text-muted-foreground">
           {humanize(business.relationship)}
           {facts.length > 0 ? `, ${facts.join(", ")}` : ""}
@@ -405,11 +648,35 @@ function BusinessDetailView({ detail, companyPrefix }: { detail: BusinessDetail;
         </p>
         {business.notes && <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{business.notes}</p>}
       </header>
-      <StatusesPart business={business} docTitles={docTitles} />
-      <FilingsPart filings={filings} today={today} companyPrefix={companyPrefix} />
-      <DocumentsPart documents={documents} today={today} companyPrefix={companyPrefix} />
+      <StatusesPart business={business} documents={documents} docTitles={docTitles} {...edit} />
+      <FilingsPart
+        business={business}
+        filings={filings}
+        documents={documents}
+        today={today}
+        companyPrefix={companyPrefix}
+        {...edit}
+      />
+      <DocumentsPart
+        business={business}
+        documents={documents}
+        links={links}
+        attachments={attachments}
+        today={today}
+        onView={setViewerIndex}
+        {...edit}
+      />
       <LinksPart links={links} companyPrefix={companyPrefix} today={today} />
       <HistoryPart history={history} />
+      {viewerIndex !== null && (
+        <DocumentViewer
+          documents={documents}
+          attachments={attachments}
+          index={viewerIndex}
+          onIndexChange={setViewerIndex}
+          onClose={() => setViewerIndex(null)}
+        />
+      )}
     </div>
   );
 }
@@ -431,6 +698,7 @@ export function CorporateOperationsPage(_props: PluginPageProps) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+  const [addingBusiness, setAddingBusiness] = useState(false);
   // Bumped to make every fetch run again (the Refresh button and regaining focus).
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -516,8 +784,8 @@ export function CorporateOperationsPage(_props: PluginPageProps) {
           <h1 className="text-xl font-bold text-foreground">Corporate Operations</h1>
           <p className="text-sm text-muted-foreground">
             Every business you own, are starting, closing or looking at: its records, documents and tax filings. The
-            Corporate Operations agent keeps this up to date and must cite a document on file before it can mark a
-            business formed or closed, or a filing done.
+            Corporate Operations agent keeps this up to date, and you can change anything here. Either way, a document
+            on file is needed before a business can be marked formed or closed, or a filing done.
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -530,10 +798,17 @@ export function CorporateOperationsPage(_props: PluginPageProps) {
 
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
-      {nothingOnRecord ? (
+      {nothingOnRecord && !addingBusiness ? (
         <EmptyState title="No businesses on record yet">
-          Ask the Corporate Operations agent to add one, for example "Add Example Widgets LLC, a Pennsylvania LLC we
-          own", or drop a business document into its chat and it will file it. Nothing on this page is edited by hand.
+          <p>
+            Add one here, or ask the Corporate Operations agent, for example "Add Example Widgets LLC, a Pennsylvania
+            LLC we own".
+          </p>
+          <div className="mt-3">
+            <Button size="sm" onClick={() => setAddingBusiness(true)}>
+              Add a business
+            </Button>
+          </div>
         </EmptyState>
       ) : (
         <>
@@ -541,6 +816,9 @@ export function CorporateOperationsPage(_props: PluginPageProps) {
 
           <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className="space-y-2">
+              <Button variant="outline" size="sm" className="w-full" onClick={() => setAddingBusiness(true)} disabled={addingBusiness}>
+                Add a business
+              </Button>
               <Input
                 type="search"
                 placeholder="Search businesses"
@@ -558,9 +836,25 @@ export function CorporateOperationsPage(_props: PluginPageProps) {
               />
             </aside>
             <main className="min-w-0">
-              {detailLoading && !detail && <Empty>Loading...</Empty>}
-              {detail && <BusinessDetailView detail={detail} companyPrefix={companyPrefix} />}
-              {!detailLoading && !detail && (
+              {addingBusiness ? (
+                <BusinessForm
+                  companyId={companyId}
+                  onSaved={(id) => {
+                    setAddingBusiness(false);
+                    open(id);
+                    refresh();
+                  }}
+                  onCancel={() => setAddingBusiness(false)}
+                />
+              ) : (
+                <>
+                  {detailLoading && !detail && <Empty>Loading...</Empty>}
+                  {detail && (
+                    <BusinessDetailView detail={detail} companyPrefix={companyPrefix} companyId={companyId} onChanged={refresh} />
+                  )}
+                </>
+              )}
+              {!addingBusiness && !detailLoading && !detail && (
                 <EmptyState title="Pick a business">Its statuses, filings, documents, linked cases and history show here.</EmptyState>
               )}
             </main>

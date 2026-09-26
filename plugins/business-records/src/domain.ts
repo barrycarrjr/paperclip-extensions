@@ -121,6 +121,8 @@ export const HISTORY_KINDS = [
   "document_replaced",
   "business_created",
   "business_updated",
+  "document_updated",
+  "document_removed",
 ] as const;
 export type HistoryKind = (typeof HISTORY_KINDS)[number];
 
@@ -216,6 +218,8 @@ export interface DocumentRow {
   idempotency_key: string | null;
   notes: string | null;
   created_at: string | Date;
+  /** Set when a person removed the document from the record. Removed rows are never listed. */
+  removed_at?: string | Date | null;
   business_name?: string;
 }
 

@@ -61,6 +61,12 @@ import {
   buildListHistory,
   buildListLinks,
   buildMarkReplaced,
+  buildClearReplacedBy,
+  buildFilingsCitingDocument,
+  buildRemoveDocument,
+  buildRestoreDocument,
+  buildUpdateDocument,
+  type DocumentUpdate,
   buildSetFilingStatus,
   buildSetStatus,
   buildUpdateBusiness,
@@ -485,6 +491,21 @@ export function createRecordsService(deps: ServiceDeps) {
     };
   }
 
+  /**
+   * The page's "Add a business". Unlike business_upsert, a name already on
+   * record is refused rather than matched: the form sends every field, so
+   * matching would quietly overwrite the other record's details.
+   */
+  async function createBusiness(call: CallContext, raw: unknown) {
+    const p = readParams(raw);
+    const name = parseText(p.name, "name", 200);
+    const clash = (await q<BusinessRow>(buildFindBusinessByName(ns, call.companyId, name)))[0];
+    if (clash) {
+      throw new RecordsError("EBUSINESS_NAME_TAKEN", `a business named "${clash.name}" is already on record. Open it from the list instead.`);
+    }
+    return upsertBusiness(call, { ...p, id: undefined });
+  }
+
   async function setStatus(
     call: CallContext,
     raw: unknown,
@@ -642,6 +663,30 @@ export function createRecordsService(deps: ServiceDeps) {
 
     let doc = (await q<DocumentRow>(dupStmt))[0] ?? null;
     let created = false;
+    let restored = false;
+    if (doc?.removed_at) {
+      // The same file was on the record before and was removed. Bring that row
+      // back rather than refusing: the unique indexes still hold its slot.
+      const restoredId = doc.id;
+      const r = await x(
+        buildRestoreDocument(ns, call.companyId, restoredId, { title, issuingBody, documentDate, renewalDate, notes }),
+      );
+      doc = (await q<DocumentRow>(buildGetDocument(ns, call.companyId, restoredId)))[0] ?? null;
+      if (!doc) throw new RecordsError("ECONFLICT", "the document could not be restored; try again.");
+      if (r.rowCount > 0) {
+        restored = true;
+        created = true;
+        await writeHistory(call, {
+          businessId,
+          kind: "document_added",
+          subjectId: restoredId,
+          field: doc.doc_type,
+          newValue: doc.title,
+          asOf: documentDate,
+          source: { note: "restored after removal" },
+        });
+      }
+    }
     if (!doc) {
       if (old?.replaced_by) {
         throw new RecordsError("EDOCUMENT_ALREADY_REPLACED", "that document has already been replaced by a newer one.");
@@ -703,9 +748,164 @@ export function createRecordsService(deps: ServiceDeps) {
     const api = documentToApi(doc);
     return {
       summary: created
-        ? `Added ${docType} "${title}" to ${business.name} [id ${api.id}]${replaced ? `, replacing ${replaced}` : ""}.`
+        ? `${restored ? "Restored" : "Added"} ${docType} "${title}" to ${business.name} [id ${api.id}]${replaced ? `, replacing ${replaced}` : ""}.`
         : `No change: that document is already on file for ${business.name} [id ${api.id}].`,
       data: { document: api, created, replaced },
+    };
+  }
+
+  const DOCUMENT_FIELD_LABELS: Record<keyof DocumentUpdate, string> = {
+    docType: "type",
+    title: "title",
+    issuingBody: "issuer",
+    documentDate: "document date",
+    renewalDate: "renewal date",
+    notes: "notes",
+  };
+
+  async function loadDocument(companyId: string, documentId: string): Promise<DocumentRow> {
+    const doc = (await q<DocumentRow>(buildGetDocument(ns, companyId, documentId)))[0];
+    if (!doc) {
+      throw new RecordsError("EDOCUMENT_NOT_FOUND", "no document with that id on record in this company. It may have been removed.");
+    }
+    return doc;
+  }
+
+  /**
+   * Correct a document's description: its type, title, issuer, dates or notes.
+   * The file and the issue it lives on do not change; to point at a different
+   * file, add that file as a new document that replaces this one.
+   */
+  async function updateDocument(
+    call: CallContext,
+    raw: unknown,
+  ): Promise<OpResult<{ document: DocumentApi; changed: string[] }>> {
+    const p = readParams(raw);
+    assertNoSensitiveIds(p);
+    const documentId = parseUuid(p.documentId, "documentId");
+    const existing = await loadDocument(call.companyId, documentId);
+
+    const next: DocumentUpdate = {};
+    const docType = parseOptionalEnum(p.docType, DOC_TYPES, "docType") ?? undefined;
+    if (docType !== undefined && docType !== existing.doc_type) next.docType = docType;
+    if (p.title !== undefined) {
+      const title = parseText(p.title, "title", 300);
+      if (title !== existing.title) next.title = title;
+    }
+    const issuingBody = parseOptionalText(p.issuingBody, "issuingBody", 200);
+    if (issuingBody !== undefined && issuingBody !== existing.issuing_body) next.issuingBody = issuingBody;
+    const documentDate = parseOptionalDate(p.documentDate, "documentDate");
+    if (documentDate !== undefined && documentDate !== existing.document_date) next.documentDate = documentDate;
+    const renewalDate = parseOptionalDate(p.renewalDate, "renewalDate");
+    if (renewalDate !== undefined && renewalDate !== existing.renewal_date) next.renewalDate = renewalDate;
+    const notes = parseOptionalText(p.notes, "notes", 5000);
+    if (notes !== undefined && notes !== existing.notes) next.notes = notes;
+
+    const changed = (Object.keys(next) as Array<keyof DocumentUpdate>).map((k) => DOCUMENT_FIELD_LABELS[k]);
+    if (changed.length === 0) {
+      return {
+        summary: `No change: "${existing.title}" already reads that way.`,
+        data: { document: documentToApi(existing), changed },
+      };
+    }
+    if (next.docType && existing.attachment_ref) {
+      const clash = (
+        await q<DocumentRow>(
+          buildFindDuplicateDocument(ns, call.companyId, {
+            businessId: existing.business_id,
+            issueId: existing.issue_id,
+            docType: next.docType,
+            attachmentRef: existing.attachment_ref,
+            title: next.title ?? existing.title,
+            documentDate: existing.document_date,
+            idempotencyKey: null,
+          }),
+        )
+      )[0];
+      if (clash && clash.id !== existing.id) {
+        throw new RecordsError(
+          "EDUPLICATE_DOCUMENT",
+          clash.removed_at
+            ? `that file was on record before as a ${next.docType} document and was removed. Add it again as that type instead.`
+            : `that file is already on record as a ${next.docType} document ("${clash.title}"). Remove one of the two first.`,
+        );
+      }
+    }
+
+    const r = await x(buildUpdateDocument(ns, call.companyId, documentId, next));
+    if (r.rowCount === 0) {
+      throw new RecordsError("EDOCUMENT_NOT_FOUND", "the document was removed while this change was being saved.");
+    }
+    await writeHistory(call, {
+      businessId: existing.business_id,
+      kind: "document_updated",
+      subjectId: documentId,
+      field: changed.join(", "),
+      oldValue: existing.title,
+      newValue: next.title ?? existing.title,
+    });
+    const document = documentToApi(await loadDocument(call.companyId, documentId));
+    return {
+      summary: `Updated "${document.title}": ${changed.join(", ")}.`,
+      data: { document, changed },
+    };
+  }
+
+  /**
+   * Take a document off the record. Refused while a status or a filing cites
+   * it as proof, so a proven status can never lose its proof without someone
+   * changing that status first. The file stays on its issue.
+   */
+  async function removeDocument(
+    call: CallContext,
+    raw: unknown,
+  ): Promise<OpResult<{ documentId: string; restoredDocumentIds: string[] }>> {
+    const p = readParams(raw);
+    assertNoSensitiveIds(p);
+    const documentId = parseUuid(p.documentId, "documentId");
+    const reason = parseOptionalText(p.reason, "reason", 1000) ?? null;
+    const doc = await loadDocument(call.companyId, documentId);
+    const business = await loadBusiness(call.companyId, doc.business_id);
+
+    const uses: string[] = [];
+    for (const field of STATUS_FIELDS) {
+      const col = STATUS_COLUMN[field];
+      const source = business[`${col}_source` as `${typeof col}_source`];
+      if (source?.documentId === documentId) uses.push(`the ${field.replace("_", " ")} status (${business[col]})`);
+    }
+    const filings = await q<{ id: string; filing: string; period_label: string }>(
+      buildFilingsCitingDocument(ns, call.companyId, documentId),
+    );
+    for (const f of filings) uses.push(`the filing ${f.filing} (${f.period_label})`);
+    if (uses.length > 0) {
+      throw new RecordsError(
+        "EDOCUMENT_IN_USE",
+        `"${doc.title}" is the proof for ${uses.join(" and ")}. Change ${uses.length === 1 ? "that" : "those"} first, then remove it.`,
+      );
+    }
+
+    const r = await x(buildRemoveDocument(ns, call.companyId, documentId, reason));
+    if (r.rowCount === 0) {
+      return { summary: `No change: "${doc.title}" was already removed.`, data: { documentId, restoredDocumentIds: [] } };
+    }
+    // Anything this document had replaced is the current version again.
+    const replaced = (
+      await q<DocumentRow>(buildListDocuments(ns, call.companyId, { businessId: doc.business_id, includeReplaced: true }))
+    )
+      .filter((d) => d.replaced_by === documentId)
+      .map((d) => d.id);
+    if (replaced.length > 0) await x(buildClearReplacedBy(ns, call.companyId, documentId));
+    await writeHistory(call, {
+      businessId: doc.business_id,
+      kind: "document_removed",
+      subjectId: documentId,
+      field: doc.doc_type,
+      oldValue: doc.title,
+      source: reason ? { note: reason } : null,
+    });
+    return {
+      summary: `Removed "${doc.title}" from ${business.name}. The file is still on its issue.`,
+      data: { documentId, restoredDocumentIds: replaced },
     };
   }
 
@@ -1084,10 +1284,13 @@ export function createRecordsService(deps: ServiceDeps) {
     listBusinesses,
     getBusiness,
     upsertBusiness,
+    createBusiness,
     setStatus,
     linkIssue,
     history,
     addDocument,
+    updateDocument,
+    removeDocument,
     listDocuments,
     upsertFiling,
     setFilingStatus,
