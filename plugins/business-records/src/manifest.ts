@@ -5,7 +5,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // manifest.test.ts fails if the two ever drift apart.
 
 const PLUGIN_ID = "business-records";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.1.1";
 
 const RELATIONSHIPS = ["owned", "prospect", "former", "other"];
 const STATUS_FIELDS = ["operating", "legal", "tax_account"];
@@ -75,7 +75,7 @@ const PROOF_RULE_TEXT =
 const SENSITIVE_RULE_TEXT =
   "Never send a full tax id or social security number in any field; only taxIdLast4 (exactly four digits). Text shaped like a full EIN or SSN is refused with [ESENSITIVE_ID].";
 
-const SETUP_INSTRUCTIONS = `# Setup, Business Records
+const SETUP_INSTRUCTIONS = `# Setup, Corporate Operations
 
 Nothing external to wire up: no API keys, no OAuth. Reckon on **about 2 minutes**.
 
@@ -118,7 +118,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
-  displayName: "Business Records",
+  displayName: "Corporate Operations",
   description:
     "A record per business: three statuses (operating, legal, tax account) each with its as-of date and source, the standing documents with renewal dates, the tax filing calendar with proof of filing, linked case issues, and an append-only history. The rules that matter are enforced in code: a business cannot be marked dissolved, active or closed, and a filing cannot be marked filed, without a document on file that proves it. Intended for the HQ company only.",
   author: "Barry Carr & Tony Allard",

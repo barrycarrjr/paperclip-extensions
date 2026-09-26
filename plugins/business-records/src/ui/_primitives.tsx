@@ -1,7 +1,12 @@
-/**
+﻿/**
  * Small styled primitives using the host's Tailwind classes, same approach as
  * the notepad plugin. Plugins cannot import the host's component library, so
  * the few pieces the page needs are defined here.
+ *
+ * Only classes Paperclip's own UI already uses will work here: the plugin
+ * bundle is not run through Tailwind, so an arbitrary value the host never
+ * emits (for example a one-off grid template) silently does nothing. Check a
+ * new class against the live stylesheet before relying on it.
  */
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
 
@@ -13,7 +18,7 @@ type ButtonVariant = "default" | "outline" | "ghost";
 type ButtonSize = "default" | "sm" | "xs";
 
 const BUTTON_BASE =
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color] disabled:pointer-events-none disabled:opacity-50 outline-none";
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 outline-none focus-visible:ring-ring focus-visible:ring-[3px]";
 
 const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   default: "bg-primary text-primary-foreground hover:bg-primary/90",
@@ -38,19 +43,32 @@ export function Button({ variant = "default", size = "default", className, type 
 }
 
 const INPUT_CLASS =
-  "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50";
+  "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-ring focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50";
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return <input className={cn(INPUT_CLASS, className)} {...props} />;
 }
 
-/** A bordered block with a small heading, used for each part of the business page. */
-export function Section({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
+/** A bordered card with a small heading, used for each part of the business page. */
+export function Section({
+  title,
+  count,
+  action,
+  children,
+}: {
+  title: string;
+  count?: number;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <section className="rounded-lg border border-border bg-background">
-      <header className="flex items-center justify-between border-b border-border px-4 py-2">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-        {typeof count === "number" && <span className="text-xs text-muted-foreground tabular-nums">{count}</span>}
+    <section className="rounded-lg border border-border bg-card shadow-sm">
+      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+        <h3 className="text-sm font-semibold text-foreground">
+          {title}
+          {typeof count === "number" && <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">{count}</span>}
+        </h3>
+        {action}
       </header>
       <div className="px-4 py-3 text-sm text-foreground">{children}</div>
     </section>
@@ -58,7 +76,17 @@ export function Section({ title, count, children }: { title: string; count?: num
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="text-xs text-muted-foreground">{children}</p>;
+  return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+/** A calm, centred message for a part of the page that has nothing to show yet. */
+export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      {children && <div className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{children}</div>}
+    </div>
+  );
 }
 
 export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
@@ -88,8 +116,21 @@ const BADGE_TONE: Record<BadgeTone, string> = {
 
 export function Badge({ tone = "neutral", children }: { tone?: BadgeTone; children: ReactNode }) {
   return (
-    <span className={cn("inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium", BADGE_TONE[tone])}>
+    <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap", BADGE_TONE[tone])}>
       {children}
     </span>
   );
+}
+
+const DOT_TONE: Record<"good" | "warn" | "neutral" | "unknown" | "bad", string> = {
+  good: "bg-green-500",
+  warn: "bg-amber-500",
+  bad: "bg-red-500",
+  neutral: "bg-muted-foreground",
+  unknown: "bg-muted-foreground opacity-60",
+};
+
+/** A small status dot, like the agent status dots elsewhere in Paperclip. */
+export function Dot({ tone, label }: { tone: keyof typeof DOT_TONE; label?: string }) {
+  return <span aria-label={label} title={label} className={cn("inline-block size-2 shrink-0 rounded-full", DOT_TONE[tone])} />;
 }

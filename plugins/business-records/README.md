@@ -1,4 +1,4 @@
-# Business Records
+# Corporate Operations (business-records plugin)
 
 One record per business in the portfolio, kept by the Corporate Operations
 agent in HQ: its three statuses (operating, legal, tax account) each with an
@@ -424,6 +424,19 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 `vendor/sdk/` through `pnpm.overrides`.
 
 ## Recent changes
+
+- **0.1.1** (2026-09-26) Page clean-up after the first look at it live. The
+  business list and the detail now sit side by side (the old layout used a
+  styling class the host never generates, so it silently stacked). Dates read
+  as words with how far away they are ("Due Oct 19, 2026 (in 23 days)", "12
+  days overdue"), filings due within a week are amber, each business in the
+  list shows a status dot and an overdue or due-soon count, statuses collapse
+  to one line until a document proves one, history rows are sentences, case
+  roles and preparers are plain words, a first visit with no businesses
+  explains how the agent adds one, the page refreshes on demand and when the
+  tab comes back into view, the selected business is kept in the URL, and the
+  plugin is called Corporate Operations everywhere (it was Business Records in
+  the breadcrumb).
 
 - **0.1.0** (2026-09-26) First release. Businesses with three sourced
   statuses, documents with replacement and renewal dates, filings with proof
