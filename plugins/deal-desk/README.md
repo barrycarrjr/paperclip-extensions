@@ -328,7 +328,7 @@ Adding needs `dealId`, `periodLabel` (a period already on the deal, else
 `[EPERIOD_NOT_FOUND]`), `description`, `amountCents` (negative for a
 deduction), `kind` (`owner_comp`, `owner_perk`, `one_time`, `non_cash`,
 `rent_to_owner`, `replacement_cost`, `other`) and `claimedBy` (`seller`,
-`agent`, `barry`, `cpa`, `other`). New add-backs are always `unverified`;
+`agent`, `owner`, `cpa`, `other`). New add-backs are always `unverified`;
 status is never set here. The period of an existing add-back cannot change.
 
 ```json
@@ -513,6 +513,11 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 `vendor/sdk/` through `pnpm.overrides`.
 
 ## Recent changes
+
+- **0.1.1** (2026-09-26) The claimedBy value for the buyer is now `owner`
+  instead of a personal name. Migration `002_owner_claimed_by.sql` converts
+  any stored add-backs and swaps the check, so existing installs upgrade in
+  place.
 
 - **0.1.0** (2026-09-26) First release. Deals, earnings periods by source, the
   add-back schedule with evidence, conservative and seller-claimed SDE with

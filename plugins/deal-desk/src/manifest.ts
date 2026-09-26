@@ -6,13 +6,13 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // they ever drift apart.
 
 const PLUGIN_ID = "deal-desk";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.1.1";
 
 const DEAL_STAGES = ["screen", "diligence", "offer", "closing", "closed", "passed"];
 const DEAL_STRUCTURES = ["asset", "stock", "undecided"];
 const PERIOD_SOURCE_KINDS = ["tax_return", "pnl", "bank", "seller_stated", "other"];
 const ADJUSTMENT_KINDS = ["owner_comp", "owner_perk", "one_time", "non_cash", "rent_to_owner", "replacement_cost", "other"];
-const CLAIMED_BY = ["seller", "agent", "barry", "cpa", "other"];
+const CLAIMED_BY = ["seller", "agent", "owner", "cpa", "other"];
 const ADJUSTMENT_STATUSES = ["unverified", "accepted", "rejected"];
 const EARNINGS_BASES = ["reported", "conservative", "seller_claimed", "custom"];
 
@@ -248,7 +248,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     {
       name: "deal_adjustment_upsert",
       displayName: "Add or update an add-back",
-      description: `Add one line to a period's add-back schedule, or update one by adjustmentId. Adding needs dealId, periodLabel (a period already on the deal), description, amountCents (negative for a deduction), kind (owner_comp, owner_perk, one_time, non_cash, rent_to_owner, replacement_cost, other) and claimedBy (seller, agent, barry, cpa, other). New add-backs are always unverified: they count in seller-claimed SDE, never in conservative SDE, until accepted with deal_adjustment_set_status. The same description twice for one period is refused with [EDUPLICATE_ADJUSTMENT], so nothing is counted twice. replacement_cost is the yearly cost of replacing the owner: a positive amount that is deducted, never added. Changing the amount, kind, description or evidence of an accepted or rejected add-back puts it back to unverified. ${MONEY_RULE_TEXT} ${SECRET_RULE_TEXT}`,
+      description: `Add one line to a period's add-back schedule, or update one by adjustmentId. Adding needs dealId, periodLabel (a period already on the deal), description, amountCents (negative for a deduction), kind (owner_comp, owner_perk, one_time, non_cash, rent_to_owner, replacement_cost, other) and claimedBy (seller, agent, owner, cpa, other). New add-backs are always unverified: they count in seller-claimed SDE, never in conservative SDE, until accepted with deal_adjustment_set_status. The same description twice for one period is refused with [EDUPLICATE_ADJUSTMENT], so nothing is counted twice. replacement_cost is the yearly cost of replacing the owner: a positive amount that is deducted, never added. Changing the amount, kind, description or evidence of an accepted or rejected add-back puts it back to unverified. ${MONEY_RULE_TEXT} ${SECRET_RULE_TEXT}`,
       parametersSchema: {
         type: "object",
         additionalProperties: false,

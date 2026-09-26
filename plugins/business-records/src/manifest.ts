@@ -5,7 +5,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // manifest.test.ts fails if the two ever drift apart.
 
 const PLUGIN_ID = "business-records";
-const PLUGIN_VERSION = "0.1.1";
+const PLUGIN_VERSION = "0.1.2";
 
 const RELATIONSHIPS = ["owned", "prospect", "former", "other"];
 const STATUS_FIELDS = ["operating", "legal", "tax_account"];
@@ -32,7 +32,7 @@ const DOC_TYPES = [
   "professional_advice",
   "other",
 ];
-const PREPARERS = ["cpa", "barry", "agent_drafts", "other"];
+const PREPARERS = ["cpa", "owner", "agent_drafts", "other"];
 const FILING_STATUSES = ["upcoming", "in_preparation", "extension_filed", "filed", "accepted", "not_required"];
 const NOT_REQUIRED_SOURCE_KINDS = ["document", "professional_advice", "official_guidance"];
 

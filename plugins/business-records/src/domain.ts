@@ -92,7 +92,7 @@ export const DOC_TYPES = [
 ] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 
-export const PREPARERS = ["cpa", "barry", "agent_drafts", "other"] as const;
+export const PREPARERS = ["cpa", "owner", "agent_drafts", "other"] as const;
 export type Preparer = (typeof PREPARERS)[number];
 
 export const FILING_STATUSES = [

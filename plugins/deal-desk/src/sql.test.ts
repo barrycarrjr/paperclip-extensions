@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import * as sql from "./sql.js";
@@ -51,6 +51,17 @@ const SQL_SOURCE = readFileSync(join(HERE, "sql.ts"), "utf8");
 test("the namespace hardcoded in the migration is the one the host derives", () => {
   assert.equal(derivePluginDatabaseNamespace("deal-desk", "deal_desk"), NS);
   assert.ok(MIGRATION.includes(`${NS}.deals`));
+});
+
+test("every later migration passes the host's migration rules too", () => {
+  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const later = readdirSync(dir).filter((f) => f.endsWith(".sql") && f !== "001_init.sql").sort();
+  assert.ok(later.includes("002_owner_claimed_by.sql"));
+  for (const file of later) {
+    for (const statement of splitSqlStatements(readFileSync(join(dir, file), "utf8"))) {
+      assert.doesNotThrow(() => validateMigrationStatement(statement, NS), `${file}: ${statement.slice(0, 80)}`);
+    }
+  }
 });
 
 test("every migration statement passes the host's migration rules", () => {

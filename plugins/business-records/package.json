@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-business-records",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A record per business (statuses with their sources, standing documents, tax filings, linked cases) with the closure and filing rules enforced in code: a business cannot be marked dissolved, active or closed, and a filing cannot be marked filed, without a document on file to prove it.",
   "type": "module",
   "private": true,

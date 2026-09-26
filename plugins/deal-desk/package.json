@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-deal-desk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deal numbers for buying a business: earnings periods, an add-back schedule with evidence, and the Acquisition Analyzer calculator (sources and uses, debt service, DSCR, ten-year projection, equity IRR) as saved, never-edited scenarios. Add-backs cannot be accepted without an evidence document, and a seller-claimed scenario cannot be saved before a conservative one.",
   "type": "module",
   "private": true,

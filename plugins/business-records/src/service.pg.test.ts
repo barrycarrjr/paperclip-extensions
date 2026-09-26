@@ -18,7 +18,7 @@
 import { test, before, after } from "node:test";
 import { strict as assert } from "node:assert";
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createRecordsService, type IssueInfo, type RecordsDb, type RecordsService } from "./service.js";
@@ -80,9 +80,11 @@ if (!DATABASE_URL) {
     const pg = await import("pg");
     pool = new pg.default.Pool({ connectionString: DATABASE_URL, max: 2 });
     const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-    const sql = (await readFile(join(migrationsDir, "001_init.sql"), "utf8")).split(MIGRATION_SCHEMA).join(schema);
     await pool.query(`CREATE SCHEMA ${schema}`);
-    await pool.query(sql);
+    // Every migration, in file-name order, the same order the host applies them.
+    for (const file of (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort()) {
+      await pool.query((await readFile(join(migrationsDir, file), "utf8")).split(MIGRATION_SCHEMA).join(schema));
+    }
     db = {
       namespace: schema,
       query: (async (text: string, params?: unknown[]) => {

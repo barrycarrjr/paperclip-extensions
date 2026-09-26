@@ -281,7 +281,7 @@ already lapsed**, soonest first.
 
 Adds a filing row (status `upcoming`) or updates one found by `filingId` or by
 its key (business, filing, authority, period label). Updatable: `periodStart`,
-`periodEnd`, `dueDate`, `preparer` (`cpa`, `barry`, `agent_drafts`, `other`),
+`periodEnd`, `dueDate`, `preparer` (`cpa`, `owner`, `agent_drafts`, `other`),
 `issueId`, `notes`. The key itself cannot change. Changes to an existing
 filing are written to history as `business_updated` rows with field
 `filing.<name>`.
@@ -424,6 +424,11 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 `vendor/sdk/` through `pnpm.overrides`.
 
 ## Recent changes
+
+- **0.1.2** (2026-09-26) The preparer value for the business owner is now
+  `owner` instead of a personal name. Migration `002_owner_preparer.sql`
+  converts any stored filings and swaps the check, so existing installs
+  upgrade in place.
 
 - **0.1.1** (2026-09-26) Page clean-up after the first look at it live. The
   business list and the detail now sit side by side (the old layout used a

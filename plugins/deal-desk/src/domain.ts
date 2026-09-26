@@ -30,7 +30,7 @@ export const ADJUSTMENT_KINDS = [
 ] as const;
 export type AdjustmentKind = (typeof ADJUSTMENT_KINDS)[number];
 
-export const CLAIMED_BY = ["seller", "agent", "barry", "cpa", "other"] as const;
+export const CLAIMED_BY = ["seller", "agent", "owner", "cpa", "other"] as const;
 export type ClaimedBy = (typeof CLAIMED_BY)[number];
 
 export const ADJUSTMENT_STATUSES = ["unverified", "accepted", "rejected"] as const;

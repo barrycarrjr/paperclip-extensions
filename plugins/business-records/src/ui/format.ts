@@ -162,7 +162,7 @@ export function roleLabel(role: string): string {
 
 const PREPARER_LABELS: Record<string, string> = {
   cpa: "CPA",
-  barry: "Barry",
+  owner: "Owner",
   agent_drafts: "agent drafts",
   other: "someone else",
 };
