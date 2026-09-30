@@ -42,6 +42,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.update",
     "issues.wakeup",
     "issues.checkout",
+    "issue.comments.create",
     "agent.tools.register",
     "events.emit",
     "events.subscribe",
@@ -102,7 +103,8 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
         items: { type: "object",additionalProperties: false,properties: {
           companyId: { type: "string",format: "company-id",title: "Company" },
           agentId: { type: "string",title: "Support agent ID" },
-          enabled: { type: "boolean",default: false,title: "Investigate incoming Slack tickets" },
+          enabled: { type: "boolean",default: false,title: "Investigate permitted incoming tickets" },
+          sources: { type: "array",title: "Permitted ticket sources",description: "Omitting this keeps existing Slack-only policy. Select Help Scout explicitly after validating native intake. Each source keeps its company/account/route checks. Source changes invalidate investigation proofs; reviewed repairs remain separately approved. Automatic provider updates currently support Slack only.",items: { type: "string",enum: ["slack","helpscout"] } },
           diagnostics: { type: "array",title: "Allowed diagnostics",items: { type: "string",enum: diagnosticIds.filter(id => !["connectivity", "repair_rehearsal"].includes(id)) } },
           allowThreadUpdates: { type: "boolean",default: false,title: "Allow progress and findings in the original Slack thread",description: "Uses the intake connection's bot Secret; it needs chat:write and access to the mapped channel. Does not authorize vendor emails or repairs." },
         },required: ["companyId","agentId","enabled","diagnostics","allowThreadUpdates"] } },

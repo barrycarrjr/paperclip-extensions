@@ -27,13 +27,18 @@ const baseConfig: Config = { connections: [{ id: "example",source: "slack",exter
   ticketPolicies: [{ companyId,agentId,enabled: true,diagnostics: ["inventory","health","printers"],allowThreadUpdates: true }] };
 const message: IncomingMessage = { companyId,connectionId: "example",externalAccountId: "TEXAMPLE01",externalRouteId: "CEXAMPLE01:alpha",
   externalConversationId: "1700000000.000100",externalMessageId: "1700000000.000100",title: "Computer issue",body: "PC01 is slow\nPassword: synthetic-source-value",authorKind: "staff",occurredAt: "2026-09-30T12:00:00Z" };
-async function fixture(selectedCompanyId = companyId) {
+async function fixture(selectedCompanyId = companyId, source: "slack" | "helpscout" = "slack") {
   const companyId = selectedCompanyId;
   const db = new PGlite(); await db.exec(`CREATE SCHEMA ${namespace}`);
   for (const name of (await readdir(new URL("../migrations/",import.meta.url))).filter(n => n.endsWith(".sql")).sort()) await db.exec(await readFile(new URL(`../migrations/${name}`,import.meta.url),"utf8"));
   let cfg = structuredClone(baseConfig);
   cfg.connections![0]!.allowedCompanies = [companyId]; cfg.connections![0]!.routes[0]!.companyId = companyId;
   cfg.remoteAccessProfiles![0]!.companyId = companyId; cfg.ticketPolicies![0]!.companyId = companyId;
+  if(source === "helpscout") {
+    cfg.connections![0]!.source = source; cfg.connections![0]!.externalAccountId = "example-helpdesk";
+    cfg.connections![0]!.routes[0]!.externalRouteId = "10"; cfg.ticketPolicies![0]!.sources = [source];
+  }
+  const comments: any[] = [];
   const issues = new Map<string,any>(); const wakeups = new Map<string,string>();
   const activity: unknown[] = []; const posts: unknown[] = []; let owns = true; let failSend = false; let onAuth: (() => void) | null = null;
   const ctx = { db: { namespace,query: async (sql: string,params?: unknown[]) => { assert.match(sql.trim(),/^SELECT\b/i); return (await db.query(sql,params)).rows; },
@@ -42,6 +47,7 @@ async function fixture(selectedCompanyId = companyId) {
     secrets: { store: async () => ({ secretRef: "44444444-4444-4444-8444-444444444444" }),resolve: async () => "synthetic-test-token" },
     agents: { get: async (id: string,company: string) => id === agentId && company === companyId ? { id,companyId,status: "idle" } : null },
     issues: {
+      createComment: async (id: string,body: string,company: string,author: any) => { assert.equal(issues.get(id)?.companyId,company); comments.push({id,body,company,...author}); return {id:randomUUID()}; },
       create: async (input: any) => { const issue = { ...input,id: randomUUID() }; issues.set(issue.id,issue); return issue; },
       list: async (input: any) => [...issues.values()].filter(issue => issue.companyId === input.companyId && issue.originKind === input.originKind && issue.originId === input.originId),
       get: async (id: string,company: string) => issues.get(id)?.companyId === company ? issues.get(id) : null,
@@ -58,9 +64,10 @@ async function fixture(selectedCompanyId = companyId) {
       throw new Error("Unexpected HTTP request");
     } },events: { emit: async () => { throw new Error("Policy updates cannot use the human connector bridge"); } },
   } as unknown as PluginContext;
-  const opened = await storeMessage(ctx,{ ...message,companyId },cfg.connections![0]!);
+  const incoming = source === "helpscout" ? { ...message,companyId,externalAccountId:"example-helpdesk",externalRouteId:"10",externalConversationId:"20",externalMessageId:"30" } : { ...message,companyId };
+  const opened = await storeMessage(ctx,incoming,cfg.connections![0]!);
   return { db,ctx,caseId: opened.caseId,getConfig: async () => cfg,setConfig: (next: Config) => { cfg = next; },config: () => cfg,
-    issues,wakeups,activity,posts,setOwns: (value: boolean) => { owns = value; },setFailSend: () => { failSend = true; },onAuth: (callback: () => void) => { onAuth = callback; } };
+    issues,wakeups,activity,posts,comments,setOwns: (value: boolean) => { owns = value; },setFailSend: () => { failSend = true; },onAuth: (callback: () => void) => { onAuth = callback; } };
 }
 test("policy-enabled intake creates durable investigation work once, preserves sanitized evidence and does not authorize a repair",async () => {
   const f = await fixture();
@@ -285,4 +292,29 @@ test("answer-only tickets need no repair and vendor incidents use an external dr
     assert.equal((await recordTicketOutcome(answer.ctx,answer.getConfig,{ companyId,caseId: answer.caseId,userId: "operator",expectedReviewVersion: 0,expectedMessageId: job.latest_message_id,outcome: "resolved",basis: "person_confirmed",summary: "Question answered",evidence: "Requester confirmed the instructions answer the question" })).status,"resolved");
     assert.equal((await listSupportActions(answer.ctx,companyId,answer.caseId)).length,0);
   } finally { await answer.db.close(); }
+});
+
+
+test("opted-in Help Scout investigations retain checkout, local findings and exact repair approval without customer sends",async () => {
+  const f = await fixture(companyId,"helpscout"); let calls = 0;
+  try {
+    await dispatchTickets(f.ctx,f.getConfig);
+    const ticket = await getTicket(f.ctx,f.config(),run,{caseId:f.caseId});
+    assert.equal(ticket.source,"helpscout"); assert.equal(ticket.replyMode,"reviewed_human_help_scout_reply");
+    await assert.rejects(sendTicketReply(f.ctx,f.getConfig,{companyId,caseId:f.caseId,actorAgentId:agentId,body:"Checking the reported computer."}));
+    assert.equal((await reportTicket(f.ctx,f.getConfig,run,{caseId:f.caseId,status:"investigating",body:"Checking printing symptoms; no root cause established."})).status,"human_reply_required");
+    assert.equal(f.comments.length,1); assert.equal(f.comments[0].authorAgentId,agentId); assert.equal(f.posts.length,0);
+    await diagnoseTicket(f.ctx,f.getConfig,run,{caseId:f.caseId,target:"pc01",check:"printers"},async()=>({runId:"diagnostic",status:"succeeded",exitCode:0,output:'{"spooler":{"status":"Stopped"}}'}));
+    await proposeTicketRepair(f.ctx,f.getConfig,run,{caseId:f.caseId,operation:"restart_spooler",rationale:"Observed spooler stopped; request symptom verification after restart."});
+    const [action] = await listSupportActions(f.ctx,companyId,f.caseId); const input = confirmedInput(f,action!);
+    const runner = async()=>{calls++;return{runId:`repair-${calls}`,status:"succeeded",exitCode:0};};
+    await assert.rejects(runOperatorTicketRepair(f.ctx,f.getConfig,run,input,runner));
+    await assert.rejects(runOperatorTicketRepair(f.ctx,f.getConfig,{...operator,userConfirmed:false},input,runner)); assert.equal(calls,0);
+    assert.equal((await runOperatorTicketRepair(f.ctx,f.getConfig,operator,input,runner)).status,"verified");
+    assert.equal(calls,2); assert.equal(f.posts.length,0);
+    assert.notEqual((await readTicketJob(f.ctx,companyId,f.caseId)).status,"resolved");
+    f.setConfig({...f.config(),ticketPolicies:[{...f.config().ticketPolicies![0]!,sources:["slack"]}]});
+    await assert.rejects(authorizedTicket(f.ctx,f.config(),run,f.caseId));
+    assert.equal(calls,2); assert.equal(f.posts.length,0);
+  } finally {await f.db.close();}
 });

@@ -55,7 +55,10 @@ export async function proposeTicketRepair(ctx: PluginContext,getConfig: () => Pr
 export async function notifyTicket(ctx: PluginContext,getConfig: () => Promise<Config>,companyId: string,caseId: string,body: string) {
   const [job] = await ctx.db.query<{ agent_id: string }>(`SELECT agent_id FROM ${ns(ctx)}.support_ticket_jobs WHERE company_id=$1 AND case_id=$2`,[companyId,caseId]);
   if (!job) return { status: "not_requested" };
-  try { return await sendTicketReply(ctx,getConfig,{ companyId,caseId,body,actorAgentId: job.agent_id }); }
+  try { const cfg=await getConfig();
+  const source=await ticketSource(ctx,cfg,companyId,caseId);
+  if(source.connection.source!=="slack")return{status:"human_reply_required",instruction:"Help Scout findings/clarifications remain in the case. A human with Respond permission must prepare and confirm the actual brand/mailbox/customer reply using the companion's reviewed support tools. No provider message was attempted."};
+  return await sendTicketReply(ctx,getConfig,{ companyId,caseId,body,actorAgentId: job.agent_id }); }
   catch { return { status: "unconfirmed",instruction: "No confirmed thread update. Inspect saved delivery receipts and current policy before sending another update; do not infer no provider attempt." }; }
 }
 export async function afterTicketRepair(ctx: PluginContext,getConfig: () => Promise<Config>,companyId: string,caseId: string,action: { status: string; id: string }) {

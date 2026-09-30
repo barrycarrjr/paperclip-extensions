@@ -63,5 +63,9 @@ test("native connector reaches actual Support Desk encrypted storage and does no
   const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(result.status,"complete");assert.equal(result.newMessages,1);
   const records=(await f.db.query<{body:string;source_protection_version:number}>(`SELECT body,source_protection_version FROM ${namespace}.support_messages`)).rows;assert.equal(records.length,1);assert.ok(!records[0]!.body.includes("synthetic-test-value"));assert.equal(records[0]!.source_protection_version,1);assert.ok([...immutable.values()][0]!.value.includes("synthetic-test-value"));
   assert.equal((await f.db.query(`SELECT * FROM ${namespace}.support_ticket_jobs`)).rows.length,0);
+  cfg.ticketPolicies![0]!.sources=["helpscout"];
+  f.edit();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve)).newMessages,1);
+  const [job]=(await f.db.query<{latest_message_id:string}>(`SELECT latest_message_id FROM ${namespace}.support_ticket_jobs`)).rows;assert.ok(job);
+  const messages=(await f.db.query<{id:string}>(`SELECT id FROM ${namespace}.support_messages ORDER BY created_at DESC`)).rows;assert.equal(job!.latest_message_id,messages[0]!.id);
  }finally{await f.db.close();}
 });

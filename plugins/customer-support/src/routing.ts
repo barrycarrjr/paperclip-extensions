@@ -23,6 +23,7 @@ export interface Config {
 }
 
 export interface TicketPolicy {
+  sources?: ("slack" | "helpscout")[];
   companyId: string;
   agentId: string;
   enabled: boolean;

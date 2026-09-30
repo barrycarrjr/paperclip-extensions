@@ -17,6 +17,7 @@ export async function sendTicketReply(ctx: PluginContext,getConfig: () => Promis
   if (!policy.allowThreadUpdates || policy.agentId !== input.actorAgentId) throw new IntakeError(403, "Company policy does not authorize this agent's thread updates");
   if (typeof input.body !== "string" || !input.body.trim() || input.body.length > 10000 || containsCredential(input.body) || redactSource(input.body) !== input.body) throw new IntakeError(422, "Support update must contain no access information and be at most 10000 characters");
   const { supportCase,connection } = await ticketSource(ctx,cfg,input.companyId,input.caseId);
+  if(connection.source!=="slack")throw new IntakeError(422,"Automatic thread updates support Slack only; Help Scout replies require the companion's reviewed human workflow");
   if (!connection.botTokenRef) throw new IntakeError(422, "Automatic thread updates need this intake connection's Slack bot Secret and chat:write scope");
   const channelId = supportCase.external_route_id.split(":")[0]!;
   if (!/^[CG][A-Z0-9]{8,}$/.test(channelId) || !/^\d{10,11}\.\d{1,6}$/.test(supportCase.external_conversation_id)) throw new IntakeError(422, "Original Slack thread is invalid");
@@ -60,6 +61,15 @@ export async function reportTicket(ctx: PluginContext,getConfig: () => Promise<C
   const ticket = await authorizedTicket(ctx,await getConfig(),run,input.caseId);
   if (["awaiting_approval","resolved","needs_operator"].includes(ticket.job.status)) throw new IntakeError(409,"This ticket is awaiting operator review; the agent cannot resume or close it through a status report");
   if (typeof input.body !== "string" || !["investigating","waiting_requester","needs_operator","vendor_escalation"].includes(input.status as string)) throw new IntakeError(422, "Choose investigation, clarification, operator review or vendor escalation");
+  if(input.body.length>10000 || !input.body.trim() || containsCredential(input.body) || redactSource(input.body)!==input.body)throw new IntakeError(422,"Ticket findings must contain no access information and be at most 10000 characters");
+  if(ticket.connection.source==="helpscout"){
+    const current=await authorizedTicket(ctx,await getConfig(),run,input.caseId);
+    if(current.job.latest_message_id!==ticket.job.latest_message_id)throw new IntakeError(409,"Requester evidence changed before reporting");
+    await ctx.issues.createComment(current.job.issue_id!,`Support Desk findings (${input.status}; Help Scout reply requires human review):\n\n${input.body.trim()}`,run.companyId,{authorAgentId:run.agentId});
+    await ctx.db.execute(`UPDATE ${ns(ctx)}.support_ticket_jobs SET status=$3,updated_at=now() WHERE company_id=$1 AND case_id=$2 AND latest_message_id=$4 AND status <> 'resolved'`,[run.companyId,ticket.job.case_id,input.status==="investigating"?"investigating":"needs_operator",ticket.job.latest_message_id]);
+    await ctx.activity.log({companyId:run.companyId,message:"Help Scout ticket findings saved for human reply review",entityType:"support_case",entityId:ticket.job.case_id,metadata:{agentId:run.agentId,issueId:current.job.issue_id,providerMessageAttempted:false}});
+    return{status:"human_reply_required",issueId:current.job.issue_id,providerMessageAttempted:false,instruction:"Findings are recorded in the assigned investigation issue. A human responder must prepare/confirm the actual brand/mailbox/customer reply through Help Scout's reviewed tools. No customer message was sent. Repairs still require exact operator approval; after a reviewed reply, resume this case if investigation is needed."};
+  }
   const delivery = await sendTicketReply(ctx,getConfig,{ companyId: run.companyId,caseId: ticket.job.case_id,body: input.body,actorAgentId: run.agentId });
   await ctx.db.execute(`UPDATE ${ns(ctx)}.support_ticket_jobs SET status=$3,updated_at=now() WHERE company_id=$1 AND case_id=$2 AND status <> 'resolved'`,
     [run.companyId,ticket.job.case_id,delivery.status === "sent" ? input.status : "needs_operator"]);
