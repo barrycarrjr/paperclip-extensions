@@ -43,7 +43,7 @@ interface Detail {
   messages: { id: string; author_kind: string; author_external_id: string | null; body: string; occurred_at: string; attachments: { id: string; name: string; mimeType?: string; permalink?: string }[] }[];
   linkedIssue: { id: string; identifier: string | null; title: string; status: string; kind: string;
     assigneeAgentId: string | null } | null;
-  escalation: { id: string; route_id: string; product_name: string; destination_kind: "email" | "jira_form";
+  escalation: { id: string; route_id: string; product_name: string; destination_kind: "email" | "jira_form" | "built_in";
     destination: string; title: string; evidence: string; status: "draft" | "submitted"; external_ticket_ref: string | null } | null;
   actions: { id: string; target_address: string; script_text: string; script_sha256: string;
     ticket_proof?: { disruption: string } | null;
@@ -277,7 +277,7 @@ export function SupportPage(_props: PluginPageProps) {
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const { data: cases, loading, error, refresh } = usePluginData<CaseRow[]>("support.cases", { companyId, status: statusFilter });
   const overview = usePluginData<{ status: string; count: string }[]>("support.overview", { companyId });
-  const softwareRoutes = usePluginData<{ id: string; productName: string; destinationKind: string; destination: string }[]>("support.softwareRoutes", { companyId });
+  const softwareRoutes = usePluginData<{ id: string; productName: string; destinationKind: string; destination: string; reportingInstructions?: string }[]>("support.softwareRoutes", { companyId });
   const agents = usePluginData<{ id: string; name: string; status: string }[]>("support.agents", { companyId });
   const setup = usePluginData<SupportSetup>("support.setup", { companyId });
   const [setupVersion, setSetupVersion] = useState(0);
@@ -480,9 +480,9 @@ export function SupportPage(_props: PluginPageProps) {
             <p className="whitespace-pre-wrap break-words">{selectedDetail.escalation.evidence}</p>
             {selectedDetail.escalation.destination_kind === "email"
               ? <a className="text-primary underline" href={`mailto:${selectedDetail.escalation.destination}?subject=${encodeURIComponent(selectedDetail.escalation.title)}&body=${encodeURIComponent(selectedDetail.escalation.evidence)}`}>Open email draft to {selectedDetail.escalation.destination}</a>
-              : <a className="text-primary underline" href={selectedDetail.escalation.destination} target="_blank" rel="noreferrer">Open Jira intake form</a>}
+              : <a className="text-primary underline" href={selectedDetail.escalation.destination} target="_blank" rel="noreferrer">Open {selectedDetail.escalation.destination_kind === "built_in" ? "official product reporting" : "Jira intake form"}</a>}
             {selectedDetail.escalation.status === "draft" && <form onSubmit={markSubmitted} className="space-y-2">
-              <label className="block">Sent email or Jira ticket reference
+              <label className="block">Actual provider ticket, product report or sent-message reference
                 <input required maxLength={500} value={externalTicketRef} onChange={(event) => setExternalTicketRef(event.target.value)}
                   className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-foreground" />
               </label>
@@ -493,17 +493,18 @@ export function SupportPage(_props: PluginPageProps) {
           </div>}
           {!selectedDetail.linkedIssue && !selectedDetail.escalation && selectedDetail.supportCase.service_domain !== "unclassified" && ["bug", "feature", "task", "incident"].includes(selectedDetail.supportCase.work_kind) ? <form onSubmit={createIssue} className="space-y-3 rounded-md border border-border p-3">
             <h3 className="font-semibold">{selectedDetail.supportCase.service_domain === "software" ? "Draft vendor escalation" : "Create reviewed work item"}</h3>
-            <p className="text-xs text-muted-foreground">Write a reviewed title and evidence. Software reports go through the vendor's support email or Jira intake form.</p>
+            <p className="text-xs text-muted-foreground">Write a reviewed title and evidence. Use the vendor's built-in reporting, support email or Jira form. A draft or opened form is not submission.</p>
             {selectedDetail.supportCase.service_domain === "software" && softwareRoutes.error && <p role="alert" className="text-sm text-destructive">Could not load software routes: {String(softwareRoutes.error)}</p>}
             {selectedDetail.supportCase.service_domain === "software" && <label className="block text-sm">Product and intake channel
               <select required value={softwareRouteId} onChange={(event) => setSoftwareRouteId(event.target.value)}
                 className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-foreground">
                 <option value="">Select product and intake channel</option>
-                {softwareRoutes.data?.map((route) => <option key={route.id} value={route.id}>{route.productName} → {route.destinationKind === "email" ? route.destination : "Jira form"}</option>)}
+                {softwareRoutes.data?.map((route) => <option key={route.id} value={route.id}>{route.productName} → {route.destinationKind === "email" ? route.destination : route.destinationKind === "built_in" ? "Built-in product reporting" : "Jira form"}</option>)}
               </select>
             </label>}
             {selectedDetail.supportCase.service_domain === "software" && !softwareRoutes.loading && !softwareRoutes.error && softwareRoutes.data?.length === 0 &&
-              <p className="text-sm text-muted-foreground">Configure the vendor's email or Jira intake route before drafting an escalation.</p>}
+              <p className="text-sm text-muted-foreground">Configure the vendor's product reporting, email or Jira route before drafting an escalation.</p>}
+            {softwareRoutes.data?.find(route => route.id === softwareRouteId)?.reportingInstructions && <p className="whitespace-pre-wrap text-sm">Reporting steps: {softwareRoutes.data.find(route => route.id === softwareRouteId)!.reportingInstructions}</p>}
             {agents.error && <p role="alert" className="text-sm text-destructive">Could not load agents: {String(agents.error)}</p>}
             {selectedDetail.supportCase.service_domain !== "software" && <label className="block text-sm">Assign agent (optional)
               <select value={assigneeAgentId} onChange={(event) => setAssigneeAgentId(event.target.value)}

@@ -10,6 +10,7 @@ import { dailySummaryTools } from "./daily-summaries.js";
 import { diagnosticIds } from "./diagnostic-catalog.js";
 import { specialistObservationTools } from "./specialist-observations.js";
 import { equipmentTools } from "./equipment-support.js";
+import { preflightTools } from "./preflight-support.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -46,7 +47,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, ...equipmentTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, ...equipmentTools, ...preflightTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",
@@ -154,8 +155,9 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
             id: { type: "string", title: "Route ID" },
             reportingCompanyId: { type: "string", format: "company-id", title: "Reporting company" },
             productName: { type: "string", title: "Product name" },
-            destinationKind: { type: "string", enum: ["email", "jira_form"], title: "Intake channel" },
-            destination: { type: "string", title: "Support email or Jira form URL" },
+            destinationKind: { type: "string", enum: ["email", "jira_form", "built_in"], title: "Intake channel" },
+            destination: { type: "string", title: "Support email or official reporting URL" },
+            reportingInstructions: { type: "string", title: "Reporting steps (optional)", description: "For built-in reporting, save the product menu/workflow here. No credentials. Opening a form or preparing evidence is not submission; retain the actual provider reference." },
             outboundAccount: { type: "string",title: "Vendor email mailbox key",description: "Optional Email Tools mailbox key for confirmed vendor email delivery. Enable this exact recipient in that mailbox. Jira form submission remains manual." },
           },
           required: ["id", "reportingCompanyId", "productName", "destinationKind", "destination"],

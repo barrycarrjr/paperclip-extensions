@@ -1,5 +1,6 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { IntakeError, type Config, type SoftwareRoute } from "./routing.js";
+import { safeLink, redactSource } from "./source-protection.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -42,13 +43,14 @@ export function resolveSoftwareRoute(config: Config, companyId: string, routeId:
   }
   if (route.destinationKind === "email") {
     if (!email.test(route.destination)) throw new IntakeError(422, "Software support email is invalid");
-  } else if (route.destinationKind === "jira_form") {
+  } else if (["jira_form", "built_in"].includes(route.destinationKind)) {
     let url: URL;
     try { url = new URL(route.destination); } catch { throw new IntakeError(422, "Jira form URL is invalid"); }
-    if (url.protocol !== "https:" || url.username || url.password) throw new IntakeError(422, "Jira form must use HTTPS");
+    if (url.protocol !== "https:" || !safeLink(route.destination)) throw new IntakeError(422, "Reporting URL must use HTTPS without access information");
   } else {
     throw new IntakeError(422, "Software destination kind is invalid");
   }
+  if (route.reportingInstructions !== undefined && (typeof route.reportingInstructions !== "string" || route.reportingInstructions.length > 2000 || redactSource(route.reportingInstructions) !== route.reportingInstructions)) throw new IntakeError(422, "Reporting instructions must contain no credentials");
   return route;
 }
 
@@ -107,7 +109,7 @@ export async function markEscalationSubmitted(
   if (!uuid.test(input.companyId) || !uuid.test(input.caseId)) throw new IntakeError(422, "Company and case IDs must be UUIDs");
   if (!input.actorUserId) throw new IntakeError(403, "A board user must record submission");
   if (!input.externalTicketRef?.trim() || input.externalTicketRef.length > 500) {
-    throw new IntakeError(422, "A sent-message or Jira ticket reference is required");
+    throw new IntakeError(422, "A provider ticket, built-in report or sent-message reference is required");
   }
   const ns = namespace(ctx);
   const rows = await ctx.db.query<EscalationRow>(

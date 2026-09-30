@@ -37,6 +37,8 @@ Observation bridge section implemented: authenticated, expiring, company/convers
 
 Equipment history section implemented: company equipment-linked immutable fault/consumable/completed-service evidence, repeat-ID protection, 90-day recurring code counts, and contact-aware vendor service-call drafts. Tests confirm consent, isolation and that preparing a service request neither sends nor records service completion. Manufacturer controllers and physical repair remain with qualified specialists; records are not machine telemetry.
 
+Production handoff section implemented: saved preflight software/procedures, exact file/version handoffs, immutable operator-confirmed report findings and unavailable checks, plus built-in vendor software reporting routes/instructions. Opening/preparing a report never claims submission; a real provider reference is required for a manual submission record. No customer files are uploaded or analyzed during development. Automated production-software connectors require a supported vendor integration.
+
 - Help desk: connect existing Help Scout tools to Support Desk intake/replies; brand-aware mailbox routing, tags, assignment and signatures. Mailbox/account changes require separate reviewed actions.
 - Network: a company-authorized UniFi connector/MCP; controller/AP/client/firmware observations, with approved scoped changes and disruption/verification/recovery details.
 - Phones: reuse 3CX and phone-assistant tools; diagnose extensions, voicemail, routing, desk/softphones, SBCs and hosting dependencies. Explicitly distinguish those components.

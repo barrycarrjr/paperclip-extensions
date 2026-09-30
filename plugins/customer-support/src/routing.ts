@@ -52,7 +52,8 @@ export interface SoftwareRoute {
   id: string;
   reportingCompanyId: string;
   productName: string;
-  destinationKind: "email" | "jira_form";
+  destinationKind: "email" | "jira_form" | "built_in";
+  reportingInstructions?: string;
   destination: string;
   outboundAccount?: string;
 }
