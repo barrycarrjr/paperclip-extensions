@@ -1,3 +1,4 @@
+import { storefrontOrderAccountsSchema, storefrontOrderTools } from "./storefront-orders-schema.js";
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { mcpTools, mcpConnectionSchema } from "./mcp-schema.js";
 import { interactiveTools } from "./interactive-tools.js";
@@ -50,7 +51,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...mcpTools, ...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, ...equipmentTools, ...preflightTools, ...storefrontTools, {
+  tools: [...storefrontOrderTools, ...mcpTools, ...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, ...equipmentTools, ...preflightTools, ...storefrontTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",
@@ -95,7 +96,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["connections", "ticketPolicies", "dailySummaries", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks", "mcpConnections"],
+    propertyOrder: ["connections", "ticketPolicies", "dailySummaries", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks", "mcpConnections", "storefrontOrderAccounts"],
     properties: {
       dailySummaries: { type: "array", title: "Daily support summaries", description: "One policy per company. Review the exact destination and timezone, then enable to permit one daily aggregate Slack post about the previous calendar day. No ticket text or staff/device names are included. Unknown delivery is never automatically retried.", items: { type: "object", additionalProperties: false, properties: {
         companyId: { type: "string", format: "company-id", title: "Company" }, connectionId: { type: "string", title: "Saved Slack support connection ID" }, channelId: { type: "string", title: "Summary channel ID", description: "The bot must have chat:write and access to this reviewed channel." }, timezone: { type: "string", title: "IANA timezone", default: "UTC" }, sendAt: { type: "string", title: "Local send time (HH:MM)", default: "09:00" }, enabled: { type: "boolean", title: "Enable daily aggregate delivery", default: false }
@@ -214,6 +215,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
         },
       },
       mcpConnections: mcpConnectionSchema,
+      storefrontOrderAccounts: storefrontOrderAccountsSchema,
       discoveryNetworks: {
         type: "array", title: "Office device discovery networks",
         description: "Saved IPv4 networks for ping and common service-port discovery. Separate from remote administration access. Use the selected company's Support page for guided setup.",

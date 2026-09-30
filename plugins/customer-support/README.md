@@ -4,6 +4,9 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: exact reported WooCommerce order inspection through a saved company account and matching storefront record. Read API credentials remain in Secrets; the tool returns only whitelisted status, gateway slug and recorded UTC timestamps. It omits customer/payment/financial details and never changes orders or refunds. Current company/account/profile checks guard the request and findings, and the host bridge pins public DNS without redirects. Capability discovery now lists this company's saved MCP/order account keys without credentials.
+
+
 - Foundation development: real saved MCP connection/catalog checks through `support_check_mcp_connection`. Exact company/human diagnostic permission, optional Secret bearer token, fresh configuration guards, native request deadlines and refused redirects. Supports modern stateless Streamable HTTP plus legacy initialization/session cleanup, JSON/SSE responses and bounded pagination. Returns counts and scope only, never executes tools or exposes server instructions/catalog content. Actual loopback and simulated protocol tests cover scope, fallback, invalid responses, partials and revocation.
 
 
@@ -320,3 +323,11 @@ Under Support Desk instance settings, add **External tool connection checks (MCP
 A catalog observation means the saved endpoint answered this request. It does not prove a server checked the token, identify the logged-in account, exercise its tools or inspect the affected staff user's local configuration. Tools, prompts, resources, sampling and elicitation are never invoked. Auto first attempts the modern stateless `2026-07-28` catalog request, falling back on HTTP 400 to a legacy `2025-11-25` initialization handshake; negotiated legacy `2025-03-26`/`2025-06-18` are also supported. No auth challenge, credential guessing, legacy two-endpoint SSE, stdio process spawning or interactive OAuth flow is performed. Bounds are 10 seconds per request, 45 seconds overall, 128 KB/100 SSE frames per response, five pages/200 catalog entries and two seconds for an owned session cleanup attempt. Partial catalogs and unsupported session cleanup remain explicit.
 
 References: [current Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http), [legacy Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports), [tools/list](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
+### Optional reported WooCommerce order checks
+
+Save the public storefront in the company directory first. In Support Desk instance settings add **WooCommerce order checks** with an account key, exact allowed companies, exact public HTTPS WordPress origin, enabled opt-in and Secret references for a WooCommerce consumer key/secret. Use a WooCommerce **Read** API key; this feature performs no writes. Clippy can discover saved account keys with `support_list_capabilities` and use `support_inspect_storefront_order` with that account, the matching company storefront record and the exact reported numeric order ID.
+
+The current implementation supports WordPress installed at the origin root and `/wp-json/wc/v3/orders/<id>`. It does not search orders, read customer addresses/emails, expose totals/order keys, access provider logs, change status, issue refunds or diagnose an AutoPrint/custom storefront API. Returned timestamps/status are recorded metadata, not proof of gateway settlement, production, customer notification or delivery. The 100 KB JSON bound applies after the host's upstream transfer; its 30-second pinned HTTP timeout applies. No caller AbortSignal is claimed to cross the worker RPC bridge.
+
+References: [WooCommerce orders](https://developer.woocommerce.com/docs/apis/rest-api/v3/orders/), [HTTPS authentication](https://developer.woocommerce.com/docs/apis/rest-api/authentication), [creating a Read API key](https://woocommerce.com/document/woocommerce-rest-api/).
