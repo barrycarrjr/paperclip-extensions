@@ -1,6 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { interactiveTools } from "./interactive-tools.js";
 import { outboundTools } from "./outbound-tools.js";
+import { setupPermissions } from "./support-setup.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -179,6 +180,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     required: ["connections"],
   },
   apiRoutes: [
+    ...setupPermissions.map(action => ({ routeKey: `setup.permission.${action}`,method: "GET" as const,path: `/setup/permissions/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "query" as const,key: "companyId" },requiredUserPermission: `support:${action}` as const })),
     ...["draft","send","retry"].map(action => ({ routeKey: `cases.outbound.${action}`,method: "POST" as const,path: `/cases/:caseId/outbound/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "body" as const,key: "companyId" },requiredUserPermission: "support:respond" as const })),
     {
       routeKey: "messages.ingest",

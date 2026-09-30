@@ -126,6 +126,12 @@ The common delivery contract is in `lib/support-delivery.ts`. Host-authenticated
 
 ## Direct support in Clippy
 
+The **Support setup checklist** at the top of the company Support page separates saved Windows access, your three support permissions and optional communication routes. It checks whether a password reference is listed in this company's Secrets without resolving its value. A stored reference is not proof that its password works. Use **Test identity (read only)** below the checklist to test one computer; short names expand only when the company's access groups identify one unambiguous target. The result is shown in plain language, with technical details available separately.
+
+The latest identity test is retained per company access group as metadata (target, time, connection method, outcome and an access-settings fingerprint). Changed account, secret reference, target or transport invalidates its match to current settings. A secret value rotation or changed network conditions still require another test; historical success is never a guarantee for every computer in the group. Failed tests replace the previous success. Permission checks are read-only, host-verified requests for the signed-in person; lookup failures remain unknown rather than being treated as authorization. The host rechecks permissions again when an action runs.
+
+The checklist links to Company access, Support Desk, Slack Tools and Email Tools settings and supplies an example Clippy prompt after a successful identity test. It reports configured message routes and plugin availability, but does not claim that intake, destination opt-in or delivery was tested. Direct Clippy investigation needs no communication plugin.
+
 Clippy's host prompt includes a current directory of installed plugin tools, including the support entry point. The support tool explicitly directs workstation investigations through saved company access even when no ticket or inventory entry exists. A local shell's access failure does not establish whether the saved support connection works; Clippy must check the plugin workflow before asking for credentials.
 
 1. Update both Paperclip and this plugin. Configure the company's Windows account, password secret and allowed domain/range on **Support**. A successful identity test is the first connection check.

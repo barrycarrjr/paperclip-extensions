@@ -20,6 +20,8 @@ import { registerInteractiveTools } from "./interactive-tools.js";
 import { registerOutboundTools } from "./outbound-tools.js";
 import { listOutbound,prepareOutbound,sendOutbound,retryNotSent,recordDeliveryReceipt,reconcilePendingDeliveries } from "./support-outbound.js";
 import { pinSourceAccount } from "./source-origin.js";
+import { getSupportSetup, probeSetupPermission, rememberSetupIdentity } from "./support-setup.js";
+import { resolveInteractiveTarget } from "./interactive-support.js";
 import { diagnosticChecks } from "./diagnostic-catalog.js";
 import { repairRecipes } from "./repair-catalog.js";
 import { supportReferences, referenceUrl } from "./support-references.js";
@@ -263,17 +265,7 @@ const plugin = definePlugin({
       visible: typeof params.companyId === "string" && /^[0-9a-f-]{36}$/i.test(params.companyId),
     }));
     ctx.data.register("support.setup", async (params) => {
-      const cfg = await config(ctx);
-      const companyId = typeof params.companyId === "string" ? params.companyId : null;
-      const connections = (cfg.connections ?? []).filter((connection) => companyId &&
-        connection.allowedCompanies?.includes(companyId) && connection.routes?.some((route) => route.companyId === companyId));
-      return { configured: connections.length > 0, connections: connections.map((connection) => ({
-        id: connection.id, source: connection.source,
-        deliveryPluginId: connection.deliveryPluginId ?? null,
-        delivery: connection.source === "slack" && connection.pollingEnabled && connection.botTokenRef
-          ? "built-in Slack polling"
-          : connection.deliveryPluginId ? `plugin: ${connection.deliveryPluginId}` : "integration agent API",
-      })) };
+      return getSupportSetup(ctx, await config(ctx), params.companyId);
     });
     ctx.data.register("support.cases", async (params) => {
       const cfg = await config(ctx);
@@ -365,7 +357,7 @@ const plugin = definePlugin({
   },
   async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
     if (!context) return { status: 503, body: { error: "Support Desk is starting" } };
-    if (!input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
+    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
         input.routeKey !== "remote.identity.setup" &&
         input.routeKey !== "cases.issue.create" && input.routeKey !== "cases.review" &&
         input.routeKey !== "cases.sync" && input.routeKey !== "cases.remote.identity" && input.routeKey !== "cases.work.start" &&
@@ -374,6 +366,7 @@ const plugin = definePlugin({
       return { status: 404, body: { error: "Unknown route" } };
     }
     try {
+      if (input.routeKey.startsWith("setup.permission.")) return probeSetupPermission(input);
       if (["cases.outbound.draft","cases.outbound.send","cases.outbound.retry"].includes(input.routeKey)) {
         if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:respond") throw new IntakeError(403,"A person with support reply permission is required");
         const cfg = await config(context);
@@ -395,16 +388,19 @@ const plugin = definePlugin({
           throw new IntakeError(422, "Company and computer target are required");
         }
         const cfg = await config(context);
-        const target = body.target.trim();
+        const target = resolveInteractiveTarget(cfg, input.companyId, body.target);
         await context.activity.log({
           companyId: input.companyId, message: "Remote setup identity diagnostic requested",
           entityType: "company", entityId: input.companyId,
           metadata: { target, actorUserId: input.actor.userId },
         });
+        let identityPassed = false;
         try {
           const result = await runRemoteIdentity(context, cfg, {
             companyId: input.companyId, caseReference: "SETUP-TEST", target,
           });
+          identityPassed = true;
+          await rememberSetupIdentity(context, cfg, input.companyId, target, result);
           await context.activity.log({
             companyId: input.companyId, message: "Remote setup identity diagnostic succeeded",
             entityType: "company", entityId: input.companyId,
@@ -412,6 +408,11 @@ const plugin = definePlugin({
           });
           return { status: 200, body: result };
         } catch (error) {
+          // Invalid targets have no profile to record. Never replace the
+          // original diagnostic error with a settings-history failure.
+          if (!identityPassed) {
+            try { await rememberSetupIdentity(context, cfg, input.companyId, target, null); } catch { /* Diagnostic error reported below. */ }
+          }
           await context.activity.log({
             companyId: input.companyId, message: "Remote setup identity diagnostic failed",
             entityType: "company", entityId: input.companyId,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { identitySummary } from "./setup-client.js";
 
 type Secret = { id: string; name: string };
 type Method = "Auto" | "WinRMHttps" | "WinRMHttp" | "Wmi";
@@ -33,7 +34,7 @@ function newProfileId(existing: Profile[]): string {
   return id;
 }
 
-export function RemoteSetup({ companyId }: { companyId: string }) {
+export function RemoteSetup({ companyId, onChanged, canDiagnose }: { companyId: string; onChanged?: () => void; canDiagnose?: boolean | null }) {
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [userName, setUserName] = useState("");
@@ -114,6 +115,7 @@ export function RemoteSetup({ companyId }: { companyId: string }) {
       setProfiles(next.filter((item) => item.companyId === companyId));
       if (kind === "exact") setTestTarget(value);
       setNotice("Access saved. Enter any computer in this group below to test it.");
+      onChanged?.();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }
@@ -127,7 +129,7 @@ export function RemoteSetup({ companyId }: { companyId: string }) {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companyId, target }),
       }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); onChanged?.(); }
   }
 
   return <section className="space-y-3 rounded-md border border-border p-4 text-sm">
@@ -168,11 +170,12 @@ export function RemoteSetup({ companyId }: { companyId: string }) {
       <div className="flex flex-wrap items-end gap-2 rounded-md border border-border p-3">
         <label className="min-w-64 flex-1">Computer to test (no need to save each computer)
           <input placeholder="workstation.office.example.local" value={testTarget} onChange={(event) => setTestTarget(event.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background p-2" /></label>
-        <button type="button" disabled={busy || !profiles.length} onClick={() => { void test(); }} className="rounded-md border border-border px-3 py-2 disabled:opacity-50">Test identity (read only)</button>
+        <button type="button" disabled={busy || !profiles.length || canDiagnose === false} onClick={() => { void test(); }} className="rounded-md border border-border px-3 py-2 disabled:opacity-50">{busy ? "Working…" : "Test identity (read only)"}</button>
+        {canDiagnose === false && <p className="w-full text-destructive">Your account needs the Investigate computers permission. Ask an administrator to grant it in Company access.</p>}
       </div>
     </>}
     {error && <p role="alert" className="text-destructive">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    {result && <pre role="status" className="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-background p-2">{JSON.stringify(result, null, 2)}</pre>}
+    {result && <div className="space-y-2"><p role="status">{identitySummary(result)}</p><details><summary className="cursor-pointer text-muted-foreground">Technical connection result</summary><pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-background p-2">{JSON.stringify(result, null, 2)}</pre></details></div>}
   </section>;
 }

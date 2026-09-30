@@ -4,6 +4,8 @@ import { RemoteSetup } from "./RemoteSetup.js";
 import { SupportToolkit } from "./SupportToolkit.js";
 import { SupportMessages } from "./SupportMessages.js";
 import type { OutboundRow } from "../support-outbound.js";
+import type { SupportSetup } from "../support-setup.js";
+import { SupportReadiness } from "./SupportReadiness.js";
 
 interface CaseRow {
   id: string;
@@ -267,22 +269,10 @@ export function SupportPage(_props: PluginPageProps) {
   const overview = usePluginData<{ status: string; count: string }[]>("support.overview", { companyId });
   const softwareRoutes = usePluginData<{ id: string; productName: string; destinationKind: string; destination: string }[]>("support.softwareRoutes", { companyId });
   const agents = usePluginData<{ id: string; name: string; status: string }[]>("support.agents", { companyId });
-  const setup = usePluginData<{ configured: boolean; connections: { id: string; source: string; delivery: string; deliveryPluginId: string | null }[] }>("support.setup", { companyId });
-  const deliveryPluginKeys = setup.data?.connections.map((connection) => connection.deliveryPluginId).filter(Boolean).join("|") ?? "";
-  const [installedPlugins, setInstalledPlugins] = useState<{ pluginKey: string; status: string }[] | null>(null);
-  const [pluginLookupError, setPluginLookupError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!deliveryPluginKeys) return;
-    let cancelled = false;
-    fetch("/api/plugins", { credentials: "same-origin" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json() as Promise<{ pluginKey: string; status: string }[]>;
-      })
-      .then((plugins) => { if (!cancelled) { setInstalledPlugins(plugins); setPluginLookupError(null); } })
-      .catch((reason) => { if (!cancelled) setPluginLookupError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; };
-  }, [deliveryPluginKeys]);
+  const setup = usePluginData<SupportSetup>("support.setup", { companyId });
+  const [setupVersion, setSetupVersion] = useState(0);
+  const [canDiagnose, setCanDiagnose] = useState<boolean | null>(null);
+  const refreshSetup = () => { setup.refresh(); setSetupVersion(value => value + 1); };
   const detail = usePluginData<Detail | null>("support.case", { companyId, caseId });
   const selectedDetail = detail.data?.supportCase.id === caseId && detail.data.supportCase.company_id === companyId
     ? detail.data : null;
@@ -389,18 +379,9 @@ export function SupportPage(_props: PluginPageProps) {
       <div><h1 className="text-xl font-semibold">Support</h1><p className="text-sm text-muted-foreground">Incoming cases for this company</p></div>
       <button type="button" onClick={() => { refresh(); overview.refresh(); if (caseId) detail.refresh(); }} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent/30">Refresh</button>
     </div>
-    {companyId && <RemoteSetup companyId={companyId} />}
+    {companyId && <SupportReadiness key={companyId} companyId={companyId} companyPrefix={host.companyPrefix} setup={setup.data} loading={setup.loading} error={setup.error} refreshToken={setupVersion} onRefresh={refreshSetup} onDiagnosticPermission={setCanDiagnose} />}
+    {companyId && <RemoteSetup companyId={companyId} onChanged={refreshSetup} canDiagnose={canDiagnose} />}
     {companyId && <SupportToolkit key={companyId} companyId={companyId} />}
-    {!setup.loading && !setup.error && !setup.data?.configured && <p role="status" className="rounded-md border border-border p-3 text-sm">You can ask Clippy to investigate a computer directly. To receive Slack or help desk requests, configure a communication route in Support Desk settings.</p>}
-    {setup.error && <p role="alert" className="text-sm text-destructive">Could not load communication setup: {String(setup.error)}</p>}
-    {setup.data?.configured && <p className="text-xs text-muted-foreground">Communication routes: {setup.data.connections.map((connection) => `${connection.source} via ${connection.delivery}`).join(", ")}. Confirm that the source delivers messages before relying on intake.</p>}
-    {pluginLookupError && <p role="alert" className="text-xs text-destructive">Could not check communication plugin installation: {pluginLookupError}</p>}
-    {setup.data?.connections.filter((connection) => connection.deliveryPluginId).map((connection) => {
-      const plugin = installedPlugins?.find((item) => item.pluginKey === connection.deliveryPluginId);
-      return installedPlugins && plugin?.status !== "ready" ? <p key={connection.id} role="alert" className="text-xs text-destructive">
-        Communication plugin {connection.deliveryPluginId} for {connection.source} is missing or inactive. Install or start it, then test message delivery.
-      </p> : null;
-    })}
     {error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load cases: {String(error)}</p>}
     {overview.error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load overview: {String(overview.error)}</p>}
     {loading && <p className="text-sm text-muted-foreground">Loading cases…</p>}
