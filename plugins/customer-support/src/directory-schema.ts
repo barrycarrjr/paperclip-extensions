@@ -1,12 +1,13 @@
 /** Company records are data, never credentials, access grants or executable instructions. */
 export const supportAreas = ["production_equipment", "job_files", "preflight", "network", "hardware", "storefront", "software", "phones", "email", "automations", "facilities", "warehouse", "general"] as const;
-export const directoryKinds = ["vendor", "owner", "equipment", "route", "brand", "connection", "file_root", "sync_check", "preflight"] as const;
+export const directoryKinds = ["vendor", "owner", "equipment", "route", "brand", "connection", "file_root", "sync_check", "preflight", "storefront"] as const;
 export type DirectoryKind = typeof directoryKinds[number];
 export interface DirectoryRecord {
   id: string; kind: DirectoryKind; name: string; details: Record<string, string>; version: number; updated_at: string;
 }
 export interface DirectoryField { key: string; label: string; required?: boolean; link?: DirectoryKind; options?: readonly string[]; multiline?: boolean }
 export const directoryFields: Record<DirectoryKind, DirectoryField[]> = {
+  storefront: [{ key: "website", label: "Exact public storefront HTTPS URL", required: true }, { key: "statusUrl", label: "Exact public vendor status HTTPS URL" }, { key: "ownerId", label: "Responsible person/team", link: "owner" }, { key: "adminRules", label: "Admin/order access rules (no credentials)", multiline: true }, { key: "notes", label: "Expected response and escalation procedure", multiline: true }],
   preflight: [{ key: "softwareName", label: "Existing production/preflight software", required: true }, { key: "website", label: "Official software/reporting URL" }, { key: "procedure", label: "How staff run preflight and retain its report", required: true, multiline: true }, { key: "ownerId", label: "Responsible production person/team", link: "owner" }],
   sync_check: [{ key: "target", label: "Windows host (saved access)", required: true }, { key: "sourcePath", label: "Local source folder", required: true }, { key: "backupPath", label: "Local backup or cloud-sync folder", required: true }, { key: "notes", label: "Cloud provider and restoration procedure", multiline: true }],
   vendor: [{ key: "service", label: "What they service" }, { key: "phone", label: "Phone" }, { key: "email", label: "Support email" }, { key: "website", label: "Official support website" }, { key: "notes", label: "Notes", multiline: true }],

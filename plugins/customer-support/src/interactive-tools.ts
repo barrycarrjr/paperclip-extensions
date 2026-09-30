@@ -116,6 +116,17 @@ export function registerInteractiveTools(ctx: PluginContext, config: () => Promi
             discovery: { tool: "support_discover_devices", ports: discoveryPorts, limits: "One saved company IPv4 network, /24 to /32, 30 seconds per scan. Reachability is not health." },
             fleetHealth: { tools: fleetTools.map(item => item.name), instruction: "Start a durable fleet check for office-wide health questions; continue one permitted computer at a time. Repairs remain separate." },
             printers: { tool: "support_check_printer", instruction: "Direct read-only IPP printer status in a saved company network; Windows queue/driver/port diagnostics use a case. Port changes include captured prior settings and a separately confirmed recovery repair. SNMP, vendor APIs, hardware resets and physical output verification are not provided." },
+            companyOperations: {
+              directory: ["support_search_directory", "support_resolve_owner", "support_save_directory"],
+              jobFolders: ["support_search_job_folders", "support_prepare_job_folder", "support_create_job_folder"],
+              skillCopies: ["support_check_skill_sync"],
+              equipment: ["support_equipment_history", "support_record_equipment_event", "support_prepare_equipment_service"],
+              preflight: ["support_prepare_preflight", "support_record_preflight_result", "support_preflight_history"],
+              storefronts: ["support_check_storefront", "support_storefront_history"],
+              specialists: ["support_check_specialist", "support_get_specialist_observation"],
+              dailySummaries: ["support_preview_daily_summary"],
+              limits: "Saved company profiles and each tool's permission apply. Specialist observations need an installed configured companion: Help Scout, 3CX or UniFi. UniFi repair tools are supplied by unifi-tools with separate restart opt-in and full-plan consent. Local skill-copy matches do not prove cloud upload/restore. Equipment/preflight records are operator evidence, not controller telemetry or a new preflight engine. Storefront HTTP success does not prove checkout/order health. Help Scout observation does not ingest or reply to tickets."
+            },
             knowledge: ["support_search_references", "support_read_reference", "support_search_knowledge", "support_save_knowledge", "support_list_devices"],
             instruction: "Diagnose first. Recipes only prepare scripts; execution still needs repair permission and inline consent or active case delegation. Arbitrary PowerShell repairs remain available through the existing confirmed repair tool. Missing capabilities must be reported, not silently installed. Company-wide directory or GPO changes need explicit explanation of their wider effect; single-computer delegation is not permission to change other devices." }
           : tool.name === "support_prepare_repair" ? prepareRepair(ctx, cfg, run, body)

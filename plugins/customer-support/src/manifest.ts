@@ -11,6 +11,7 @@ import { diagnosticIds } from "./diagnostic-catalog.js";
 import { specialistObservationTools } from "./specialist-observations.js";
 import { equipmentTools } from "./equipment-support.js";
 import { preflightTools } from "./preflight-support.js";
+import { storefrontTools } from "./storefront-support.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -47,7 +48,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, ...equipmentTools, ...preflightTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, ...equipmentTools, ...preflightTools, ...storefrontTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",

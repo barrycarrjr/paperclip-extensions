@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: saved company storefront/status URL checks and twenty-entry history. Exact public HTTPS endpoints, no redirects/login/response-body inspection, bounded DNS/HTTP waits, profile/access rechecks and explicit unavailable results. HTTP success never certifies orders/checkout or the absence of vendor incidents. Admin rules remain reference data; vendor-specific order/admin connectors are still needed. Clippy capability discovery now lists directory, job-folder, skill-copy, equipment, preflight, specialist and daily-summary operations.
+
 - Foundation development: `support_check_specialist` now supports the new optional `unifi-tools` companion. Save its company controller/site configuration and a Specialist connections account reference. Request `site` or `device` observations; receipt/profile/company guards remain enforced. This section supplies live API reads, not network configuration changes or an installed MCP server.
 
 - Foundation development: company **Preflight procedures** and `support_prepare_preflight`, confirmed `support_record_preflight_result`, and `support_preflight_history` delegate file checks to existing production software. Findings retain actual software/report/file-version references and explicit `operator_attested` provenance; Support Desk does not inspect/upload files or replace the preflight engine. Software escalation settings now accept `built_in` reporting with saved product-menu instructions and a manual provider-reference handoff, alongside email/Jira routes.

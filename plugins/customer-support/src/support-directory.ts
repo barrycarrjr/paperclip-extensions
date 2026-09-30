@@ -6,6 +6,7 @@ import { directoryFields, directoryInstruction, directoryKinds, supportAreas, ty
 import { redactSource, safeLink } from "./source-protection.js";
 import { validJobComponent,validJobRoot,validJobTemplate } from "./job-folder-schema.js";
 import { resolveRemoteAccess } from "./remote-access.js";
+import { validPublicCheckUrl } from "./storefront-schema.js";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 function access(cfg: Config, companyId: string) {
@@ -40,6 +41,7 @@ export function validateDirectory(input: Record<string, unknown>) {
   }
   if (recordKind === "file_root" && (!/^[a-z0-9][a-z0-9._-]*$/i.test(details.target!) || !validJobRoot(details.root!) || !validJobTemplate(details.namingTemplate!) || !validJobComponent(details.originalsFolder!))) throw new IntakeError(422,"Use a saved Windows server, an absolute local folder beneath a drive, the three template tokens once each, and a plain original-files subfolder name");
   if (recordKind === "sync_check" && (!/^[a-z0-9][a-z0-9._-]*$/i.test(details.target!) || !validJobRoot(details.sourcePath!) || !validJobRoot(details.backupPath!) || details.sourcePath!.toLowerCase() === details.backupPath!.toLowerCase())) throw new IntakeError(422,"Use a saved Windows host and two distinct absolute local folders beneath a drive");
+  if(recordKind === "storefront" && [details.website,details.statusUrl].filter(Boolean).some(url=>!validPublicCheckUrl(url!))) throw new IntakeError(422,"Use an exact public HTTPS DNS URL without credentials, query, fragment or a nonstandard port");
   return { kind: recordKind, name, details };
 }
 export async function saveDirectory(ctx: PluginContext, cfg: Config, companyId: string, userId: string, input: Record<string, unknown>) {

@@ -40,6 +40,7 @@ import { registerDailySummaryTools, runDailySummaries } from "./daily-summaries.
 import { registerSpecialistObservationTools, recordSpecialistObservation } from "./specialist-observations.js";
 import { registerEquipmentTools } from "./equipment-support.js";
 import { registerPreflightTools } from "./preflight-support.js";
+import { registerStorefrontTools } from "./storefront-support.js";
 
 let context: PluginContext | null = null;
 
@@ -227,6 +228,7 @@ const plugin = definePlugin({
     registerSpecialistObservationTools(ctx, () => config(ctx));
     registerEquipmentTools(ctx, () => config(ctx));
     registerPreflightTools(ctx, () => config(ctx));
+    registerStorefrontTools(ctx, () => config(ctx));
     for (const provider of ["help-scout", "3cx-tools", "unifi-tools"]) ctx.events.on(`plugin.${provider}.support-observation-receipt`, event => recordSpecialistObservation(ctx, event));
     ctx.jobs.register("daily-support-summaries", () => runDailySummaries(ctx, () => config(ctx)));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));

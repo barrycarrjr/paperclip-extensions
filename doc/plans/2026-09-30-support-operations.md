@@ -43,6 +43,8 @@ UniFi observation section implemented in a separate reusable connector: official
 
 UniFi restart section implemented: exact full-plan consent, saved restart opt-in, current device/configuration/uptime guards, one-attempt journal and target serialization, plus reboot evidence inspection. Interrupted/uncertain actions block repeated commands; acceptance is distinct from observed recovery and symptom closure. Tests use simulated controller reads/sends with a real isolated action database. No real device was restarted. Explicit operator reconciliation now releases an inspected uncertain receipt without claiming delivery or replaying it. Broader network configuration changes remain pending.
 
+Storefront observation section implemented: operator-saved public HTTPS storefront/vendor-status URLs, company/profile/version gates, private-DNS rejection, bounded requests without redirects/credentials/body inspection, and timed history. HTTP success never proves orders, checkout or vendor incident status. Vendor-specific order/admin connectors remain pending.
+
 - Help desk: connect existing Help Scout tools to Support Desk intake/replies; brand-aware mailbox routing, tags, assignment and signatures. Mailbox/account changes require separate reviewed actions.
 - Network: a company-authorized UniFi connector/MCP; controller/AP/client/firmware observations, with approved scoped changes and disruption/verification/recovery details.
 - Phones: reuse 3CX and phone-assistant tools; diagnose extensions, voicemail, routing, desk/softphones, SBCs and hosting dependencies. Explicitly distinguish those components.
