@@ -109,6 +109,10 @@ export async function diagnoseInteractiveCase(ctx: PluginContext, cfg: Config, r
   const supportCase = await ownedCase(ctx, cfg, run, input.caseId);
   const check = required(input.check, "Diagnostic check", 30);
   const options = validateDiagnosticOptions(check, input.options);
+  if (check === "repair_rehearsal") {
+    const plans = await ctx.db.query(`SELECT id FROM ${ns(ctx)}.support_recovery_plans WHERE company_id=$1 AND case_id=$2 AND prior_state->>'rehearsalId'=$3`, [actor.companyId, supportCase.id, options.rehearsalId]);
+    if (!plans[0]) throw new IntakeError(403, "Rehearsal identifier must belong to this conversation's case");
+  }
   if (options.testTarget) options.testTarget = resolveInteractiveTarget(cfg, actor.companyId, options.testTarget);
   let result: unknown;
   if (check === "connectivity") {

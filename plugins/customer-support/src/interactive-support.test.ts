@@ -54,6 +54,21 @@ test("target resolution is company scoped and ambiguous short names are refused"
   ] }] };
   assert.throws(() => resolveInteractiveTarget(twoDomains, companyId, "pc"));
 });
+test("rehearsal inspection requires the exact saved marker belonging to this conversation's case", async () => {
+  const { db, ctx, opened } = await fixture();
+  try {
+    const prepared = await prepareRepair(ctx, config, run, { caseId: opened.caseId, operation: "rehearse_remote_write" });
+    const diagnoseRun = { ...run, userPermission: "support:diagnose" }; let calls = 0;
+    const runner = async () => { calls++; return { status: "succeeded", exitCode: 0, runId: "inspection", output: JSON.stringify({ exists: false }) }; };
+    await assert.rejects(diagnoseInteractiveCase(ctx, config, diagnoseRun, { caseId: opened.caseId, check: "repair_rehearsal", options: { rehearsalId: "44444444-4444-4444-8444-444444444444" } }, runner));
+    assert.equal(calls, 0);
+    await diagnoseInteractiveCase(ctx, config, diagnoseRun, { caseId: opened.caseId, check: "repair_rehearsal", options: { rehearsalId: prepared.priorState!.rehearsalId } }, runner);
+    assert.equal(calls, 1);
+    const another = await openInteractiveCase(ctx, config, { ...diagnoseRun, chatSessionId: "chat-b" }, { target, summary: "Another case" });
+    await assert.rejects(diagnoseInteractiveCase(ctx, config, { ...diagnoseRun, chatSessionId: "chat-b" }, { caseId: another.caseId, check: "repair_rehearsal", options: { rehearsalId: prepared.priorState!.rehearsalId } }, runner));
+    assert.equal(calls, 1);
+  } finally { await db.close(); }
+});
 
 test("repair and verification stay together across different cases on the same computer", async () => {
   const { db, ctx, repair } = await fixture();

@@ -4,6 +4,7 @@ export const diagnosticChecks = [
   { id: "connectivity", title: "Connection from the support host", script: null, description: "DNS and remote-management TCP ports from the Paperclip host." },
   { id: "inventory", title: "Hardware and available tools", script: "Get-SupportInventory.ps1", description: "Windows build, hardware, domain, PowerShell, and available administrative modules. Saves a company device snapshot." },
   { id: "health", title: "Windows health snapshot", script: "Get-SupportHealth.ps1", description: "One read-only snapshot of inventory, CPU/memory, disk space, stopped services, recent System event metadata, restart indicators and Windows queues. Each unavailable section is explicit. Does not establish overall health or run repairs." },
+  { id: "repair_rehearsal", title: "Inspect a controlled write rehearsal", script: "Get-SupportRehearsal.ps1", description: "Read-only existence/content-match metadata for one exact generated rehearsal marker. Requires its rehearsalId from preparation. No arbitrary file path or file contents are returned. Use after an interrupted rehearsal before deciding on cleanup." },
   { id: "performance", title: "Current CPU and memory", script: "Get-SupportPerformance.ps1", description: "One CPU/memory/process sample." },
   { id: "performance_trace", title: "Performance over time", script: "Get-SupportPerformanceTrace.ps1", description: "Six CPU/memory samples over 15 seconds; no persistent tracing." },
   { id: "storage", title: "Disk space", script: "Get-SupportStorage.ps1", description: "Capacity and free space of local disks." },
@@ -22,14 +23,14 @@ export const diagnosticChecks = [
 
 export type DiagnosticCheck = typeof diagnosticChecks[number]["id"];
 export const diagnosticIds = diagnosticChecks.map(check => check.id);
-const optionKeys = new Set(["log", "hours", "limit", "printer", "testTarget", "port", "userIdentity", "share"]);
+const optionKeys = new Set(["log", "hours", "limit", "printer", "testTarget", "port", "userIdentity", "share", "rehearsalId"]);
 
 export function validateDiagnosticOptions(check: string, raw: unknown): Record<string, string | number> {
   if (!diagnosticIds.includes(check as DiagnosticCheck)) throw new IntakeError(422, "Choose a check from support_list_capabilities");
-  if (raw === undefined) return {};
+  if (raw === undefined) { if (check === "repair_rehearsal") throw new IntakeError(422, "Use the rehearsalId returned by repair preparation"); return {}; }
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new IntakeError(422, "Diagnostic options must be an object");
   const input = raw as Record<string, unknown>;
-  const allowed: Record<string, string[]> = { events: ["log", "hours", "limit"], network: ["testTarget", "port"], printers: ["printer"], directory: ["userIdentity"], shares: ["share"] };
+  const allowed: Record<string, string[]> = { events: ["log", "hours", "limit"], network: ["testTarget", "port"], printers: ["printer"], directory: ["userIdentity"], shares: ["share"], repair_rehearsal: ["rehearsalId"] };
   for (const key of Object.keys(input)) if (!optionKeys.has(key) || !allowed[check]?.includes(key)) throw new IntakeError(422, `Option ${key} does not apply to ${check}`);
   const result: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(input)) {
@@ -43,6 +44,7 @@ export function validateDiagnosticOptions(check: string, raw: unknown): Record<s
   }
   if (result.log && !["System", "Application", "GroupPolicy", "PrintService"].includes(result.log as string)) throw new IntakeError(422, "Choose System, Application, GroupPolicy or PrintService");
   if (result.port && !result.testTarget) throw new IntakeError(422, "A port test needs testTarget");
+  if (check === "repair_rehearsal" && (typeof result.rehearsalId !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(result.rehearsalId))) throw new IntakeError(422, "Use the exact UUID rehearsalId returned by repair preparation");
   return result;
 }
 

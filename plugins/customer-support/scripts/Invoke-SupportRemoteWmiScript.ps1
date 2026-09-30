@@ -118,7 +118,10 @@ try {
   }
   $outputFile = $shareFolder + '\output.txt'
   if (Test-Path -LiteralPath $outputFile) {
-    $output = (Get-Content -LiteralPath $outputFile -Raw).TrimEnd()
+    # Successful repairs often emit nothing. Windows PowerShell returns $null
+    # for an empty file; normalize that to a string before trimming the receipt.
+    $rawOutput = Get-Content -LiteralPath $outputFile -Raw
+    $output = if ($null -eq $rawOutput) { '' } else { ([string]$rawOutput).TrimEnd() }
   }
   $completed = $true
   $status = if ($remoteExitCode -eq 0) { 'succeeded' } elseif ($remoteExitCode -eq 10) { 'identity_mismatch' } else { 'script_failed' }

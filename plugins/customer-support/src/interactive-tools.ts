@@ -10,6 +10,7 @@ import { discoverDevices, discoveryPorts } from "./network-discovery.js";
 import { fleetTools } from "./fleet-tools.js";
 import { startFleetCheck, continueFleetCheck, getFleetCheck, stopFleetCheck } from "./fleet-health.js";
 import { checkPrinter } from "./printer-support.js";
+import { prepareRecovery } from "./repair-recovery.js";
 
 const scope = { caseId: { type: "string" }, target: { type: "string", description: "Exact resolved hostname returned by support_open_case" }, expectedReviewVersion: { type: "integer" } };
 const repair = { ...scope, script: { type: "string", maxLength: 16384 }, verificationScript: { type: "string", maxLength: 16384 },
@@ -17,6 +18,9 @@ const repair = { ...scope, script: { type: "string", maxLength: 16384 }, verific
 const repairRequired = Object.keys(repair);
 export const interactiveTools: NonNullable<PaperclipPluginManifestV1["tools"]> = [
   ...fleetTools,
+  { name: "support_prepare_recovery", displayName: "Prepare a saved repair recovery", requiredUserPermission: "support:repair",
+    description: "Retrieve a captured recovery plan for an original action in this person's company/conversation case, including after an interrupted reply. Plans exist for supported recipes, not every arbitrary PowerShell repair. Reads the original action's exact script hashes and saved prior state; nothing executes. Inspect current state first. Running/current unknown outcomes require inspection and case review before recovery. Explain the exact restoration and limitations, then use the returned repair through normal inline confirmation or active delegation. It cannot bypass permission, target locks, retry protection or irreversible effects.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { caseId: scope.caseId, actionId: { type: "string" } }, required: ["caseId", "actionId"] } },
   { name: "support_check_printer", displayName: "Check a network printer directly", requiredUserPermission: "support:diagnose", writes: true, executionTimeoutMs: 30_000,
     description: "Read a network printer's IPP status directly from the support host, without Windows credentials or an existing ticket. Use an exact IPv4 address inside a saved company discovery network. Default endpoint is /ipp/print on port 631; use the printer model's documented path when different. Reports device state/reasons, acceptance, queue count and supported marker levels, with observation dates and unavailable results. Sends only Get-Printer-Attributes; cannot print, cancel jobs, reboot or configure the device. TLS retains certificate validation. No SNMP community, passwords, arbitrary URLs or redirects. Combine with a Windows case printers diagnostic for driver/port/queue problems; confirmation is still required for repairs.",
     parametersSchema: { type: "object", additionalProperties: false, properties: {
@@ -30,12 +34,13 @@ export const interactiveTools: NonNullable<PaperclipPluginManifestV1["tools"]> =
     description: "Investigate or troubleshoot a Windows computer, workstation or PC using the company's saved Windows support access and password secret. Start here when asked to investigate a hostname, slowness or a computer problem; no existing ticket, issue, printer or backup inventory entry is required. Open or resume this person's Clippy case with the named computer and a brief non-secret symptom summary. A unique company DNS domain can expand a short name. Ask when the target is ambiguous. Report the resolved computer, then use support_diagnose_case for actual findings. Do not infer missing credentials from a local shell failure or ask for a password in chat. This does not authorize repairs.",
     parametersSchema: { type: "object", additionalProperties: false, properties: { target: { type: "string" }, summary: { type: "string", maxLength: 300 } }, required: ["target", "summary"] } },
   { name: "support_diagnose_case", displayName: "Check the computer", requiredUserPermission: "support:diagnose", executionTimeoutMs: 210_000,
-    description: "Investigate Windows using saved credentials: health (a combined bounded snapshot), inventory, performance/performance_trace, storage, services, events, network, printers, group_policy, directory, software, updates, tasks, certificates and shares. connectivity runs from the support host. Use support_list_capabilities for check descriptions and options. Report actual results and unavailable modules; never assume a healthy result from missing data. Options are validated data, not commands.",
+    description: "Investigate Windows using saved credentials: health (a combined bounded snapshot), inventory, performance/performance_trace, storage, services, events, network, printers, group_policy, directory, software, updates, tasks, certificates and shares. repair_rehearsal inspects only this case's recorded marker. connectivity runs from the support host. Use support_list_capabilities for check descriptions and options. Report actual results and unavailable modules; never assume a healthy result from missing data. Options are validated data, not commands.",
     parametersSchema: { type: "object", additionalProperties: false, properties: { caseId: scope.caseId, check: { type: "string", enum: diagnosticIds }, options: {
       type: "object", additionalProperties: false, properties: {
         log: { type: "string", enum: ["System", "Application", "GroupPolicy", "PrintService"] }, hours: { type: "integer", minimum: 1, maximum: 168 }, limit: { type: "integer", minimum: 1, maximum: 30 },
         testTarget: { type: "string", description: "Hostname within the same company's allowed device groups" }, port: { type: "integer", minimum: 1, maximum: 65535 },
         printer: { type: "string", description: "Exact queue name" }, userIdentity: { type: "string", description: "Exact AD account identity; requires RSAT on the target" }, share: { type: "string", description: "Exact local SMB share name" },
+        rehearsalId: { type: "string", description: "Exact generated UUID for repair_rehearsal inspection" },
       },
     } }, required: ["caseId", "check"] } },
   { name: "support_run_repair", displayName: "Run the proposed repair", requiredUserPermission: "support:repair", requiresUserConfirmation: true, writes: true, executionTimeoutMs: 300_000,
@@ -114,6 +119,7 @@ export function registerInteractiveTools(ctx: PluginContext, config: () => Promi
             knowledge: ["support_search_references", "support_read_reference", "support_search_knowledge", "support_save_knowledge", "support_list_devices"],
             instruction: "Diagnose first. Recipes only prepare scripts; execution still needs repair permission and inline consent or active case delegation. Arbitrary PowerShell repairs remain available through the existing confirmed repair tool. Missing capabilities must be reported, not silently installed. Company-wide directory or GPO changes need explicit explanation of their wider effect; single-computer delegation is not permission to change other devices." }
           : tool.name === "support_prepare_repair" ? prepareRepair(ctx, cfg, run, body)
+          : tool.name === "support_prepare_recovery" ? prepareRecovery(ctx, cfg, run, body)
           : tool.name === "support_search_references" ? searchReferences(body)
           : tool.name === "support_read_reference" ? readReference(body)
           : tool.name === "support_search_knowledge" ? searchKnowledge(ctx, cfg, run, body)

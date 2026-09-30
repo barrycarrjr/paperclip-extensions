@@ -2,6 +2,8 @@ import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { IntakeError, type Config } from "./routing.js";
 import { ns, ownedCase, resolveInteractiveTarget } from "./interactive-support.js";
 import { diagnosticScript } from "./diagnostic-catalog.js";
+import { buildRepairRehearsal } from "./repair-rehearsal.js";
+import { rememberRecovery } from "./repair-recovery.js";
 
 export const repairRecipes = [
   { id: "start_service", title: "Start an exact service", options: ["service"], disruption: "Starts the selected service and its required dependencies." },
@@ -12,6 +14,7 @@ export const repairRecipes = [
   { id: "restart_print_job", title: "Restart one print job", options: ["printer", "jobId", "submittedAtUtc"], disruption: "Can produce duplicate printed pages. Requires the exact queue, job ID and observed submission timestamp." },
   { id: "cancel_print_job", title: "Cancel one print job", options: ["printer", "jobId", "submittedAtUtc"], disruption: "Cancels that document irreversibly. It must be resubmitted from the originating application." },
   { id: "change_printer_port", title: "Reconnect a queue to an existing printer port", options: ["printer", "expectedPortName", "newPortName"], disruption: "Routes subsequent printing from this exact queue through the selected existing port. Requires a fresh queue diagnostic, an empty queue and its unchanged previous port. Cannot create a port, install a driver or delete jobs." },
+  { id: "rehearse_remote_write", title: "Test remote write, verification and cleanup", options: [], disruption: "Creates one new uniquely named marker file in the support account's temporary directory. Verification reads and removes it. Existing files and staff settings are not changed. Interrupted work needs inspection and confirmed cleanup." },
 ] as const;
 
 function validatedOptions(operation: string, input: unknown) {
@@ -39,6 +42,10 @@ const serviceLookup = "$service = Get-Service | Where-Object { $_.Name -eq [stri
 const jobLookup = "$queue = Get-Printer | Where-Object { $_.Name -eq [string]$SupportOptions.printer }\nif (-not $queue) { throw 'Exact printer was not found' }\n$job = Get-PrintJob -PrinterName $queue.Name -ID ([int]$SupportOptions.jobId) -ErrorAction SilentlyContinue";
 export function buildRepairRecipe(operation: string, input: unknown) {
   const { recipe, values } = validatedOptions(operation, input);
+  if (operation === "rehearse_remote_write") {
+    const rehearsal = buildRepairRehearsal();
+    return { recipe, ...rehearsal, expectedEffect: recipe.title, disruption: recipe.disruption };
+  }
   let script: string; let verification: string; let recovery: string;
   if (["start_service", "restart_service", "restart_spooler"].includes(operation)) {
     if (operation === "restart_spooler") values.service = "Spooler";
@@ -94,7 +101,16 @@ export async function prepareRepair(ctx: PluginContext, cfg: Config, run: ToolRu
     recoveryRepair = { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version,
       script: inverse.script, verificationScript: inverse.verificationScript, recoveryNotes: "Restore the previously observed port only after reviewing the current queue. Retains both ports, driver and jobs; cannot undo pages already printed. Recheck physical output afterward.", expectedEffect: "Restore the exact printer queue's previously observed port" };
   }
-  const { recipe, disruption, ...parameters } = prepared;
-  return { operation: recipe.id, disruption, ...(priorState ? { priorState, recoveryRepair } : {}), repair: { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version, ...parameters },
+  if ("rehearsalId" in prepared) {
+    priorState = { rehearsalId: prepared.rehearsalId, baseline: "The file must not exist at execution; no existing file is overwritten" };
+    recoveryRepair = { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version,
+      script: prepared.recoveryScript, verificationScript: prepared.cleanupVerificationScript, recoveryNotes: prepared.recoveryNotes, expectedEffect: "Remove only the exact unchanged rehearsal marker if it exists" };
+  }
+  // Only the approved repair contract enters the execution tool. Recovery stays
+  // a separately reviewable object and never executes during preparation.
+  const parameters = { script: prepared.script, verificationScript: prepared.verificationScript, recoveryNotes: prepared.recoveryNotes, expectedEffect: prepared.expectedEffect };
+  const { recipe, disruption } = prepared;
+  const recoveryPlanId = priorState && recoveryRepair ? await rememberRecovery(ctx, run, supportCase.id, supportCase.target_address, supportCase.review_version, parameters, priorState, recoveryRepair) : undefined;
+  return { operation: recipe.id, disruption, ...(priorState ? { priorState, recoveryRepair, recoveryPlanId } : {}), repair: { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version, ...parameters },
     instruction: "Prepared only; nothing was executed or approved. Confirm diagnosis and applicability, explain disruption/recovery, then pass the exact repair object to support_run_repair or the actively delegated repair tool. The host still checks consent. Verification covers the stated check, not every possible cause." };
 }
