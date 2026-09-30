@@ -20,7 +20,7 @@ before(async () => {
   ctx = { db: { namespace,query: async (sql: string,params: unknown[]) => { assert.match(sql.trim(),/^SELECT\b/i);return (await db.query(sql,params)).rows; },execute: async (sql: string,params: unknown[]) => { assert.match(sql.trim(),/^(INSERT|UPDATE|DELETE)\b/i);return { rowCount: (await db.query(sql,params)).affectedRows }; } },
     agents: { get: async (id: string,company: string) => id === agentId && company === companyId ? { id,companyId,status: "idle" } : null },activity: { log: async (value: unknown) => activity.push(value) } } as unknown as PluginContext;
 });
-beforeEach(async () => { await db.exec(`TRUNCATE ${namespace}.support_directory`);activity.length=0; });
+beforeEach(async () => { await db.exec(`TRUNCATE ${namespace}.support_directory CASCADE`);activity.length=0; });
 after(async () => { await db.close(); });
 const save = (kind: string,name: string,details: Record<string,string> = {},company = companyId) => saveDirectory(ctx,cfg,company,"operator",{ kind,name,details });
 

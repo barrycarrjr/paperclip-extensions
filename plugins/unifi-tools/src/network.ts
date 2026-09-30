@@ -1,6 +1,6 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 export interface NetworkAccount { key: string; baseUrl: string; apiKeyRef: string; allowedCompanies: string[]; sites: { companyId: string; siteIds: string[] }[]; supportReadEnabled?: boolean }
-export interface NetworkConfig { accounts?: NetworkAccount[] }
+export interface NetworkConfig { accounts?: NetworkAccount[]; allowDeviceRestarts?: boolean }
 export const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 export function resolveNetworkAccount(cfg: NetworkConfig, companyId: string, key: unknown, siteId: unknown) {
   if (!uuid.test(companyId) || typeof key !== "string" || typeof siteId !== "string" || !uuid.test(siteId)) throw new Error("Choose this company's saved controller account and exact site UUID");

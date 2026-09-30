@@ -41,6 +41,8 @@ Production handoff section implemented: saved preflight software/procedures, exa
 
 UniFi observation section implemented in a separate reusable connector: official local Integration API, explicit company/site ownership, Secrets, verified TLS, bounded device/client/firmware/statistic observations and Support Desk receipts. Synthetic HTTP tests cover redirects, response bounds, partial failures and revoked access. Local controller compatibility needs a live read pilot. Approved network actions, configuration backups and an MCP alternative remain separate work.
 
+UniFi restart section implemented: exact full-plan consent, saved restart opt-in, current device/configuration/uptime guards, one-attempt journal and target serialization, plus reboot evidence inspection. Interrupted/uncertain actions block repeated commands; acceptance is distinct from observed recovery and symptom closure. Tests use simulated controller reads/sends with a real isolated action database. No real device was restarted. Explicit operator reconciliation now releases an inspected uncertain receipt without claiming delivery or replaying it. Broader network configuration changes remain pending.
+
 - Help desk: connect existing Help Scout tools to Support Desk intake/replies; brand-aware mailbox routing, tags, assignment and signatures. Mailbox/account changes require separate reviewed actions.
 - Network: a company-authorized UniFi connector/MCP; controller/AP/client/firmware observations, with approved scoped changes and disruption/verification/recovery details.
 - Phones: reuse 3CX and phone-assistant tools; diagnose extensions, voicemail, routing, desk/softphones, SBCs and hosting dependencies. Explicitly distinguish those components.
