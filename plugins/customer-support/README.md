@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: added **Daily support summaries** settings and `support_preview_daily_summary`. Choose a saved Slack connection, exact destination channel, IANA timezone and local send time; preview in Clippy, then enable. Sends yesterday's aggregate counts once per company/day and retains the last seven receipts in preview. No case text, staff names or device names leave via summaries. Current backlog and latest action state are explicitly distinguished from historical end-of-day counts. Unknown delivery never replays automatically.
+
 - Foundation development: added company directory **Skill backup checks** profiles and `support_check_skill_sync`. Compare bounded local Markdown files through saved Windows access; counts identify missing/different copies without returning document names, contents or hashes. This does not verify cloud upload or restoration. Save source and backup folders once per host/profile; do not supply paths from incoming tickets.
 
 - Foundation development: added `hardware`, `battery`, `crashes` and `ai_environment` checks to `support_diagnose_case`, plus official hardware reference links. Checks return bounded metadata, separate unavailable providers, omit crash messages/driver paths/environment values, and never install drivers or run tools. AI availability is not an MCP handshake or proof of staff-user configuration/cloud backup. Battery providers reporting zero capacity produce an unknown health estimate.

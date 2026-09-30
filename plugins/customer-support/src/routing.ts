@@ -14,6 +14,7 @@ export interface Connection {
 }
 
 export interface Config {
+  dailySummaries?: { companyId: string; connectionId: string; channelId: string; timezone: string; sendAt: string; enabled: boolean }[];
   ticketPolicies?: TicketPolicy[];
   connections?: Connection[];
   softwareRoutes?: SoftwareRoute[];

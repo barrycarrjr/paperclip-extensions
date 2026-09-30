@@ -6,6 +6,8 @@ import { ticketTools } from "./ticket-tools.js";
 import { directoryTools } from "./directory-tools.js";
 import { jobFolderTools } from "./job-folder-tools.js";
 import { skillSyncTools } from "./skill-sync.js";
+import { dailySummaryTools } from "./daily-summaries.js";
+import { diagnosticIds } from "./diagnostic-catalog.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -42,7 +44,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",
@@ -87,14 +89,17 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["connections", "ticketPolicies", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks"],
+    propertyOrder: ["connections", "ticketPolicies", "dailySummaries", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks"],
     properties: {
+      dailySummaries: { type: "array", title: "Daily support summaries", description: "One policy per company. Review the exact destination and timezone, then enable to permit one daily aggregate Slack post about the previous calendar day. No ticket text or staff/device names are included. Unknown delivery is never automatically retried.", items: { type: "object", additionalProperties: false, properties: {
+        companyId: { type: "string", format: "company-id", title: "Company" }, connectionId: { type: "string", title: "Saved Slack support connection ID" }, channelId: { type: "string", title: "Summary channel ID", description: "The bot must have chat:write and access to this reviewed channel." }, timezone: { type: "string", title: "IANA timezone", default: "UTC" }, sendAt: { type: "string", title: "Local send time (HH:MM)", default: "09:00" }, enabled: { type: "boolean", title: "Enable daily aggregate delivery", default: false }
+      }, required: ["companyId", "connectionId", "channelId", "timezone", "sendAt", "enabled"] } },
       ticketPolicies: { type: "array",title: "Automatic ticket investigation",description: "Opt in per company. Select its support agent, allowed read-only Windows diagnostics and original-thread updates. Repairs still require an authorized person's exact approval.",
         items: { type: "object",additionalProperties: false,properties: {
           companyId: { type: "string",format: "company-id",title: "Company" },
           agentId: { type: "string",title: "Support agent ID" },
           enabled: { type: "boolean",default: false,title: "Investigate incoming Slack tickets" },
-          diagnostics: { type: "array",title: "Allowed diagnostics",items: { type: "string",enum: ["inventory","health","performance","performance_trace","storage","services","events","network","printers","group_policy","directory","software","updates","tasks","certificates","shares"] } },
+          diagnostics: { type: "array",title: "Allowed diagnostics",items: { type: "string",enum: diagnosticIds.filter(id => !["connectivity", "repair_rehearsal"].includes(id)) } },
           allowThreadUpdates: { type: "boolean",default: false,title: "Allow progress and findings in the original Slack thread",description: "Uses the intake connection's bot Secret; it needs chat:write and access to the mapped channel. Does not authorize vendor emails or repairs." },
         },required: ["companyId","agentId","enabled","diagnostics","allowThreadUpdates"] } },
       connections: {
@@ -340,6 +345,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
   ],
   jobs: [
+    { jobKey: "daily-support-summaries", displayName: "Send opted-in aggregate support summaries", schedule: "*/5 * * * *" },
     { jobKey: "reconcile-support-deliveries",displayName: "Reconcile support delivery receipts",schedule: "* * * * *" },
     { jobKey: "protect-legacy-sources",displayName: "Protect legacy support sources",schedule: "* * * * *" },
     { jobKey: "dispatch-support-tickets",displayName: "Start permitted support investigations",schedule: "* * * * *" },
