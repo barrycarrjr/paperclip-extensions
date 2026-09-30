@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: the optional Help Scout companion now supplies native authenticated company/mailbox intake, encrypted connector snapshots, acknowledged cursors and immutable provider-edit revisions. Receiving a Help Scout case no longer fails because that company has a Slack-only automatic investigation policy; ingestion does not implicitly broaden that policy. Configure the companion's exact mailbox/agent-key route separately. Its reviewed human reply/tag/assignment tools are separate opt-in operations in Clippy.
+
 - Foundation development: saved company storefront/status URL checks and twenty-entry history. Exact public HTTPS endpoints, no redirects/login/response-body inspection, bounded DNS/HTTP waits, profile/access rechecks and explicit unavailable results. HTTP success never certifies orders/checkout or the absence of vendor incidents. Admin rules remain reference data; vendor-specific order/admin connectors are still needed. Clippy capability discovery now lists directory, job-folder, skill-copy, equipment, preflight, specialist and daily-summary operations.
 
 - Foundation development: `support_check_specialist` now supports the new optional `unifi-tools` companion. Save its company controller/site configuration and a Specialist connections account reference. Request `site` or `device` observations; receipt/profile/company guards remain enforced. This section supplies live API reads, not network configuration changes or an installed MCP server.

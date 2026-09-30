@@ -42,6 +42,10 @@ export async function ticketSource(ctx: PluginContext, cfg: Config, companyId: s
 export async function enqueueTicket(ctx: PluginContext, cfg: Config, companyId: string, caseId: string, messageId: string) {
   let policy;
   try { policy = ticketPolicy(cfg,companyId); } catch { return; }
+  // Native/generic intake must still succeed when this company has a Slack-only
+  // investigation policy. Receiving a different source never enables automation.
+  const [origin] = await ctx.db.query<{source:string}>(`SELECT source FROM ${ns(ctx)}.support_cases WHERE company_id=$1 AND id=$2`,[companyId,caseId]);
+  if(origin?.source!=="slack")return;
   await ticketSource(ctx,cfg,companyId,caseId);
   const [message] = await ctx.db.query<{ occurred_at: string }>(`SELECT occurred_at FROM ${ns(ctx)}.support_messages
     WHERE company_id=$1 AND case_id=$2 AND id=$3 AND automation_eligible=true AND source_protection_version=1 AND author_kind <> 'bot'`, [companyId,caseId,messageId]);

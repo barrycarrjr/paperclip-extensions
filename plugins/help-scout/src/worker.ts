@@ -32,6 +32,7 @@ import {
   triageCursorScope,
 } from "./triage-cursor.js";
 import { runWatch } from "./watch.js";
+import { registerSupportIntake } from "./support-intake.js";
 import { registerReviewedSupport } from "./reviewed-support.js";
 import { registerHelpScoutObservations } from "./support-observations.js";
 
@@ -114,6 +115,7 @@ const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     registerHelpScoutObservations(ctx);
     registerReviewedSupport(ctx);
+    registerSupportIntake(ctx);
     ctx.logger.info("help-scout plugin setup");
 
     const rawConfig = (await ctx.config.get()) as InstanceConfig;
