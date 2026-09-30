@@ -19,6 +19,10 @@ export const diagnosticChecks = [
   { id: "tasks", title: "Scheduled task health", script: "Get-SupportTasks.ps1", description: "Up to 30 enabled scheduled tasks with a nonzero last result. Does not expose task command arguments." },
   { id: "certificates", title: "Machine certificate expiration", script: "Get-SupportCertificates.ps1", description: "Up to 40 expired/soon-expiring machine certificates; metadata only, never exports keys." },
   { id: "shares", title: "File shares and permissions", script: "Get-SupportShares.ps1", description: "Local SMB share names and optional exact share access entries. Does not read files or enumerate remote shares." },
+  { id: "hardware", title: "Device, driver and storage faults", script: "Get-SupportHardware.ps1", description: "Bounded Plug and Play error codes, physical network adapters, signed driver metadata and Storage-provider health. No updates/stress tests or private driver paths; a status is evidence, not proof of failed hardware." },
+  { id: "battery", title: "Battery capacity and charge", script: "Get-SupportBattery.ps1", description: "Up to eight Win32 battery estimates. Zero/missing capacity is unavailable, not zero health. No persistent battery report or device changes." },
+  { id: "crashes", title: "Recent crashes and unexpected reboots", script: "Get-SupportCrashes.ps1", description: "Seven-day System event metadata and recognizable bugcheck codes, at most 30 events. No memory dumps, raw messages or uploads. Does not establish a culprit driver." },
+  { id: "ai_environment", title: "AI tools and PATH health", script: "Get-SupportAIEnvironment.ps1", description: "Known tool availability/file-version metadata and bounded machine/support-account PATH counts. No environment values, config contents or executable paths. Availability is not MCP connectivity/authentication or affected-user setup." },
 ] as const;
 
 export type DiagnosticCheck = typeof diagnosticChecks[number]["id"];

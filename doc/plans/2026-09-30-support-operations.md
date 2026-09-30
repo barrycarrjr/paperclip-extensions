@@ -20,6 +20,8 @@ Acceptance: two-company isolation, foreign-reference rejection, stale/concurrent
 
 Job-folder section implemented: saved local file-server root/naming profiles, bounded literal customer/date search, review flags, exact confirmed creation through the existing action engine, profile/access rechecks, and a Windows temporary-folder rehearsal. Live company file-server validation is pending. No documents were read and no company folders were created during development.
 
+Workstation diagnostic section implemented: device/driver/storage provider observations, battery capacity with unsupported estimates marked unknown, bounded crash metadata and AI command/PATH availability. Windows tests use synthetic provider results and local metadata. MCP authentication, affected-user configuration, cloud sync and restoration are separate checks; tool availability proves none of them.
+
 - Approved file-root profiles and naming templates, literal customer/date folder search, previewed folder/subfolder creation, and stale/misfiled-job reports. No automatic deletion or moves. Confirm actual roots and naming rules through company settings.
 - Hardware diagnostics: device/driver failures, battery health and bounded crash evidence; warranty linkage and official-source part compatibility research.
 - AI workstation diagnostics: PATH/environment, installed tools, skills, MCP connections, task execution and backup/sync freshness. Report unavailable checks and distinguish historical backup from restored/sync-verified data.

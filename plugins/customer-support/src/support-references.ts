@@ -1,6 +1,10 @@
 import { IntakeError } from "./routing.js";
 
 export const supportReferences = [
+  { id: "battery-provider",topic: "hardware",title: "Windows battery capacity provider",tags: "battery laptop charge capacity replacement unavailable",path: "windows/win32/cimwin32prov/win32-battery" },
+  { id: "device-error-codes",topic: "hardware",title: "Plug and Play device error codes",tags: "device wifi driver disabled error hardware",path: "windows/win32/cimwin32prov/win32-pnpentity" },
+  { id: "unexpected-reboots",topic: "hardware",title: "Unexpected reboot event investigation",tags: "bsod crash bugcheck stop code power reboot",path: "troubleshoot/windows-server/performance/troubleshoot-unexpected-reboots-system-event-logs" },
+  { id: "stop-code-investigation",topic: "hardware",title: "Stop code and crash investigation",tags: "bsod windbg driver memory dump crash",path: "troubleshoot/windows-client/performance/stop-code-error-troubleshooting" },
   { id: "group-policy-troubleshooting", topic: "group_policy", title: "Applying Group Policy troubleshooting", tags: "gpo gpresult rsop filtering permissions sysvol policy", path: "troubleshoot/windows-server/group-policy/applying-group-policy-troubleshooting-guidance" },
   { id: "gpresult", topic: "group_policy", title: "gpresult command reference", tags: "gpo applied policy user computer rsop", path: "windows-server/administration/windows-commands/gpresult" },
   { id: "group-policy-cmdlets", topic: "group_policy", title: "Group Policy PowerShell module", tags: "gpo backup restore links settings rsat", path: "powershell/module/grouppolicy/" },
