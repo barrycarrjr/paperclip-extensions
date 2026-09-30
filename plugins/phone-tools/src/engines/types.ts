@@ -314,6 +314,7 @@ export interface ConfigAccount {
   engineConfig?: Record<string, unknown>;
   allowedNumbers?: string[];
   allowedAssistants?: string[];
+  supportProfiles?: {key:string;companyId:string;enabled:boolean;assistantIds:string[];numberIds:string[]}[];
   defaultNumberId?: string;
   defaultAssistantId?: string;
   allowedCompanies?: string[];

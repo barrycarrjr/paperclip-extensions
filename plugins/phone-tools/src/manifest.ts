@@ -106,6 +106,14 @@ const accountItemSchema = {
       description:
         "If non-empty, restricts phone_call_make to these assistant IDs (and prevents phone_call_make from accepting an inline ad-hoc assistant config). Empty = all assistants under this account allowed, AND inline configs are accepted.",
     },
+    supportProfiles: {
+      type:"array",title:"Support Desk AI-phone observations",description:"Exact company-owned saved Vapi assistant/number IDs. Reads selected configuration only; never places calls, reads call records/prompts or changes routing. DIY assistant enumeration is unavailable.",
+      items:{type:"object",additionalProperties:false,required:["key","companyId","enabled","assistantIds","numberIds"],properties:{
+        key:{type:"string",title:"Profile key",pattern:"^[a-zA-Z0-9_-]{1,100}$"},
+        companyId:{type:"string",format:"company-id",title:"Exact company"},enabled:{type:"boolean",default:false,title:"Enable scoped observations"},
+        assistantIds:{type:"array",items:{type:"string"},maxItems:20,title:"Exact owned assistant UUIDs"},numberIds:{type:"array",items:{type:"string"},maxItems:20,title:"Exact owned Vapi phone-number UUIDs (not telephone numbers)"}
+      }}
+    },
     recordingEnabled: {
       type: "boolean",
       default: false,
@@ -927,6 +935,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "http.outbound",
     "webhooks.receive",
     "events.emit",
+    "events.subscribe",
     "plugin.state.read",
     "plugin.state.write",
     "telemetry.track",

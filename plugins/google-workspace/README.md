@@ -323,8 +323,8 @@ When an agent in company A invokes a tool addressing an account that isn't allow
 ## Support Desk backup verification
 
 1. Connect Google OAuth normally, allowing the exact company (portfolio-wide `*` alone does not enable this check).
-2. Under that account?s **Support Desk backup verification**, save a profile key, exact company, exact Drive folder ID and absolute Markdown source folder **on this worker host**. Enable the profile. No workstation path or company path is included in this plugin?s shipped defaults.
-3. In Support Desk?s company directory, save a specialist connection with plugin key `google-workspace`, this Google account key, and area `automations`.
+2. Under that account's **Support Desk backup verification**, save a profile key, exact company, exact Drive folder ID and absolute Markdown source folder **on this worker host**. Enable the profile. No workstation path or company path is included in this plugin's shipped defaults.
+3. In Support Desk's company directory, save a specialist connection with plugin key `google-workspace`, this Google account key, and area `automations`.
 4. In Clippy request `support_check_specialist` using that directory record, `operation: backup_verify`, `resourceId: <saved-profile-key>`. Read the returned receipt with `support_get_specialist_observation`.
 
 Only `matched_and_restore_tested` means every supported observed source file matched cloud metadata, downloaded bytes and the temporary restore. Empty, partial, missing, different, extra, ambiguous or unavailable trees return `needs_review`; access/configuration/source-change failures return an unavailable receipt. Bounds: 50 Markdown files, 1 MiB each, 8 MiB total source, five nested levels, 30 directories, 500 local entries and 200 cloud entries, 45-second overall budget and at most 10 seconds per provider read. Larger trees require separate bounded profiles; a paginated listing is explicitly incomplete. Shortcuts and Google-native documents are not ordinary Markdown backups.

@@ -229,7 +229,7 @@ const plugin = definePlugin({
     registerEquipmentTools(ctx, () => config(ctx));
     registerPreflightTools(ctx, () => config(ctx));
     registerStorefrontTools(ctx, () => config(ctx));
-    for (const provider of ["help-scout", "3cx-tools", "unifi-tools", "google-workspace"]) ctx.events.on(`plugin.${provider}.support-observation-receipt`, event => recordSpecialistObservation(ctx, event));
+    for (const provider of ["help-scout", "3cx-tools", "unifi-tools", "google-workspace", "phone-tools"]) ctx.events.on(`plugin.${provider}.support-observation-receipt`, event => recordSpecialistObservation(ctx, event));
     ctx.jobs.register("daily-support-summaries", () => runDailySummaries(ctx, () => config(ctx)));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
     ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));
