@@ -4,6 +4,7 @@ import { outboundTools } from "./outbound-tools.js";
 import { setupPermissions } from "./support-setup.js";
 import { ticketTools } from "./ticket-tools.js";
 import { directoryTools } from "./directory-tools.js";
+import { jobFolderTools } from "./job-folder-tools.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -40,7 +41,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",

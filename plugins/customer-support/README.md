@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+Current development adds scoped job-folder search and confirmed creation from a saved company file-server/root/naming profile. Search is bounded and reports age/template/subfolder observations without reading documents. Exact creation uses the existing durable repair/verification engine, refuses existing or redirected jobs, and checks changed profile/access while queued. A Windows temporary-directory rehearsal passes; live company file-server setup remains an operator pilot. No moves or deletions are implemented.
+
 Current development adds a reviewed company support directory for vendor contacts, responsible people/teams, equipment/warranties, brands, owner routing and specialist connection references. Clippy and assigned ticket agents can look up company records; operator writes require confirmation, current versions and same-company links. The Support page provides editing, revision history, owner lookup and installation checks that explicitly distinguish running plugins from tested connections. Company SOPs continue through the existing knowledge tools. This milestone is not released and does not yet add the specialist adapters or operational actions listed in the operations plan.
 
 Current development completes the opt-in Slack ticket handoff: an assigned agent proposes an evidenced catalog repair; a repair operator reviews and confirms its exact action in Clippy or the dashboard; the existing engine executes once and verifies separately. Changed requester evidence, company policy, source route, target or saved access invalidates the proposal. Recorded results are posted to the original thread under separately enabled update policy. An operator must confirm the original symptom to close the case; a command exit code or unauthenticated Slack reply cannot close it. Vendor software uses a filtered public-support draft and the existing reviewed email/form path. This build is not released.
@@ -146,6 +148,14 @@ For a read-only transport test, run `Get-SupportIdentity.ps1` through the same r
 
 ## Company support directory
 
+### Job-folder setup and use
+
+In the directory's **Job folders** tab, save the file server's full hostname, its **local** job root (for example `D:\Jobs`), a naming template using `{date}`, `{customer}` and `{sequence}` once each, and the original-files subfolder name. `{date}` renders MMDDYYYY and sequence renders two digits. These are company settings; no real shop path or convention ships in code. The server must match saved Windows access. Use its local disk path rather than a UNC share to avoid remoting double-hop authentication; staff can continue using their normal share.
+
+Ask Clippy to find job folders for a customer/date. `support_search_job_folders` reads at most 512 immediate folders and returns at most 50. It does not inspect document contents or follow reparse points. Directory age, a naming mismatch or a missing original-files subfolder is a review flag, not proof of an abandoned job.
+
+`support_prepare_job_folder` previews target/root/date/customer/sequence and the resulting folder/subfolder. `support_create_job_folder` requires exact inline confirmation and uses durable single-execution repair/verification/audit. Changed company root/access, another person's case, traversal, reparse points and existing jobs are refused. Partial or unknown creation must be inspected; existing files are never overwritten and no move/delete tool is exposed. Emergency delegation does not bypass this tool's confirmation. Operator PowerShell tools retain their existing broader authority; saved job profiles are not an OS sandbox.
+
 Open a company's **Support → Company support directory: vendors, equipment and owners**. Windows access or an incoming route/discovery network must already enable Support Desk for that company. No company-specific contacts, domains, folders or equipment names ship in the plugin.
 
 1. Add **Responsible people and teams**, then **Vendors**. An owner can optionally link to an existing company agent. Contact information is reference data; saving it does not send a message or assign work.
@@ -167,7 +177,7 @@ In Clippy, try “Who handles facilities requests?” or “Find the service con
 
 `support_get_ticket` includes a bounded directory index; the lookup tool retrieves details. Staff SOPs use the existing `support_search_knowledge` / confirmed `support_save_knowledge` tools and remain visible in the reference library. Directory relationships do not change company agent permissions or remote target scopes.
 
-This milestone does not implement job-folder search/creation, preflight, UniFi access, deeper hardware diagnostics, storefront/order access, mailbox administration, automatic brand signatures, equipment consumables/service history, specialist test dispatch, or a daily support summary. See [the operations milestones](../../doc/plans/2026-09-30-support-operations.md).
+Remaining sections include preflight, UniFi access, deeper hardware diagnostics, storefront/order access, mailbox administration, automatic brand signatures, equipment consumables/service history, specialist test dispatch, and a daily support summary. See [the operations milestones](../../doc/plans/2026-09-30-support-operations.md).
 
 ## Reviewed replies and vendor emails
 

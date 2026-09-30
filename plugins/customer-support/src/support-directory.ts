@@ -4,6 +4,8 @@ import { companyHasSupport, IntakeError, type Config } from "./routing.js";
 import { ns } from "./interactive-support.js";
 import { directoryFields, directoryInstruction, directoryKinds, supportAreas, type DirectoryKind, type DirectoryRecord } from "./directory-schema.js";
 import { redactSource, safeLink } from "./source-protection.js";
+import { validJobComponent,validJobRoot,validJobTemplate } from "./job-folder-schema.js";
+import { resolveRemoteAccess } from "./remote-access.js";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 function access(cfg: Config, companyId: string) {
@@ -36,12 +38,14 @@ export function validateDirectory(input: Record<string, unknown>) {
     if (field.key === "warrantyEndsOn" && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0,10) !== value)) throw new IntakeError(422, "Use a valid warranty date (YYYY-MM-DD)");
     details[field.key] = value;
   }
+  if (recordKind === "file_root" && (!/^[a-z0-9][a-z0-9._-]*$/i.test(details.target!) || !validJobRoot(details.root!) || !validJobTemplate(details.namingTemplate!) || !validJobComponent(details.originalsFolder!))) throw new IntakeError(422,"Use a saved Windows server, an absolute local folder beneath a drive, the three template tokens once each, and a plain original-files subfolder name");
   return { kind: recordKind, name, details };
 }
 export async function saveDirectory(ctx: PluginContext, cfg: Config, companyId: string, userId: string, input: Record<string, unknown>) {
   access(cfg, companyId);
   if (!userId) throw new IntakeError(403, "A human operator must review this record");
   const value = validateDirectory(input);
+  if (value.kind === "file_root") resolveRemoteAccess(cfg,companyId,value.details.target!);
   const id = input.id === undefined ? randomUUID() : input.id;
   if (typeof id !== "string" || !uuid.test(id)) throw new IntakeError(422, "Record ID must be a UUID");
   const expected = input.id === undefined ? 0 : input.expectedVersion;
