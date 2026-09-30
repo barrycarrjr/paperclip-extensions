@@ -27,6 +27,7 @@ import { repairRecipes } from "./repair-catalog.js";
 import { supportReferences, referenceUrl } from "./support-references.js";
 import { resolveRemoteAccess } from "./remote-access.js";
 import { listAssets } from "./asset-inventory.js";
+import { printerHistory } from "./printer-support.js";
 
 let context: PluginContext | null = null;
 
@@ -301,6 +302,7 @@ const plugin = definePlugin({
       const knowledge = await ctx.db.query(`SELECT id,title,topic,kind,body,created_at FROM ${dbNamespace(ctx)}.support_knowledge WHERE company_id=$1 ORDER BY created_at DESC LIMIT 20`, [params.companyId]);
       return { diagnostics: diagnosticChecks, repairRecipes, references: supportReferences.map(item => ({ id: item.id, title: item.title, topic: item.topic, url: referenceUrl(item) })),
         assets: await listAssets(ctx, cfg, params.companyId as string),
+        printers: await printerHistory(ctx, cfg, params.companyId as string),
         fleet: await ctx.db.query(`SELECT f.id,f.status,f.created_at,
           count(*) FILTER (WHERE i.status='succeeded')::int AS assessed,
           count(*) FILTER (WHERE i.status='pending')::int AS pending,

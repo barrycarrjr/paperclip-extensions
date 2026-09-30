@@ -9,6 +9,7 @@ import { searchKnowledge, saveKnowledge, listDevices } from "./support-knowledge
 import { discoverDevices, discoveryPorts } from "./network-discovery.js";
 import { fleetTools } from "./fleet-tools.js";
 import { startFleetCheck, continueFleetCheck, getFleetCheck, stopFleetCheck } from "./fleet-health.js";
+import { checkPrinter } from "./printer-support.js";
 
 const scope = { caseId: { type: "string" }, target: { type: "string", description: "Exact resolved hostname returned by support_open_case" }, expectedReviewVersion: { type: "integer" } };
 const repair = { ...scope, script: { type: "string", maxLength: 16384 }, verificationScript: { type: "string", maxLength: 16384 },
@@ -16,6 +17,12 @@ const repair = { ...scope, script: { type: "string", maxLength: 16384 }, verific
 const repairRequired = Object.keys(repair);
 export const interactiveTools: NonNullable<PaperclipPluginManifestV1["tools"]> = [
   ...fleetTools,
+  { name: "support_check_printer", displayName: "Check a network printer directly", requiredUserPermission: "support:diagnose", writes: true, executionTimeoutMs: 30_000,
+    description: "Read a network printer's IPP status directly from the support host, without Windows credentials or an existing ticket. Use an exact IPv4 address inside a saved company discovery network. Default endpoint is /ipp/print on port 631; use the printer model's documented path when different. Reports device state/reasons, acceptance, queue count and supported marker levels, with observation dates and unavailable results. Sends only Get-Printer-Attributes; cannot print, cancel jobs, reboot or configure the device. TLS retains certificate validation. No SNMP community, passwords, arbitrary URLs or redirects. Combine with a Windows case printers diagnostic for driver/port/queue problems; confirmation is still required for repairs.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: {
+      address: { type: "string", description: "Exact printer IPv4 address inside the company network" }, networkId: { type: "string" }, path: { type: "string", maxLength: 200 },
+      port: { type: "integer", enum: [631, 443] }, tls: { type: "boolean", description: "Use trusted TLS; required for port 443" },
+    }, required: ["address"] } },
   { name: "support_discover_devices", displayName: "Discover office network devices", requiredUserPermission: "support:diagnose", executionTimeoutMs: 60_000,
     description: "Scan a saved company office IPv4 network live from the Paperclip host through its existing network/VPN. Use when asked to discover devices, scan the office network, or look for visible network issues. No ticket or named computer is required. Checks ping and common Windows, web, SSH and printer TCP ports; returns observed IPs, names, ports, timestamps and partial-scan limits. Omit networkId to use the sole saved range or list choices. A missing range needs setup under Support → Discover office devices; no separate monitoring plugin is required. Discovery is not a health check: investigate a returned remoteTarget using support_open_case and diagnostics before claiming a problem or healthy device. No credentials or repairs run.",
     parametersSchema: { type: "object", additionalProperties: false, properties: { networkId: { type: "string", description: "ID of one saved company discovery network" } } } },
@@ -59,7 +66,7 @@ export const interactiveTools: NonNullable<PaperclipPluginManifestV1["tools"]> =
   { name: "support_prepare_repair", displayName: "Prepare a known repair procedure", requiredUserPermission: "support:repair",
     description: "Build exact repair and verification scripts for a known procedure: start/restart_service, restart_spooler, flush_dns, refresh_computer_policy, restart_print_job or cancel_print_job. Does not run or approve anything. Inspect the case findings first, explain disruption and recovery, then use the existing inline-confirmed or actively delegated repair tool. Print jobs require their observed submission timestamp to reject recycled IDs.",
     parametersSchema: { type: "object", additionalProperties: false, properties: { caseId: scope.caseId, operation: { type: "string", enum: repairRecipes.map(item => item.id) }, options: {
-      type: "object", additionalProperties: false, properties: { service: { type: "string" }, testTarget: { type: "string" }, printer: { type: "string" }, jobId: { type: "integer", minimum: 1 }, submittedAtUtc: { type: "string" } },
+      type: "object", additionalProperties: false, properties: { service: { type: "string" }, testTarget: { type: "string" }, printer: { type: "string" }, jobId: { type: "integer", minimum: 1 }, submittedAtUtc: { type: "string" }, expectedPortName: { type: "string" }, newPortName: { type: "string" } },
     } }, required: ["caseId", "operation"] } },
   { name: "support_search_references", displayName: "Find official IT documentation", requiredUserPermission: "support:diagnose",
     description: "Find official technical references for Group Policy, Active Directory, Windows, networking, printers, event logs, updates, Hyper-V and security. Answers reference questions without opening a computer case. Searches a curated directory locally; does not search the entire live web. Read the selected article with support_read_reference and cite its URL. Keep company names, hostnames and credentials out of public searches.",
@@ -93,6 +100,7 @@ export function registerInteractiveTools(ctx: PluginContext, config: () => Promi
           : tool.name === "support_get_fleet_check" ? getFleetCheck(ctx, cfg, run, body)
           : tool.name === "support_stop_fleet_check" ? stopFleetCheck(ctx, cfg, run, body)
           : tool.name === "support_discover_devices" ? discoverDevices(ctx, cfg, run, body)
+          : tool.name === "support_check_printer" ? checkPrinter(ctx, cfg, run, body)
           : tool.name === "support_diagnose_case" ? diagnoseInteractiveCase(ctx, cfg, run, body)
           : tool.name === "support_delegate_case" ? delegateInteractiveCase(ctx, cfg, run, body)
           : tool.name === "support_run_repair" ? runInteractiveRepair(ctx, cfg, run, body, false)
@@ -102,6 +110,7 @@ export function registerInteractiveTools(ctx: PluginContext, config: () => Promi
           : tool.name === "support_list_capabilities" ? { diagnostics: diagnosticChecks, repairRecipes,
             discovery: { tool: "support_discover_devices", ports: discoveryPorts, limits: "One saved company IPv4 network, /24 to /32, 30 seconds per scan. Reachability is not health." },
             fleetHealth: { tools: fleetTools.map(item => item.name), instruction: "Start a durable fleet check for office-wide health questions; continue one permitted computer at a time. Repairs remain separate." },
+            printers: { tool: "support_check_printer", instruction: "Direct read-only IPP printer status in a saved company network; Windows queue/driver/port diagnostics use a case. Port changes include captured prior settings and a separately confirmed recovery repair. SNMP, vendor APIs, hardware resets and physical output verification are not provided." },
             knowledge: ["support_search_references", "support_read_reference", "support_search_knowledge", "support_save_knowledge", "support_list_devices"],
             instruction: "Diagnose first. Recipes only prepare scripts; execution still needs repair permission and inline consent or active case delegation. Arbitrary PowerShell repairs remain available through the existing confirmed repair tool. Missing capabilities must be reported, not silently installed. Company-wide directory or GPO changes need explicit explanation of their wider effect; single-computer delegation is not permission to change other devices." }
           : tool.name === "support_prepare_repair" ? prepareRepair(ctx, cfg, run, body)

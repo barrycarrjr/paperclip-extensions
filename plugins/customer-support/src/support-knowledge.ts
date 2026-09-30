@@ -5,6 +5,7 @@ import { ns, person, ownedCase } from "./interactive-support.js";
 import { resolveRemoteAccess } from "./remote-access.js";
 import { discoveryHistory } from "./network-discovery.js";
 import { listAssets } from "./asset-inventory.js";
+import { printerHistory } from "./printer-support.js";
 
 function access(cfg: Config, run: ToolRunContext) {
   const actor = person(run);
@@ -52,5 +53,6 @@ export async function listDevices(ctx: PluginContext, cfg: Config, run: ToolRunC
   return { devices: rows.filter(row => { try { resolveRemoteAccess(cfg, actor.companyId, row.target_address); return true; } catch { return false; } }),
     discovery: await discoveryHistory(ctx, cfg, actor.companyId),
     assets: await listAssets(ctx, cfg, actor.companyId),
+    printers: await printerHistory(ctx, cfg, actor.companyId),
     instruction: "Previous inventory and discovery observations, not a live scan. Show observation dates; use support_discover_devices to refresh reachability and case diagnostics for health. An inventory entry does not grant access." };
 }

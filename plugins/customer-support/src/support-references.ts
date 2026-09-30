@@ -10,6 +10,8 @@ export const supportReferences = [
   { id: "dns-troubleshooting", topic: "network", title: "DNS troubleshooting and data collection", tags: "dns resolver name resolution lookup", path: "windows-server/networking/dns/troubleshoot/troubleshoot-dns-data-collection" },
   { id: "network-cmdlets", topic: "network", title: "NetTCPIP PowerShell module", tags: "ip address gateway route tcp test connection", path: "powershell/module/nettcpip/" },
   { id: "printing-cmdlets", topic: "printers", title: "Print Management PowerShell module", tags: "printer scanner print spooler queue jobs drivers ports", path: "powershell/module/printmanagement/" },
+  { id: "printer-configuration", topic: "printers", title: "Set-Printer queue configuration", tags: "printer port driver queue configuration recovery restore", path: "powershell/module/printmanagement/set-printer" },
+  { id: "printer-ports", topic: "printers", title: "Get-PrinterPort reference", tags: "printer address tcp ip port lpr snmp queue", path: "powershell/module/printmanagement/get-printerport" },
   { id: "event-log", topic: "events", title: "Get-WinEvent reference", tags: "crash logs error warning event viewer application system", path: "powershell/module/microsoft.powershell.diagnostics/get-winevent" },
   { id: "windows-health", topic: "updates", title: "Windows release health and supported versions", tags: "updates kb patch known issues build version", path: "windows/release-health/" },
   { id: "system-file-checker", topic: "windows", title: "System File Checker command reference", tags: "sfc corruption repair integrity system files", path: "windows-server/administration/windows-commands/sfc" },

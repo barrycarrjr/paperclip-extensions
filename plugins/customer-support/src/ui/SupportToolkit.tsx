@@ -8,6 +8,7 @@ interface Toolkit {
   knowledge: { id: string; title: string; topic: string; kind: string; body: string; created_at: string }[];
   assets: { id: string; identity_strength: string; identity_conflict: boolean; last_seen_at: string; aliases: { address: string; source: string }[]; snapshot: { os?: string; model?: string } }[];
   fleet: { id: string; status: string; created_at: string; assessed: number; pending: number; unavailable: number; skipped: number; attention: number }[];
+  printers: { networkId: string; address: string; path: string; port: number; tls: boolean; status: string; state: string; reasons: string[]; observedAt: string; acceptingJobs: boolean | null; queuedJobs: number | null }[];
 }
 export function SupportToolkit({ companyId }: { companyId: string }) {
   const toolkit = usePluginData<Toolkit>("support.toolkit", { companyId });
@@ -31,6 +32,10 @@ export function SupportToolkit({ companyId }: { companyId: string }) {
       </section>
       <section><h3 className="font-semibold">Diagnostics</h3><p className="text-muted-foreground">Available checks depend on the Windows version and installed modules. Inventory identifies them.</p>
         <div className="mt-2 grid gap-2 md:grid-cols-2">{toolkit.data.diagnostics.map(item => <div key={item.id} className="rounded-md border border-border p-2"><strong>{item.title}</strong><p className="text-muted-foreground">{item.description}</p></div>)}</div>
+      </section>
+      <section><h3 className="font-semibold">Network printer observations</h3><p className="text-muted-foreground">Ask Clippy to check a printer's IP address. Direct IPP status is distinct from Windows queue status. Unavailable or missing data does not establish a healthy device; confirm physical output with a person.</p>
+        {!toolkit.data.printers?.length && <p className="mt-2">No direct printer checks yet.</p>}
+        {toolkit.data.printers?.map(item => <div key={`${item.networkId}:${item.address}:${item.path}:${item.port}:${item.tls}`} className="mt-2 rounded-md border border-border p-2"><strong>{item.address}</strong> · {item.status} · {item.state}<p>Reasons: {item.reasons.join(", ") || "Not reported"} · accepting jobs: {item.acceptingJobs === null ? "Unknown" : item.acceptingJobs ? "Yes" : "No"} · queued jobs: {item.queuedJobs ?? "Unknown"}</p><p className="text-muted-foreground">Observed {new Date(item.observedAt).toLocaleString()}</p></div>)}
       </section>
       <section><h3 className="font-semibold">Repair procedures</h3><p className="text-muted-foreground">Clippy prepares a procedure for review, then runs and verifies it after authorization. Custom PowerShell repairs use the same workflow.</p>
         <ul className="mt-2 space-y-1">{toolkit.data.repairRecipes.map(item => <li key={item.id}><strong>{item.title}</strong> — {item.disruption}</li>)}</ul>

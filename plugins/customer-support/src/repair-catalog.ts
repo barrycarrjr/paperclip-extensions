@@ -1,6 +1,6 @@
 import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { IntakeError, type Config } from "./routing.js";
-import { ownedCase, resolveInteractiveTarget } from "./interactive-support.js";
+import { ns, ownedCase, resolveInteractiveTarget } from "./interactive-support.js";
 import { diagnosticScript } from "./diagnostic-catalog.js";
 
 export const repairRecipes = [
@@ -11,6 +11,7 @@ export const repairRecipes = [
   { id: "refresh_computer_policy", title: "Refresh computer Group Policy", options: [], disruption: "Reapplies existing computer policy. Policy extensions may change software/settings. No restart/logoff is requested." },
   { id: "restart_print_job", title: "Restart one print job", options: ["printer", "jobId", "submittedAtUtc"], disruption: "Can produce duplicate printed pages. Requires the exact queue, job ID and observed submission timestamp." },
   { id: "cancel_print_job", title: "Cancel one print job", options: ["printer", "jobId", "submittedAtUtc"], disruption: "Cancels that document irreversibly. It must be resubmitted from the originating application." },
+  { id: "change_printer_port", title: "Reconnect a queue to an existing printer port", options: ["printer", "expectedPortName", "newPortName"], disruption: "Routes subsequent printing from this exact queue through the selected existing port. Requires a fresh queue diagnostic, an empty queue and its unchanged previous port. Cannot create a port, install a driver or delete jobs." },
 ] as const;
 
 function validatedOptions(operation: string, input: unknown) {
@@ -53,6 +54,11 @@ export function buildRepairRecipe(operation: string, input: unknown) {
     script = "$result = & gpupdate.exe /target:computer /force /wait:30 2>&1\nif ($LASTEXITCODE -ne 0) { throw 'Policy refresh did not report success' }";
     verification = "$result = & gpresult.exe /scope computer /r 2>&1\nif ($LASTEXITCODE -ne 0) { throw 'Resultant policy could not be read' }";
     recovery = "This reapplies existing policy and may change settings through policy extensions. Restore affected settings through an approved GPO/configuration backup when required. No new GPO or forced restart is created. Successful gpresult is not proof that a specific setting applied; inspect resultant policy afterward.";
+  } else if (operation === "change_printer_port") {
+    if (values.expectedPortName === values.newPortName) throw new IntakeError(422, "The selected printer port is already the expected port");
+    script = "$queue = @(Get-Printer | Where-Object { $_.Name -eq [string]$SupportOptions.printer })\nif ($queue.Count -ne 1 -or $queue[0].PortName -ne [string]$SupportOptions.expectedPortName) { throw 'Printer port changed; inspect the queue again' }\nif ($queue[0].JobCount -ne 0) { throw 'Printer queue must be empty before changing its port' }\n$port = @(Get-PrinterPort | Where-Object { $_.Name -eq [string]$SupportOptions.newPortName })\nif ($port.Count -ne 1) { throw 'Exact existing port was not found' }\nSet-Printer -InputObject $queue[0] -PortName $port[0].Name -ErrorAction Stop";
+    verification = "$queue = @(Get-Printer | Where-Object { $_.Name -eq [string]$SupportOptions.printer })\nif ($queue.Count -ne 1 -or $queue[0].PortName -ne [string]$SupportOptions.newPortName) { throw 'Printer port does not match the approved destination' }";
+    recovery = "The previous port is captured from a recent diagnostic in the prepared recovery object. Recheck the queue and prior/new port, then confirm the recovery as a separate repair if needed. It refuses restoration when the current port changed or jobs are queued. This verifies configuration only; check physical output with the person. Existing ports/drivers/jobs are retained. Printing already routed or produced cannot be undone.";
   } else {
     script = `${jobLookup}\nif (-not $job -or $job.SubmittedTime.ToUniversalTime().ToString('o') -ne [string]$SupportOptions.submittedAtUtc) { throw 'Print job identity changed; inspect the queue again' }\n${operation === "cancel_print_job" ? "Remove" : "Restart"}-PrintJob -PrinterName $queue.Name -ID $job.ID -ErrorAction Stop`;
     verification = `${jobLookup}\n` + (operation === "cancel_print_job"
@@ -74,7 +80,21 @@ export async function prepareRepair(ctx: PluginContext, cfg: Config, run: ToolRu
   const options = { ...((input.options ?? {}) as Record<string, unknown>) };
   if (input.operation === "flush_dns") options.testTarget = resolveInteractiveTarget(cfg, run.companyId, options.testTarget);
   const prepared = buildRepairRecipe(input.operation as string, options);
+  let recoveryRepair: Record<string, unknown> | undefined;
+  let priorState: Record<string, unknown> | undefined;
+  if (input.operation === "change_printer_port") {
+    const [diagnostic] = await ctx.db.query<{ result: { findings?: { printers?: { Name: string; PortName: string; DriverName: string; JobCount: number }[]; ports?: { Name: string; PrinterHostAddress?: string }[] } } }>(
+      `SELECT result FROM ${ns(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 AND check_kind='printers' AND created_at>now()-interval '30 minutes' ORDER BY created_at DESC LIMIT 1`, [run.companyId, supportCase.id]);
+    const findings = diagnostic?.result?.findings;
+    const queue = findings?.printers?.find(item => item.Name === options.printer);
+    const destination = findings?.ports?.find(item => item.Name === options.newPortName);
+    if (!queue || queue.PortName !== options.expectedPortName || !destination || queue.JobCount !== 0) throw new IntakeError(409, "Run a fresh printers diagnostic for the exact empty queue and choose its observed current port and an existing destination port");
+    const inverse = buildRepairRecipe("change_printer_port", { printer: queue.Name, expectedPortName: options.newPortName, newPortName: queue.PortName });
+    priorState = { printer: queue.Name, portName: queue.PortName, driverName: queue.DriverName, destinationPort: destination.Name, destinationAddress: destination.PrinterHostAddress ?? null };
+    recoveryRepair = { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version,
+      script: inverse.script, verificationScript: inverse.verificationScript, recoveryNotes: "Restore the previously observed port only after reviewing the current queue. Retains both ports, driver and jobs; cannot undo pages already printed. Recheck physical output afterward.", expectedEffect: "Restore the exact printer queue's previously observed port" };
+  }
   const { recipe, disruption, ...parameters } = prepared;
-  return { operation: recipe.id, disruption, repair: { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version, ...parameters },
+  return { operation: recipe.id, disruption, ...(priorState ? { priorState, recoveryRepair } : {}), repair: { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version, ...parameters },
     instruction: "Prepared only; nothing was executed or approved. Confirm diagnosis and applicability, explain disruption/recovery, then pass the exact repair object to support_run_repair or the actively delegated repair tool. The host still checks consent. Verification covers the stated check, not every possible cause." };
 }
