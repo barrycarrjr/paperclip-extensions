@@ -14,6 +14,7 @@ import {
   wrapSlackError,
 } from "./slackClient.js";
 import { isCompanyAllowed } from "./companyAccess.js";
+import { consumeDelivery, deliveryEvent, selectSupportAccount } from "../../../lib/support-delivery.js";
 
 type ResolveResult =
   | { ok: true; resolved: ResolvedWorkspace }
@@ -61,6 +62,25 @@ const plugin = definePlugin({
     const allowMutations = !!rawConfig.allowMutations;
     const allowReadHistory = !!rawConfig.allowReadHistory;
     const workspaces: ConfigWorkspace[] = rawConfig.workspaces ?? [];
+    const companies = new Set(workspaces.filter(w => w.supportChannels?.length).flatMap(w => w.allowedCompanies ?? []));
+    for (const companyId of companies) {
+      const handle = async (event: Parameters<typeof consumeDelivery>[2]) => consumeDelivery(ctx,"slack-tools",event,async request => {
+        const latest = (await ctx.config.get()) as InstanceConfig;
+        selectSupportAccount("slack-tools",!!latest.allowMutations,latest.workspaces ?? [],request);
+        const resolved = await getSlackClient(ctx,{ companyId: request.companyId,agentId: "",runId: request.deliveryId,projectId: "" },"support-delivery",request.account,false,true);
+        if (!resolved.workspace.supportChannels?.includes(request.destination.channelId!)) throw new Error("Support channel is not enabled");
+        const auth = await resolved.client.auth.test();
+        if (auth.team_id !== request.destination.workspaceId) throw new Error("Slack workspace mismatch");
+        return async () => {
+          const result = await resolved.client.chat.postMessage({ channel: request.destination.channelId!,thread_ts: request.destination.threadTs,text: request.body,
+            unfurl_links: false,unfurl_media: false });
+          if (!result.ts || result.channel !== request.destination.channelId) throw new Error("Slack receipt is incomplete");
+          return `${result.channel}:${result.ts}`;
+        };
+      });
+      if (companyId === "*") ctx.events.on(deliveryEvent,handle);
+      else ctx.events.on(deliveryEvent,{ companyId },handle);
+    }
 
     if (workspaces.length === 0) {
       ctx.logger.warn(

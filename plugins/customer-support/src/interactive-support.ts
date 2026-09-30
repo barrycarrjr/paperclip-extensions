@@ -17,7 +17,7 @@ export function ns(ctx: PluginContext) {
 }
 export function person(run: ToolRunContext) {
   if (!run.userId || !run.chatSessionId || !uuid.test(run.companyId)) throw new IntakeError(403, "Open Support Desk in your company's Clippy conversation");
-  if (!["support:diagnose", "support:repair"].includes(run.userPermission ?? "")) throw new IntakeError(403, "The host must verify your support permission; update Paperclip if needed");
+  if (!["support:diagnose", "support:repair", "support:respond"].includes(run.userPermission ?? "")) throw new IntakeError(403, "The host must verify your support permission; update Paperclip if needed");
   return { userId: run.userId, chatSessionId: run.chatSessionId, companyId: run.companyId };
 }
 function required(value: unknown, name: string, max = 1000) {

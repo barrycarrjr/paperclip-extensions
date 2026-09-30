@@ -1,6 +1,6 @@
 # Support Desk
 
-A reusable Paperclip support plugin. It stores normalized support conversations per company, accepts authenticated intake from an integration agent or board operator, and shows cases and messages on a company-scoped Paperclip page. A board operator can create a reviewed Paperclip issue for local non-software work or a reviewed external escalation draft for software supplied by a vendor. A case can now propose, approve, run, and verify a PowerShell repair on an exact configured Windows target. External replies and vendor submissions remain manual.
+A reusable Paperclip support plugin. It stores normalized support conversations per company, accepts authenticated intake from an integration agent or board operator, and shows cases and messages on a company-scoped Paperclip page. A board operator can create a reviewed Paperclip issue for local non-software work or a reviewed external escalation draft for software supplied by a vendor. A case can propose, approve, run, and verify a PowerShell repair on a configured Windows target. Reviewed Slack replies and vendor emails can be confirmed and sent through configured channel plugins; other help desk replies and Jira form submissions remain manual.
 
 ## Recent changes
 
@@ -110,6 +110,19 @@ For a read-only transport test, run `Get-SupportIdentity.ps1` through the same r
 ```powershell
 .\scripts\Invoke-SupportRemoteScript.ps1 -Target workstation.example.local -Company 'Company Alpha' -CaseReference 'CASE-EXAMPLE' -ScriptPath .\scripts\Get-SupportIdentity.ps1 -Transport Auto -Credential (Get-Credential -UserName 'EXAMPLE\support-agent' -Message 'Account for the read-only connection test')
 ```
+
+## Reviewed replies and vendor emails
+
+Direct computer support works without a communication plugin. External replies need an installed, configured **Slack Tools** or **Email Tools** plugin. Help Scout replies, replies to email-source cases, WHMCS replies and automatic Jira form submission are future adapters; use their normal intake interface today.
+
+1. Grant authorized people **Approve support replies and vendor escalations** (`support:respond`) under company access. Repair permission or emergency delegation does not grant message approval.
+2. For Slack, enable mutations in Slack Tools, allow the case's company on the workspace, and add the exact channel ID to **Support Desk reply channels** (`supportChannels`). On the Support Desk connection, choose `slack-tools` and set **Reply workspace key** (`outboundAccount`) to that workspace's key. The bot needs `chat:write` and access to the channel. The original workspace/channel/thread is pinned to the case; a legacy case must be synced against a verified workspace before replying.
+3. For vendor email, enable sending in Email Tools, allow the company on the mailbox, and add the exact vendor email to **Support Desk vendor recipients** (`supportRecipients`). Set the software product route's **Vendor email mailbox key** (`outboundAccount`) to that mailbox key. Use the vendor's public support address. Existing channel credentials remain in their own plugins. Restart Email Tools after adding/removing company access so its event subscriptions use the new company list.
+4. Open a case, use **Replies and vendor emails**, write the message and save a draft. Review its destination, subject and complete body, then click **Approve and send this exact message**. Refresh the receipt. Clippy can do the same with `support_prepare_message`, `support_send_message`, `support_get_deliveries` and `support_prepare_message_retry`; the send tool requires inline confirmation of the complete saved message.
+
+Drafts are immutable and tied to the case review. Changing the case or route requires a new draft. Approval lasts ten minutes. `pending` means queued, `sent` means the provider accepted it (not that someone read it), `not_sent` means the connector did not start a provider send, and `unknown` means receipt inspection is required. Only `not_sent` can prepare a retry draft with a new ID and fresh confirmation. A timeout or restart never automatically repeats a claimed provider call. Provider receipts are reconciled every minute using the same delivery ID. This workflow does not automatically resolve a case or mark a separate manual escalation record submitted.
+
+The common delivery contract is in `lib/support-delivery.ts`. Host-authenticated plugin events carry approved content; connector ledgers store only company/ID/hash/status/receipt metadata. Each connector rechecks its company ACL and exact opted-in destination before sending. Empty destination lists disable this integration. Obvious credentials are rejected, but operators must still review content for other private information. Do not copy raw support threads into a public escalation.
 
 ## Direct support in Clippy
 

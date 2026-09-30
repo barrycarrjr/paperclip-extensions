@@ -6,6 +6,7 @@ export interface Connection {
   externalAccountId: string;
   ingestAgentId: string;
   deliveryPluginId?: string;
+  outboundAccount?: string;
   botTokenRef?: string;
   pollingEnabled?: boolean;
   allowedCompanies: string[];
@@ -42,6 +43,7 @@ export interface SoftwareRoute {
   productName: string;
   destinationKind: "email" | "jira_form";
   destination: string;
+  outboundAccount?: string;
 }
 
 export interface IncomingMessage {

@@ -14,7 +14,7 @@ import { getSlackClient, __resetClientCacheForTests } from "./slackClient.js";
  */
 
 const WORKSPACE = {
-  key: "carr-rock",
+  key: "example-workspace",
   botTokenRef: "secret-uuid-bot",
   userTokenRef: "secret-uuid-user",
   allowedCompanies: ["company-1"],
@@ -23,7 +23,7 @@ const WORKSPACE = {
 function makeCtx(tokenValue: { current: string }) {
   return {
     config: {
-      get: async () => ({ workspaces: [WORKSPACE], defaultWorkspace: "carr-rock" }),
+      get: async () => ({ workspaces: [WORKSPACE], defaultWorkspace: "example-workspace" }),
     },
     secrets: {
       // Stands in for the secret store: same reference, different value after
@@ -41,12 +41,19 @@ beforeEach(() => {
 });
 
 describe("getSlackClient token caching", () => {
+  it("keeps support delivery's single-attempt client separate from ordinary retrying tools",async () => {
+    const ctx = makeCtx({ current: "example-token" });
+    const normal = await getSlackClient(ctx,runCtx,"slack_list_channels","example-workspace");
+    const support = await getSlackClient(ctx,runCtx,"support-delivery","example-workspace",false,true);
+    assert.notEqual(normal.client,support.client);
+    assert.equal(support.client,(await getSlackClient(ctx,runCtx,"support-delivery","example-workspace",false,true)).client);
+  });
   it("reuses the same client while the token is unchanged", async () => {
     const token = { current: "xoxb-original" };
     const ctx = makeCtx(token);
 
-    const first = await getSlackClient(ctx, runCtx, "slack_list_channels", "carr-rock");
-    const second = await getSlackClient(ctx, runCtx, "slack_list_channels", "carr-rock");
+    const first = await getSlackClient(ctx, runCtx, "slack_list_channels", "example-workspace");
+    const second = await getSlackClient(ctx, runCtx, "slack_list_channels", "example-workspace");
 
     assert.equal(first.client, second.client, "should not rebuild for an unchanged token");
   });
@@ -55,12 +62,12 @@ describe("getSlackClient token caching", () => {
     const token = { current: "xoxb-original" };
     const ctx = makeCtx(token);
 
-    const before = await getSlackClient(ctx, runCtx, "slack_list_channels", "carr-rock");
+    const before = await getSlackClient(ctx, runCtx, "slack_list_channels", "example-workspace");
 
     // The operator rotates the secret. Reference identical, value new.
     token.current = "xoxb-rotated";
 
-    const after = await getSlackClient(ctx, runCtx, "slack_list_channels", "carr-rock");
+    const after = await getSlackClient(ctx, runCtx, "slack_list_channels", "example-workspace");
 
     assert.notEqual(
       before.client,
@@ -73,8 +80,8 @@ describe("getSlackClient token caching", () => {
     const token = { current: "shared-value" };
     const ctx = makeCtx(token);
 
-    const bot = await getSlackClient(ctx, runCtx, "slack_list_channels", "carr-rock", false);
-    const user = await getSlackClient(ctx, runCtx, "slack_search_messages", "carr-rock", true);
+    const bot = await getSlackClient(ctx, runCtx, "slack_list_channels", "example-workspace", false);
+    const user = await getSlackClient(ctx, runCtx, "slack_search_messages", "example-workspace", true);
 
     assert.notEqual(bot.client, user.client, "bot and user identities must not share a client");
   });
@@ -84,8 +91,8 @@ describe("getSlackClient token caching", () => {
     const ctx = makeCtx({ ...token });
     const otherRun = { ...(runCtx as object), companyId: "company-1" } as never;
 
-    const a = await getSlackClient(ctx, runCtx, "slack_list_channels", "carr-rock");
-    const b = await getSlackClient(ctx, otherRun, "slack_list_channels", "carr-rock");
+    const a = await getSlackClient(ctx, runCtx, "slack_list_channels", "example-workspace");
+    const b = await getSlackClient(ctx, otherRun, "slack_list_channels", "example-workspace");
 
     // Same company here, so this one SHOULD be shared — the guard is that the
     // cache key includes companyId at all, covered by the separation above.

@@ -463,3 +463,8 @@ per tool. Setup-instruction rewrite to match.
 `0.1.0` — initial release. send/edit/delete/lookup/list/get; per-workspace
 `allowedCompanies`; bot + optional user token; defaultDmTarget /
 defaultChannel.
+### Support Desk replies
+
+Support Desk can send a reviewed, person-confirmed reply in the original Slack thread through this plugin. Enable mutations, assign the company to the workspace, and add exact channel IDs under **Support Desk reply channels** (`supportChannels`). Set that workspace key as the Support Desk connection's outbound account. An empty list disables support replies. Existing workspace credentials are reused; they are not copied into Support Desk. The bot needs channel access and `chat:write`.
+
+The connector checks the host-authenticated event, company ACL, channel opt-in, workspace identity and immutable message fingerprint. A durable metadata ledger prevents replaying a claimed delivery ID; this path disables the Slack client's automatic retries. A lost response is reported as unknown and must be inspected. Accepted message timestamps are receipts, not proof that someone read the message.

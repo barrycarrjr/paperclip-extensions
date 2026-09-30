@@ -1,5 +1,6 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { interactiveTools } from "./interactive-tools.js";
+import { outboundTools } from "./outbound-tools.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -28,10 +29,12 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.create",
     "issues.wakeup",
     "agent.tools.register",
+    "events.emit",
+    "events.subscribe",
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, {
+  tools: [...interactiveTools, ...outboundTools, {
     name: "support_propose_repair",
     displayName: "Propose support repair",
     description: "Propose an exact PowerShell repair and verification for an already reviewed IT or equipment case. This only creates a proposal; a board user must approve and start execution. Never place credentials or untrusted requester text into scripts.",
@@ -82,6 +85,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
             externalAccountId: { type: "string", title: "External workspace or account ID" },
             ingestAgentId: { type: "string", title: "Intake agent ID", description: "Only this agent may deliver messages for the connection. Board operators may also test intake." },
             deliveryPluginId: { type: "string", title: "Communication plugin ID", description: "Optional ID of the installed plugin that delivers this source to the Support Desk message API. Leave blank for built-in Slack polling." },
+            outboundAccount: { type: "string",title: "Reply workspace key",description: "For Slack replies, choose slack-tools as Communication plugin ID and enter its configured workspace key. That workspace must enable the exact reply channels." },
             botTokenRef: { type: "string", format: "secret-ref", title: "Slack bot token secret", description: "Optional Slack bot token for polling configured workflow channels. Never paste the token here." },
             pollingEnabled: { type: "boolean", default: false, title: "Poll Slack channels", description: "Start new-message intake from now. Requires the bot token and channel history scopes." },
             allowedCompanies: {
@@ -120,6 +124,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
             productName: { type: "string", title: "Product name" },
             destinationKind: { type: "string", enum: ["email", "jira_form"], title: "Intake channel" },
             destination: { type: "string", title: "Support email or Jira form URL" },
+            outboundAccount: { type: "string",title: "Vendor email mailbox key",description: "Optional Email Tools mailbox key for confirmed vendor email delivery. Enable this exact recipient in that mailbox. Jira form submission remains manual." },
           },
           required: ["id", "reportingCompanyId", "productName", "destinationKind", "destination"],
         },
@@ -174,6 +179,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     required: ["connections"],
   },
   apiRoutes: [
+    ...["draft","send","retry"].map(action => ({ routeKey: `cases.outbound.${action}`,method: "POST" as const,path: `/cases/:caseId/outbound/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "body" as const,key: "companyId" },requiredUserPermission: "support:respond" as const })),
     {
       routeKey: "messages.ingest",
       method: "POST",
@@ -292,6 +298,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
   ],
   jobs: [
+    { jobKey: "reconcile-support-deliveries",displayName: "Reconcile support delivery receipts",schedule: "* * * * *" },
     { jobKey: "poll-slack-workflows", displayName: "Poll Slack support workflows", schedule: "*/2 * * * *" },
   ],
   ui: {

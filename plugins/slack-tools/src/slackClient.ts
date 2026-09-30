@@ -11,6 +11,7 @@ export interface ConfigWorkspace {
   defaultDmTarget?: string;
   defaultChannel?: string;
   allowedCompanies?: string[];
+  supportChannels?: string[];
 }
 
 export interface InstanceConfig {
@@ -51,8 +52,8 @@ const clientCache = new Map<string, CachedClient>();
 export function __resetClientCacheForTests(): void {
   clientCache.clear();
 }
-const cacheKey = (companyId: string, workspaceKey: string, useUserToken: boolean) =>
-  `${companyId}::${workspaceKey.toLowerCase()}::${useUserToken ? "user" : "bot"}`;
+const cacheKey = (companyId: string, workspaceKey: string, useUserToken: boolean, singleAttempt: boolean) =>
+  `${companyId}::${workspaceKey.toLowerCase()}::${useUserToken ? "user" : "bot"}::${singleAttempt}`;
 
 export async function getSlackClient(
   ctx: PluginContext,
@@ -60,6 +61,7 @@ export async function getSlackClient(
   toolName: string,
   workspaceKeyParam: string | undefined,
   useUserToken = false,
+  singleAttempt = false,
 ): Promise<ResolvedWorkspace> {
   const config = (await ctx.config.get()) as InstanceConfig;
   const workspaces = config.workspaces ?? [];
@@ -119,7 +121,7 @@ export async function getSlackClient(
   // the credential; the WebClient already has the one it needs.
   const tokenDigest = createHash("sha256").update(token).digest("hex");
 
-  const ck = cacheKey(runCtx.companyId, workspace.key ?? requestedKey, useUserToken);
+  const ck = cacheKey(runCtx.companyId, workspace.key ?? requestedKey, useUserToken, singleAttempt);
   const cached = clientCache.get(ck);
   if (cached && cached.resolvedTokenRef === tokenRef && cached.tokenDigest === tokenDigest) {
     return {
@@ -131,7 +133,8 @@ export async function getSlackClient(
   }
 
   const opts: WebClientOptions = {
-    retryConfig: { retries: 3 },
+    retryConfig: { retries: singleAttempt ? 0 : 3 },
+    rejectRateLimitedCalls: singleAttempt,
   };
   const client = new WebClient(token, opts);
   const channelCache = new Map<string, { id: string; expiresAt: number }>();

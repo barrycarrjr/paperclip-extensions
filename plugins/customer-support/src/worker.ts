@@ -17,6 +17,9 @@ import { createEscalationDraft, markEscalationSubmitted, type EscalationDraftInp
 import { runRemoteIdentity } from "./remote-identity.js";
 import { decideSupportAction, executeSupportAction, listSupportActions, markInterruptedActionUnknown, proposeSupportAction } from "./support-actions.js";
 import { registerInteractiveTools } from "./interactive-tools.js";
+import { registerOutboundTools } from "./outbound-tools.js";
+import { listOutbound,prepareOutbound,sendOutbound,retryNotSent,recordDeliveryReceipt,reconcilePendingDeliveries } from "./support-outbound.js";
+import { pinSourceAccount } from "./source-origin.js";
 import { diagnosticChecks } from "./diagnostic-catalog.js";
 import { repairRecipes } from "./repair-catalog.js";
 import { supportReferences, referenceUrl } from "./support-references.js";
@@ -102,6 +105,7 @@ async function storeMessage(ctx: PluginContext, message: IncomingMessage, connec
   );
   const supportCase = cases[0];
   if (!supportCase) throw new Error("Support case was not found after insertion");
+  await pinSourceAccount(ctx,message.companyId,supportCase.id,message.externalAccountId);
   const inserted = await ctx.db.execute(
     `INSERT INTO ${ns}.support_messages
       (company_id, case_id, connection_id, external_route_id, external_conversation_id, external_message_id, author_kind, body, occurred_at, author_external_id, attachments)
@@ -146,6 +150,9 @@ async function syncStoredThread(ctx: PluginContext, connection: Connection, toke
   if (verifyWorkspace) {
     await verifySlackWorkspace(connection.externalAccountId, { token, fetch: (url, init) => ctx.http.fetch(url, init) });
   }
+  // The account is pinned before fetching the thread, including legacy cases
+  // with no new replies. Polling callers already verified the workspace.
+  await pinSourceAccount(ctx,thread.company_id,thread.id,connection.externalAccountId);
   const result = await syncSlackThread(connection, {
     companyId: thread.company_id,
     externalRouteId: thread.external_route_id,
@@ -190,6 +197,9 @@ const plugin = definePlugin({
   async setup(ctx) {
     context = ctx;
     registerInteractiveTools(ctx, () => config(ctx));
+    registerOutboundTools(ctx, () => config(ctx));
+    for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
+    ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));
     const proposeTool = manifest.tools?.find((tool) => tool.name === "support_propose_repair");
     if (!proposeTool) throw new Error("Support repair tool declaration is missing");
     ctx.tools.register("support_propose_repair", proposeTool, async (params, runCtx) => {
@@ -346,7 +356,8 @@ const plugin = definePlugin({
       );
       const actions = await listSupportActions(ctx, params.companyId as string, params.caseId);
       const diagnostics = await ctx.db.query(`SELECT check_kind,result,created_at FROM ${dbNamespace(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 ORDER BY created_at DESC LIMIT 20`, [params.companyId, params.caseId]);
-      return { supportCase: cases[0], messages, actions, diagnostics, linkedIssue: linked ? {
+      const outbound = await listOutbound(ctx,params.companyId as string,params.caseId);
+      return { supportCase: cases[0], messages, actions, diagnostics, outbound, linkedIssue: linked ? {
         id: linked.id, identifier: linked.identifier, title: linked.title, status: linked.status,
         assigneeAgentId: linked.assigneeAgentId, kind: links[0]!.issue_kind,
       } : null, escalation: escalations[0] ?? null };
@@ -354,7 +365,7 @@ const plugin = definePlugin({
   },
   async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
     if (!context) return { status: 503, body: { error: "Support Desk is starting" } };
-    if (input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
+    if (!input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
         input.routeKey !== "remote.identity.setup" &&
         input.routeKey !== "cases.issue.create" && input.routeKey !== "cases.review" &&
         input.routeKey !== "cases.sync" && input.routeKey !== "cases.remote.identity" && input.routeKey !== "cases.work.start" &&
@@ -363,6 +374,18 @@ const plugin = definePlugin({
       return { status: 404, body: { error: "Unknown route" } };
     }
     try {
+      if (["cases.outbound.draft","cases.outbound.send","cases.outbound.retry"].includes(input.routeKey)) {
+        if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:respond") throw new IntakeError(403,"A person with support reply permission is required");
+        const cfg = await config(context);
+        assertCompanyAccess(cfg,input.companyId);
+        const body = input.body as Record<string,unknown> | null;
+        if (!body || body.companyId !== input.companyId) throw new IntakeError(403,"Company mismatch");
+        const scope = { companyId: input.companyId,caseId: input.params.caseId,actorUserId: input.actor.userId };
+        const result = input.routeKey === "cases.outbound.draft" ? await prepareOutbound(context,cfg,{ ...scope,kind: body.kind,routeId: body.routeId,body: body.body,subject: body.subject,expectedReviewVersion: body.expectedReviewVersion })
+          : input.routeKey === "cases.outbound.retry" ? await retryNotSent(context,{ ...scope,deliveryId: body.deliveryId })
+          : await sendOutbound(context,cfg,{ ...scope,deliveryId: body.deliveryId,contentSha256: body.contentSha256 });
+        return { status: 200,body: result };
+      }
       if (input.routeKey === "remote.identity.setup") {
         if (input.actor.grantedPermission !== "support:diagnose") throw new IntakeError(403, "Paperclip must verify your diagnostic permission");
         if (input.actor.actorType !== "user" || !input.actor.userId) throw new IntakeError(403, "Board user required");

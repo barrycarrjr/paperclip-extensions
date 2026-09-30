@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useHostContext, usePluginData, type PluginPageProps, type PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { RemoteSetup } from "./RemoteSetup.js";
 import { SupportToolkit } from "./SupportToolkit.js";
+import { SupportMessages } from "./SupportMessages.js";
+import type { OutboundRow } from "../support-outbound.js";
 
 interface CaseRow {
   id: string;
@@ -26,6 +28,7 @@ interface CaseRow {
   symptom_recorded_at?: string | null;
 }
 interface Detail {
+  outbound: OutboundRow[];
   diagnostics: { check_kind: string; result: unknown; created_at: string }[];
   supportCase: CaseRow;
   messages: { id: string; author_kind: string; author_external_id: string | null; body: string; occurred_at: string; attachments: { id: string; name: string; mimeType?: string; permalink?: string }[] }[];
@@ -425,6 +428,7 @@ export function SupportPage(_props: PluginPageProps) {
         {caseId && detail.error && <p role="alert" className="text-sm text-destructive">Could not load conversation: {String(detail.error)}</p>}
         {caseId && !detail.loading && !detail.error && !selectedDetail && <p className="text-sm text-muted-foreground">Case not found.</p>}
         {selectedDetail && <div className="space-y-4">
+          {companyId && <SupportMessages key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} reviewVersion={selectedDetail.supportCase.review_version ?? 0} source={selectedDetail.supportCase.source} software={selectedDetail.supportCase.service_domain === "software"} routes={softwareRoutes.data ?? []} rows={selectedDetail.outbound ?? []} onChanged={() => detail.refresh()} />}
           <div><h2 className="text-lg font-semibold">{selectedDetail.supportCase.title}</h2>
             {selectedDetail.supportCase.external_url && <a href={selectedDetail.supportCase.external_url} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Open in source</a>}
           </div>
