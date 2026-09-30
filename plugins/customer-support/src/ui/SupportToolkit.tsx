@@ -6,6 +6,8 @@ interface Toolkit {
   references: { id: string; title: string; topic: string; url: string }[];
   devices: { target_address: string; last_seen_at: string; snapshot: { os?: string; model?: string; build?: string } }[];
   knowledge: { id: string; title: string; topic: string; kind: string; body: string; created_at: string }[];
+  assets: { id: string; identity_strength: string; identity_conflict: boolean; last_seen_at: string; aliases: { address: string; source: string }[]; snapshot: { os?: string; model?: string } }[];
+  fleet: { id: string; status: string; created_at: string; assessed: number; pending: number; unavailable: number; skipped: number; attention: number }[];
 }
 export function SupportToolkit({ companyId }: { companyId: string }) {
   const toolkit = usePluginData<Toolkit>("support.toolkit", { companyId });
@@ -16,6 +18,17 @@ export function SupportToolkit({ companyId }: { companyId: string }) {
     {toolkit.loading && <p className="text-sm text-muted-foreground">Loading support toolkit…</p>}
     {toolkit.error && <p role="alert" className="text-sm text-destructive">Could not load support toolkit: {String(toolkit.error)}</p>}
     {!toolkit.loading && !toolkit.error && toolkit.data && <div className="space-y-4 text-sm">
+      <section><h3 className="font-semibold">Office health checks</h3><p className="text-muted-foreground">Ask Clippy to check the office for issues. It investigates permitted Windows devices in steps, preserving progress. Skipped devices and missing checks have not been assessed.</p>
+        {!toolkit.data.fleet?.length && <p className="mt-2">No fleet checks yet.</p>}
+        {toolkit.data.fleet?.map(item => <p key={item.id} className="mt-2"><strong>{item.status}</strong> · {item.assessed} snapshots · {item.attention} need investigation · {item.pending} pending · {item.unavailable} failed/interrupted · {item.skipped} skipped · {new Date(item.created_at).toLocaleString()}</p>)}
+      </section>
+      <section><h3 className="font-semibold">Authenticated device inventory</h3><p className="text-muted-foreground">Stable IDs come from authenticated Windows inventory. Reported aliases are historical observations, not access grants or proof of current ownership. Duplicate hardware identities or renamed computers require review.</p>
+        {!toolkit.data.assets?.length && <p className="mt-2">Refresh inventory to establish device identities.</p>}
+        {toolkit.data.assets?.map(item => <details key={item.id} className="mt-2 rounded-md border border-border p-2"><summary className="cursor-pointer">{item.aliases.find(alias => alias.source === "authenticated_target")?.address ?? item.id} · {item.snapshot.os ?? "OS unknown"} · {item.identity_conflict ? "Identity needs review" : item.identity_strength === "windows_hardware" ? "Windows and hardware identity" : "Target only"}</summary>
+          <p className="mt-2">Asset ID: {item.id} · observed {new Date(item.last_seen_at).toLocaleString()}</p>
+          <ul className="mt-2">{item.aliases.map(alias => <li key={alias.address}>{alias.address} · {alias.source.replaceAll("_", " ")}</li>)}</ul>
+        </details>)}
+      </section>
       <section><h3 className="font-semibold">Diagnostics</h3><p className="text-muted-foreground">Available checks depend on the Windows version and installed modules. Inventory identifies them.</p>
         <div className="mt-2 grid gap-2 md:grid-cols-2">{toolkit.data.diagnostics.map(item => <div key={item.id} className="rounded-md border border-border p-2"><strong>{item.title}</strong><p className="text-muted-foreground">{item.description}</p></div>)}</div>
       </section>

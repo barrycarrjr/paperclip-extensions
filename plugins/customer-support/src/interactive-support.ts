@@ -9,6 +9,7 @@ import { resolveRemoteAccess } from "./remote-access.js";
 import { runRemoteActionScript, runRemoteActionScriptUnlocked } from "./remote-action.js";
 import { decideSupportAction, executeSupportAction, listSupportActions, proposeSupportAction } from "./support-actions.js";
 import { diagnosticChecks, diagnosticScript, validateDiagnosticOptions } from "./diagnostic-catalog.js";
+import { rememberAsset } from "./asset-inventory.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function ns(ctx: PluginContext) {
@@ -118,9 +119,16 @@ export async function diagnoseInteractiveCase(ctx: PluginContext, cfg: Config, r
     const file = diagnosticChecks.find(item => item.id === check)?.script;
     if (!file) throw new IntakeError(422, "Choose a check from support_list_capabilities");
     const installed = new URL(`./scripts/${file}`, import.meta.url);
-    const script = diagnosticScript(await readFile(existsSync(installed) ? installed : new URL(`../scripts/${file}`, import.meta.url), "utf8"), options);
+    let source = await readFile(existsSync(installed) ? installed : new URL(`../scripts/${file}`, import.meta.url), "utf8");
+    if (check === "health") {
+      const inventory = new URL("./scripts/Get-SupportInventory.ps1", import.meta.url);
+      const inventorySource = await readFile(existsSync(inventory) ? inventory : new URL("../scripts/Get-SupportInventory.ps1", import.meta.url), "utf8");
+      // A callback preserves PowerShell $'/$& tokens as literal script text.
+      source = source.replace("# SUPPORT_INVENTORY_SCRIPT", () => inventorySource);
+    }
+    const script = diagnosticScript(source, options);
     const receipt = await runner(ctx, resolveRemoteAccess(cfg, actor.companyId, supportCase.target_address), supportCase.id, script, true);
-    if (receipt.status !== "succeeded" || receipt.exitCode !== 0 || !receipt.output) throw new IntakeError(502, "Diagnostic did not complete; no findings can be inferred");
+    if (receipt.status !== "succeeded" || receipt.exitCode !== 0 || !receipt.output) throw new IntakeError(502, `Diagnostic did not complete${receipt.failureCode ? ` (${receipt.failureCode})` : ""}; no findings can be inferred`);
     let findings: Record<string, unknown>;
     try {
       findings = JSON.parse(receipt.output);
@@ -128,11 +136,11 @@ export async function diagnoseInteractiveCase(ctx: PluginContext, cfg: Config, r
     }
     catch { throw new IntakeError(502, "Diagnostic returned invalid findings"); }
     result = { runId: receipt.runId, options, findings };
-    if (check === "inventory") {
-      await ctx.db.execute(`INSERT INTO ${ns(ctx)}.support_devices(company_id,target_address,snapshot,last_case_id)
-        VALUES($1,$2,$3::jsonb,$4) ON CONFLICT(company_id,target_address)
-        DO UPDATE SET snapshot=EXCLUDED.snapshot,last_case_id=EXCLUDED.last_case_id,last_seen_at=now()`,
-        [actor.companyId, supportCase.target_address, JSON.stringify(findings), supportCase.id]);
+    const sections = findings.sections as Record<string, { status?: string; data?: Record<string, unknown> }> | undefined;
+    const inventory = check === "inventory" ? findings : check === "health" && sections?.inventory?.status === "available" ? sections.inventory.data : null;
+    if (inventory && typeof inventory === "object" && !Array.isArray(inventory)) {
+      const asset = await rememberAsset(ctx, cfg, actor.companyId, supportCase.target_address, supportCase.id, inventory);
+      result = { runId: receipt.runId, options, findings, asset };
     }
   }
   await ctx.db.execute(`INSERT INTO ${ns(ctx)}.support_diagnostics(company_id,case_id,check_kind,result,user_id) VALUES($1,$2,$3,$4::jsonb,$5)`,

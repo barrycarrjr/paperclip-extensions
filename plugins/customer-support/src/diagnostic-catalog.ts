@@ -3,6 +3,7 @@ import { IntakeError } from "./routing.js";
 export const diagnosticChecks = [
   { id: "connectivity", title: "Connection from the support host", script: null, description: "DNS and remote-management TCP ports from the Paperclip host." },
   { id: "inventory", title: "Hardware and available tools", script: "Get-SupportInventory.ps1", description: "Windows build, hardware, domain, PowerShell, and available administrative modules. Saves a company device snapshot." },
+  { id: "health", title: "Windows health snapshot", script: "Get-SupportHealth.ps1", description: "One read-only snapshot of inventory, CPU/memory, disk space, stopped services, recent System event metadata, restart indicators and Windows queues. Each unavailable section is explicit. Does not establish overall health or run repairs." },
   { id: "performance", title: "Current CPU and memory", script: "Get-SupportPerformance.ps1", description: "One CPU/memory/process sample." },
   { id: "performance_trace", title: "Performance over time", script: "Get-SupportPerformanceTrace.ps1", description: "Six CPU/memory samples over 15 seconds; no persistent tracing." },
   { id: "storage", title: "Disk space", script: "Get-SupportStorage.ps1", description: "Capacity and free space of local disks." },

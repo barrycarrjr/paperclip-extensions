@@ -15,6 +15,7 @@ export interface RemoteActionReceipt {
   status: string;
   exitCode: number | null;
   output?: string;
+  failureCode?: string;
 }
 
 export function validateRemoteActionReceipt(
@@ -96,6 +97,11 @@ export async function runRemoteActionScriptUnlocked(
         const receipt = validateRemoteActionReceipt(result, code, {
           target: access.target, companyId: access.companyId, caseReference, scriptSha256: expectedHash,
         });
+        if (includeDiagnosticOutput && receipt.status === "script_failed" && typeof result.output === "string") {
+          // Return only a bounded PowerShell error identifier, never raw failed output/credentials.
+          const identifier = /FullyQualifiedErrorId\s*:\s*(UnexpectedToken|UnauthorizedAccess|ParserError|CommandNotFoundException|ItemNotFoundException|VariableNotWritable|PropertyNotFoundStrict|TerminatorExpectedAtEndOfString|ParameterBindingValidationException|RuntimeException)\b/i.exec(result.output)?.[1];
+          receipt.failureCode = identifier ?? (/running scripts is disabled/i.test(result.output) ? "ExecutionPolicy" : "ScriptFailed");
+        }
         if (includeDiagnosticOutput && receipt.status === "succeeded" && typeof result.output === "string") {
           if (result.output.length > 65_536) throw new IntakeError(502, "Diagnostic output exceeded the limit; narrow the diagnostic filter");
           receipt.output = result.output.split(password).join("[credential removed]");

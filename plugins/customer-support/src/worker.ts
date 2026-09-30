@@ -26,6 +26,7 @@ import { diagnosticChecks } from "./diagnostic-catalog.js";
 import { repairRecipes } from "./repair-catalog.js";
 import { supportReferences, referenceUrl } from "./support-references.js";
 import { resolveRemoteAccess } from "./remote-access.js";
+import { listAssets } from "./asset-inventory.js";
 
 let context: PluginContext | null = null;
 
@@ -299,6 +300,15 @@ const plugin = definePlugin({
         `SELECT target_address,snapshot,last_seen_at FROM ${dbNamespace(ctx)}.support_devices WHERE company_id=$1 ORDER BY last_seen_at DESC LIMIT 50`, [params.companyId]);
       const knowledge = await ctx.db.query(`SELECT id,title,topic,kind,body,created_at FROM ${dbNamespace(ctx)}.support_knowledge WHERE company_id=$1 ORDER BY created_at DESC LIMIT 20`, [params.companyId]);
       return { diagnostics: diagnosticChecks, repairRecipes, references: supportReferences.map(item => ({ id: item.id, title: item.title, topic: item.topic, url: referenceUrl(item) })),
+        assets: await listAssets(ctx, cfg, params.companyId as string),
+        fleet: await ctx.db.query(`SELECT f.id,f.status,f.created_at,
+          count(*) FILTER (WHERE i.status='succeeded')::int AS assessed,
+          count(*) FILTER (WHERE i.status='pending')::int AS pending,
+          count(*) FILTER (WHERE i.status IN ('failed','interrupted'))::int AS unavailable,
+          count(*) FILTER (WHERE i.status='skipped')::int AS skipped,
+          count(*) FILTER (WHERE i.result->'evaluation'->>'needsAttention'='true')::int AS attention
+          FROM ${dbNamespace(ctx)}.support_fleet_checks f LEFT JOIN ${dbNamespace(ctx)}.support_fleet_items i ON i.company_id=f.company_id AND i.fleet_id=f.id
+          WHERE f.company_id=$1 GROUP BY f.id ORDER BY f.created_at DESC LIMIT 10`, [params.companyId]),
         devices: devices.filter(item => { try { resolveRemoteAccess(cfg, params.companyId as string, item.target_address); return true; } catch { return false; } }), knowledge };
     });
     ctx.data.register("support.softwareRoutes", async (params) => {

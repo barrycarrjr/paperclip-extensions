@@ -65,6 +65,8 @@ Open Clippy in the company and ask it to investigate a computer, troubleshoot a 
 
 For live network discovery, open **Support → Discover office devices**, save the office IPv4 network (for example 192.0.2.0/24), then ask Clippy to scan the office network. Each saved network belongs to one company and covers /24 to /32. No password is needed. This is separate from Windows administration access. Discovery reports ping, common TCP services and device names where available; firewalls and sleeping devices can be missed. It does not prove that the devices are healthy. Clippy can investigate an allowed Windows target from those results using the saved access group.
 
+Ask **Check the office computers for issues** to start a fleet health check. Clippy discovers devices, investigates permitted Windows targets one at a time using saved credentials, and preserves progress/findings in linked support cases. It reports failed or unsupported devices explicitly. No repair runs during this check. Authenticated inventory establishes stable device IDs and observed aliases; clones, renames and reinstalls may require review. Aliases never grant remote access.
+
 After a change, Clippy reports the recorded repair and verification results and asks whether the original problem is gone when it cannot observe that remotely. Confirm recording the outcome in the conversation: resolved, still present, or needs follow-up. Recording ends previous delegation. If a problem returns, Clippy can reopen the case with your confirmation; unknown repair outcomes still require inspection.
 
 ## Receive support requests
