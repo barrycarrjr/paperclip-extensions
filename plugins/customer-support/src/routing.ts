@@ -1,3 +1,4 @@
+import type { McpConnection } from "./mcp-schema.js";
 export type Source = "slack" | "helpscout" | "email" | "whmcs" | "other";
 
 export interface Connection {
@@ -14,6 +15,7 @@ export interface Connection {
 }
 
 export interface Config {
+  mcpConnections?: McpConnection[];
   dailySummaries?: { companyId: string; connectionId: string; channelId: string; timezone: string; sendAt: string; enabled: boolean }[];
   ticketPolicies?: TicketPolicy[];
   connections?: Connection[];
@@ -170,6 +172,7 @@ export function companyHasConnection(config: Config, companyId: string | null): 
 /** Direct Clippy support needs a remote access group, not an external help desk route. */
 export function companyHasSupport(config: Config, companyId: string | null): boolean {
   return !!companyId && (companyHasConnection(config, companyId) ||
+    (config.mcpConnections ?? []).some(connection => connection.enabled && connection.allowedCompanies?.includes(companyId)) ||
     (config.discoveryNetworks ?? []).some((network) => network.companyId === companyId) ||
     (config.remoteAccessProfiles ?? []).some((profile) => profile.companyId === companyId));
 }

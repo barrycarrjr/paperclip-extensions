@@ -1,3 +1,4 @@
+import { registerMcpTools } from "./mcp-support.js";
 import { createHash } from "node:crypto";
 import {
   definePlugin,
@@ -229,6 +230,7 @@ const plugin = definePlugin({
     registerEquipmentTools(ctx, () => config(ctx));
     registerPreflightTools(ctx, () => config(ctx));
     registerStorefrontTools(ctx, () => config(ctx));
+    registerMcpTools(ctx, () => ctx.config.get() as Promise<Config>);
     for (const provider of ["help-scout", "3cx-tools", "unifi-tools", "google-workspace", "phone-tools"]) ctx.events.on(`plugin.${provider}.support-observation-receipt`, event => recordSpecialistObservation(ctx, event));
     ctx.jobs.register("daily-support-summaries", () => runDailySummaries(ctx, () => config(ctx)));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
