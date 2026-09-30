@@ -45,7 +45,7 @@ export function deliveryHash(value: Pick<DeliveryRequest, "companyId" | "caseId"
     d.workspaceId ?? null,d.channelId ?? null,d.threadTs ?? null,d.to ?? null,d.subject ?? null,value.body])).digest("hex");
 }
 export function containsCredential(value: string) {
-  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|api[_ -]?key|access[_ -]?token|client[_ -]?secret)\s*[:=]\s*\S+|\bxox[baprs]-[a-z0-9-]+/i.test(value);
+  return /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|passwd|api[_ -]?key|access[_ -]?token|client[_ -]?secret)\s*[:=]\s*\S+|\bxox[baprs]-[a-z0-9-]+|\b(?:sk-(?:ant-)?[\w-]{16,}|gh[pousr]_[\w]+|AKIA[A-Z0-9]{16}|AIza[\w-]{35}|eyJ[\w-]+\.[\w-]+\.[\w-]+)\b|(?:https?|ssh|smb|postgres(?:ql)?):\/\/[^\s/:@]+:[^\s/@]+@|https:\/\/hooks\.slack\.com\/services\//i.test(value);
 }
 export function parseDeliveryRequest(event: BridgeEvent, provider: DeliveryProvider): DeliveryRequest | null {
   if (event.eventType !== deliveryEvent || event.actorType !== "plugin" || event.actorId !== "customer-support") return null;

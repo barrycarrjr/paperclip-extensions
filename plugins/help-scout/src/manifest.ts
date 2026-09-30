@@ -1,4 +1,5 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
+import { reviewedSupportTools } from "./reviewed-support.js";
 
 const PLUGIN_ID = "help-scout";
 const PLUGIN_VERSION = "0.7.5";
@@ -10,6 +11,8 @@ const accountItemSchema = {
     "key",
     "displayName",
     "supportReadEnabled",
+    "supportActionsEnabled",
+    "supportBrands",
     "supportMailboxes",
     "clientIdRef",
     "clientSecretRef",
@@ -22,6 +25,8 @@ const accountItemSchema = {
     "watchMailboxId",
   ],
   properties: {
+    supportActionsEnabled: { type: "boolean", default: false, title: "Allow reviewed human support actions", description: "Separate opt-in for inline-confirmed replies, tag additions and owner assignment. Requires exact company/mailbox mappings, host permission and the global mutation switch. Unknown receipts block repetition." },
+    supportBrands: { type: "array", title: "Brand reply identities", description: "One company/mailbox identity matching its actual Help Scout mailbox email. Signatures are appended to the displayed reply before confirmation. No credential or DNS changes.", items: { type: "object", additionalProperties: false, properties: { companyId: { type: "string", format: "company-id" }, mailboxId: { type: "string" }, name: { type: "string" }, replyEmail: { type: "string" }, signature: { type: "string" } }, required: ["companyId", "mailboxId", "name", "replyEmail"] } },
     supportReadEnabled: { type: "boolean", title: "Allow Support Desk observations", default: false, description: "Read-only mailbox/conversation metadata through the trusted Support Desk plugin. Requires exact company/mailbox mappings below. Does not authorize intake or replies." },
     supportMailboxes: { type: "array", title: "Support Desk company mailboxes", description: "Each mailbox belongs to one company; shared ambiguous mappings are refused. The company must also appear explicitly in Allowed companies.", items: { type: "object", additionalProperties: false, properties: { companyId: { type: "string", format: "company-id" }, mailboxIds: { type: "array", items: { type: "string" }, title: "Mailbox IDs" } }, required: ["companyId", "mailboxIds"] } },
     key: {
@@ -208,6 +213,7 @@ const manifest: PaperclipPluginManifestV1 & {
   categories: ["automation", "connector"],
   capabilities: [
     "events.subscribe",
+    "activity.log.write",
     "events.emit",
     "agent.tools.register",
     "instance.settings.register",
@@ -290,7 +296,7 @@ const manifest: PaperclipPluginManifestV1 & {
       },
     },
   },
-  tools: [
+  tools: [...reviewedSupportTools,
     {
       name: "helpscout_list_rules",
       displayName: "List Help Scout Triage Rules",

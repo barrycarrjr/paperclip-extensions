@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- Development: human Clippy reply/tag/assignment preparation, full-plan inline confirmation, live company/mailbox/recipient/configuration rechecks, a durable one-attempt journal and receipt/state inspection. Saved brand mailbox identity/signature is part of the exact reply. Unknown actions block repetition and need explicit operator acknowledgement after provider inspection. Matching provider state is not proof of customer email delivery. These tools require the bundled fork SDK and matching Paperclip host permission support; native intake remains a separate section.
+
 - Development: read-only Support Desk observation bridge (`plugin.customer-support.observation-requested` → `plugin.help-scout.support-observation-receipt`). Enable **Allow Support Desk observations** on an account, explicitly allow each company, and map **Support Desk company mailboxes**. One mailbox cannot be mapped to multiple companies. Both mailbox and conversation reads verify actual membership; normal `allowedMailboxes` still applies. This does not enable incoming Support Desk polling, replies, domain changes, mailbox access changes or automatic mutations. Adds `events.subscribe` and `events.emit` grants; rebuild/reinstall to expose them.
 
 - **v0.7.5** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -364,3 +366,13 @@ to at most 10 MB (Help Scout's per-attachment limit).
 ## Versioning
 
 `0.1.0` — initial release. 17 tools across reads / mutations / reports.
+
+## Reviewed human support actions
+
+Enable the global mutation switch and the account's **Allow reviewed human support actions** only after its explicit company/mailbox mapping is checked. **Allow Support Desk observations** supplies the exact mailbox ownership mapping; it does not itself authorize changes. For replies, save one **Brand reply identities** entry per company/mailbox, matching the actual mailbox's email; the displayed reply includes that signature. No DNS, mailbox access or global signature setting is changed.
+
+In Clippy, use `helpscout_prepare_support_reply` (Respond permission) or `helpscout_prepare_support_change` (Repair permission). Show the full returned plan. After inline confirmation, use the corresponding `helpscout_run_support_reply` / `helpscout_run_support_change` with the plan hash and full plan. Changes are limited to adding tags while preserving the reviewed set, or replacing the conversation owner with an actual user/team. The tag API replaces the full tag set, so provider edits racing the final write remain possible; inspect afterwards. Existing legacy agent tools remain available under their existing account controls; these new tools do not retroactively wrap them in this journal.
+
+`helpscout_support_action_status` never retries; it reports receipt and current provider evidence. An HTTP 201/204 is acceptance, not delivery or symptom closure. A published reply thread is not a customer email delivery receipt. Replies can reopen conversations and cannot be unsent. Unknown receipts block other actions on the exact conversation. After provider-log inspection and two minutes, the original authorized operator can confirm `helpscout_acknowledge_support_reply` / `helpscout_acknowledge_support_change` to release that interlock. The original uncertainty is preserved and nothing is resent. Changing or restoring tags/ownership needs a new reviewed plan.
+
+The endpoints follow Help Scout's official [reply contract](https://developer.helpscout.com/mailbox-api/endpoints/conversations/threads/reply/), [tag update contract](https://developer.helpscout.com/mailbox-api/endpoints/conversations/tags/update/) and [assignment update contract](https://developer.helpscout.com/mailbox-api/endpoints/conversations/update/). No real customer message was sent during development. A live read and separately reviewed pilot action are still needed after deployment.

@@ -1,30 +1,31 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PluginContext, ToolRunContext, PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { networkRequest, resolveNetworkAccount, uuid, type NetworkAccount, type NetworkConfig } from "./network.js";
+export class RestartError extends Error {}
 function hash(value: unknown): string {
   const stable = (v: unknown): unknown => Array.isArray(v) ? v.map(stable) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a],[b]) => a.localeCompare(b)).map(([key,item]) => [key,stable(item)])) : v;
   return createHash("sha256").update(JSON.stringify(stable(value))).digest("hex");
 }
-function ns(ctx: PluginContext) { if (!/^plugin_[a-z0-9_]+$/.test(ctx.db.namespace)) throw new Error("Invalid plugin namespace"); return ctx.db.namespace; }
-function person(run: ToolRunContext, permission: string) { if (!run.userId || !run.chatSessionId || !uuid.test(run.companyId) || run.userPermission !== permission) throw new Error("Use an authorized human support conversation"); }
+function ns(ctx: PluginContext) { if (!/^plugin_[a-z0-9_]+$/.test(ctx.db.namespace)) throw new RestartError("Invalid plugin namespace"); return ctx.db.namespace; }
+function person(run: ToolRunContext, permission: string) { if (!run.userId || !run.chatSessionId || !uuid.test(run.companyId) || run.userPermission !== permission) throw new RestartError("Use an authorized human support conversation"); }
 interface RestartRow { id: string; company_id: string; account_key: string; site_id: string; device_id: string; config_sha256: string; plan_sha256: string; plan: Record<string, unknown>; baseline: Record<string, unknown>; status: string; expires_at: string; started_at: string | null; verification: unknown }
 async function accountFor(ctx: PluginContext, run: ToolRunContext, account: unknown, site: unknown) {
   const cfg = await ctx.config.get() as NetworkConfig;
-  if (!cfg.allowDeviceRestarts) throw new Error("Device restarts are disabled in this plugin's settings");
+  if (!cfg.allowDeviceRestarts) throw new RestartError("Device restarts are disabled in this plugin's settings");
   const selected = resolveNetworkAccount(cfg, run.companyId, account, site);
   return { selected, configHash: hash([selected,cfg.allowDeviceRestarts]) };
 }
 async function baseline(ctx: PluginContext, account: NetworkAccount, siteId: string, deviceId: string, api = networkRequest) {
-  if (!uuid.test(deviceId)) throw new Error("Use an exact device UUID");
+  if (!uuid.test(deviceId)) throw new RestartError("Use an exact device UUID");
   const path = `sites/${siteId}/devices/${deviceId}`;
   const device = await api(ctx,account,path), stats = await api(ctx,account,`${path}/statistics/latest`);
-  if (device.id !== deviceId || device.state !== "ONLINE" || device.supported === false || typeof device.configurationId !== "string" || !device.configurationId || typeof stats.uptimeSec !== "number" || !Number.isFinite(stats.uptimeSec) || stats.uptimeSec < 60) throw new Error("Restart preparation requires an online identified device, stable configuration and at least one minute of uptime; updating/adopting/offline devices need investigation");
+  if (device.id !== deviceId || device.state !== "ONLINE" || device.supported === false || typeof device.configurationId !== "string" || !device.configurationId || typeof stats.uptimeSec !== "number" || !Number.isFinite(stats.uptimeSec) || stats.uptimeSec < 60) throw new RestartError("Restart preparation requires an online identified device, stable configuration and at least one minute of uptime; updating/adopting/offline devices need investigation");
   return { id:device.id,name:device.name,model:device.model,configurationId:device.configurationId,firmwareVersion:device.firmwareVersion ?? null,uptimeSec:stats.uptimeSec,lastHeartbeatAt:stats.lastHeartbeatAt ?? null };
 }
 async function owned(ctx: PluginContext,run: ToolRunContext,id: unknown) {
-  if(typeof id!=="string" || !uuid.test(id)) throw new Error("Use the prepared action UUID");
+  if(typeof id!=="string" || !uuid.test(id)) throw new RestartError("Use the prepared action UUID");
   const [row]=await ctx.db.query<RestartRow>(`SELECT * FROM ${ns(ctx)}.restart_actions WHERE company_id=$1 AND id=$2 AND user_id=$3 AND chat_session_id=$4`,[run.companyId,id,run.userId,run.chatSessionId]);
-  if(!row)throw new Error("Restart not found in this company/person/conversation");
+  if(!row)throw new RestartError("Restart not found in this company/person/conversation");
   return row;
 }
 export async function prepareRestart(ctx:PluginContext,run:ToolRunContext,input:Record<string,unknown>,api=networkRequest){
@@ -46,18 +47,18 @@ export async function postRestart(ctx:PluginContext,account:NetworkAccount,siteI
   return response.status===200 ? "accepted" : [401,403,404,405].includes(response.status) ? "not_sent" : "unknown";
 }
 export async function executeRestart(ctx:PluginContext,run:ToolRunContext,input:Record<string,unknown>,api=networkRequest,send=postRestart){
-  person(run,"support:repair");if(!run.userConfirmed)throw new Error("Confirm this exact restart plan in Clippy");
+  person(run,"support:repair");if(!run.userConfirmed)throw new RestartError("Confirm this exact restart plan in Clippy");
   const row=await owned(ctx,run,input.actionId);
-  if(row.plan_sha256!==input.planSha256 || hash(input.confirmedPlan)!==row.plan_sha256 || input.managementRecoveryConfirmed!==true)throw new Error("Confirm the full unchanged device/disruption/recovery plan and alternate management/on-site recovery arrangement");
+  if(row.plan_sha256!==input.planSha256 || hash(input.confirmedPlan)!==row.plan_sha256 || input.managementRecoveryConfirmed!==true)throw new RestartError("Confirm the full unchanged device/disruption/recovery plan and alternate management/on-site recovery arrangement");
   if(row.status!=="draft")return {actionId:row.id,status:row.status,attemptedAgain:false,instruction:"Read the existing receipt. Accepted/unknown restarts are never automatically repeated."};
-  if(Date.parse(row.expires_at)<Date.now())throw new Error("Restart plan expired; investigate and prepare a new one");
+  if(Date.parse(row.expires_at)<Date.now())throw new RestartError("Restart plan expired; investigate and prepare a new one");
   const resolved=await accountFor(ctx,run,row.account_key,row.site_id);
-  if(resolved.configHash!==row.config_sha256)throw new Error("Controller access/configuration changed; prepare a new plan");
+  if(resolved.configHash!==row.config_sha256)throw new RestartError("Controller access/configuration changed; prepare a new plan");
   const current=await baseline(ctx,resolved.selected,row.site_id,row.device_id,api);
-  if(current.configurationId!==row.baseline.configurationId || current.model!==row.baseline.model || current.firmwareVersion!==row.baseline.firmwareVersion || current.name!==row.baseline.name || (current.uptimeSec as number)<(row.baseline.uptimeSec as number))throw new Error("Device changed or restarted since preparation; investigate before a new plan");
-  if((await accountFor(ctx,run,row.account_key,row.site_id)).configHash!==row.config_sha256)throw new Error("Controller access changed before execution");
+  if(current.configurationId!==row.baseline.configurationId || current.model!==row.baseline.model || current.firmwareVersion!==row.baseline.firmwareVersion || current.name!==row.baseline.name || (current.uptimeSec as number)<(row.baseline.uptimeSec as number))throw new RestartError("Device changed or restarted since preparation; investigate before a new plan");
+  if((await accountFor(ctx,run,row.account_key,row.site_id)).configHash!==row.config_sha256)throw new RestartError("Controller access changed before execution");
   let claimed;
-  try {claimed=await ctx.db.execute(`UPDATE ${ns(ctx)}.restart_actions SET status='running',started_at=now(),baseline=$5::jsonb WHERE company_id=$1 AND id=$2 AND user_id=$3 AND chat_session_id=$4 AND status='draft' AND expires_at>=now()`,[run.companyId,row.id,run.userId,run.chatSessionId,JSON.stringify(current)]);}catch{throw new Error("Another unsettled restart exists for this device; inspect its receipt before any further action");}
+  try {claimed=await ctx.db.execute(`UPDATE ${ns(ctx)}.restart_actions SET status='running',started_at=now(),baseline=$5::jsonb WHERE company_id=$1 AND id=$2 AND user_id=$3 AND chat_session_id=$4 AND status='draft' AND expires_at>=now()`,[run.companyId,row.id,run.userId,run.chatSessionId,JSON.stringify(current)]);}catch{throw new RestartError("Another unsettled restart exists for this device; inspect its receipt before any further action");}
   if(claimed.rowCount!==1)return {actionId:row.id,status:"already_claimed",attemptedAgain:false};
   // Durable running claim precedes the one external attempt. Lost responses stay unknown.
   let status="unknown";
@@ -81,7 +82,7 @@ export async function restartStatus(ctx:PluginContext,run:ToolRunContext,input:R
     shouldVerify=observed && row.status==="accepted";
   }catch{/* No fabricated healthy result. */}
   const latest=resolveNetworkAccount(await ctx.config.get() as NetworkConfig,run.companyId,row.account_key,row.site_id);
-  if(hash(latest)!==hash(selected))throw new Error("Controller access changed during recovery inspection");
+  if(hash(latest)!==hash(selected))throw new RestartError("Controller access changed during recovery inspection");
   if(shouldVerify)await ctx.db.execute(`UPDATE ${ns(ctx)}.restart_actions SET status='verified',verification=$3::jsonb WHERE company_id=$1 AND id=$2 AND status='accepted'`,[run.companyId,row.id,JSON.stringify(verification)]);
   await ctx.db.execute(`UPDATE ${ns(ctx)}.restart_actions SET verification=$3::jsonb WHERE company_id=$1 AND id=$2`,[run.companyId,row.id,JSON.stringify(verification)]);
   await ctx.activity.log({companyId:run.companyId,message:"UniFi restart recovery inspected",entityType:"unifi_restart",entityId:row.id,metadata:{userId:run.userId,restartVerified:shouldVerify}});
@@ -92,15 +93,15 @@ export async function restartStatus(ctx:PluginContext,run:ToolRunContext,input:R
 export async function reconcileRestart(ctx:PluginContext,run:ToolRunContext,input:Record<string,unknown>,api=networkRequest){
   person(run,"support:repair");
   const row=await owned(ctx,run,input.actionId);
-  if(!run.userConfirmed || row.plan_sha256!==input.planSha256 || hash(input.confirmedPlan)!==row.plan_sha256 || input.acknowledgeUncertainDelivery!==true || input.managementRecoveryConfirmed!==true)throw new Error("Confirm the full original plan, uncertain delivery acknowledgement and recovery arrangement");
+  if(!run.userConfirmed || row.plan_sha256!==input.planSha256 || hash(input.confirmedPlan)!==row.plan_sha256 || input.acknowledgeUncertainDelivery!==true || input.managementRecoveryConfirmed!==true)throw new RestartError("Confirm the full original plan, uncertain delivery acknowledgement and recovery arrangement");
   const reference=input.inspectionReference;
-  if(typeof reference!=="string" || reference.trim().length<10 || reference.length>500 || /(?:password|secret|token|api.?key)\s*[:=]|:\/\/[^\s/]+:[^\s/]+@/i.test(reference))throw new Error("Provide a non-secret controller inspection reference, not credentials");
+  if(typeof reference!=="string" || reference.trim().length<10 || reference.length>500 || /(?:password|secret|token|api.?key)\s*[:=]|:\/\/[^\s/]+:[^\s/]+@/i.test(reference))throw new RestartError("Provide a non-secret controller inspection reference, not credentials");
   if(row.status==="acknowledged")return{actionId:row.id,status:row.status,commandSent:false};
-  if(!["unknown","accepted"].includes(row.status) || !row.started_at || Date.now()-Date.parse(row.started_at)<120000)throw new Error("Inspect an unsettled receipt after at least two minutes; do not release an in-flight restart");
+  if(!["unknown","accepted"].includes(row.status) || !row.started_at || Date.now()-Date.parse(row.started_at)<120000)throw new RestartError("Inspect an unsettled receipt after at least two minutes; do not release an in-flight restart");
   const resolved=await accountFor(ctx,run,row.account_key,row.site_id);
   const current=await baseline(ctx,resolved.selected,row.site_id,row.device_id,api);
-  if(current.model!==row.baseline.model || current.configurationId!==row.baseline.configurationId)throw new Error("The device identity/configuration changed; investigate with the network owner");
-  if((await accountFor(ctx,run,row.account_key,row.site_id)).configHash!==resolved.configHash)throw new Error("Controller access changed during inspection");
+  if(current.model!==row.baseline.model || current.configurationId!==row.baseline.configurationId)throw new RestartError("The device identity/configuration changed; investigate with the network owner");
+  if((await accountFor(ctx,run,row.account_key,row.site_id)).configHash!==resolved.configHash)throw new RestartError("Controller access changed during inspection");
   const reconciliation={previousStatus:row.status,provenance:"operator_attested",inspectionReference:reference.trim(),observedAtUtc:new Date().toISOString(),device:current,userId:run.userId,uncertainDeliveryAcknowledged:true};
   await ctx.db.execute(`UPDATE ${ns(ctx)}.restart_actions SET status='acknowledged',reconciliation=$3::jsonb WHERE company_id=$1 AND id=$2 AND status IN ('unknown','accepted')`,[run.companyId,row.id,JSON.stringify(reconciliation)]);
   await ctx.activity.log({companyId:run.companyId,message:"Operator acknowledged unsettled UniFi restart after inspection",entityType:"unifi_restart",entityId:row.id,metadata:{userId:run.userId,previousStatus:row.status,planSha256:row.plan_sha256}});

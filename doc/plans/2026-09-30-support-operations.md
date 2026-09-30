@@ -45,6 +45,8 @@ UniFi restart section implemented: exact full-plan consent, saved restart opt-in
 
 Storefront observation section implemented: operator-saved public HTTPS storefront/vendor-status URLs, company/profile/version gates, private-DNS rejection, bounded requests without redirects/credentials/body inspection, and timed history. HTTP success never proves orders, checkout or vendor incident status. Vendor-specific order/admin connectors remain pending.
 
+Help Scout human action section implemented in its reusable companion: exact company/mailbox/brand/recipient reads, full reply/signature or preserved tag-set/assignee preview, inline consent, current-state rechecks, one-attempt journal, unknown interlocks, and provider receipt/state inspection. Synthetic API tests with actual migrations cover scope, stale consent, concurrency, opt-out and uncertainty. Legacy agent tools retain their previous controls; native Support Desk intake remains pending. No customer message was sent.
+
 - Help desk: connect existing Help Scout tools to Support Desk intake/replies; brand-aware mailbox routing, tags, assignment and signatures. Mailbox/account changes require separate reviewed actions.
 - Network: a company-authorized UniFi connector/MCP; controller/AP/client/firmware observations, with approved scoped changes and disruption/verification/recovery details.
 - Phones: reuse 3CX and phone-assistant tools; diagnose extensions, voicemail, routing, desk/softphones, SBCs and hosting dependencies. Explicitly distinguish those components.
