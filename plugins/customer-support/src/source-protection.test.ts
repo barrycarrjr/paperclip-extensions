@@ -20,6 +20,7 @@ async function fixture() {
   const ctx = { db: { namespace, query: async (sql: string, params?: unknown[]) => (await db.query(sql, params)).rows,
     execute: async (sql: string, params?: unknown[]) => ({ rowCount: (await db.query(sql, params)).affectedRows }) },
     activity: { log: async (entry: unknown) => activity.push(entry) },
+    config: { get: async () => ({}) },
     secrets: { store: async (company: string, _key: string, value: string) => { assert.equal(company, companyId); protectedValue = value; return { secretRef }; },
       resolve: async (ref: string, company: string) => { assert.equal(ref, secretRef); assert.equal(company, companyId); return protectedValue; } },
   } as unknown as PluginContext;

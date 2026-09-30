@@ -14,10 +14,19 @@ export interface Connection {
 }
 
 export interface Config {
+  ticketPolicies?: TicketPolicy[];
   connections?: Connection[];
   softwareRoutes?: SoftwareRoute[];
   remoteAccessProfiles?: RemoteAccessProfile[];
   discoveryNetworks?: { id: string; companyId: string; cidr: string }[];
+}
+
+export interface TicketPolicy {
+  companyId: string;
+  agentId: string;
+  enabled: boolean;
+  diagnostics: string[];
+  allowThreadUpdates: boolean;
 }
 
 export interface RemoteAccessProfile {

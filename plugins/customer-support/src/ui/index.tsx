@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useHostContext, usePluginData, type PluginPageProps, type PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { RemoteSetup } from "./RemoteSetup.js";
 import { RestrictedSource } from "./RestrictedSource.js";
+import { TicketSetup } from "./TicketSetup.js";
+import { TicketProgress } from "./TicketProgress.js";
 import { DiscoverySetup } from "./DiscoverySetup.js";
 import { SupportToolkit } from "./SupportToolkit.js";
 import { SupportMessages } from "./SupportMessages.js";
@@ -32,6 +34,7 @@ interface CaseRow {
   symptom_recorded_at?: string | null;
 }
 interface Detail {
+  ticketJob?: { agent_id: string; issue_id: string | null; status: string; failure_code: string | null; target_address: string | null } | null;
   outbound: OutboundRow[];
   diagnostics: { check_kind: string; result: unknown; created_at: string }[];
   supportCase: CaseRow;
@@ -384,6 +387,7 @@ export function SupportPage(_props: PluginPageProps) {
     {companyId && <SupportReadiness key={companyId} companyId={companyId} companyPrefix={host.companyPrefix} setup={setup.data} loading={setup.loading} error={setup.error} refreshToken={setupVersion} onRefresh={refreshSetup} onDiagnosticPermission={setCanDiagnose} />}
     {companyId && <RemoteSetup companyId={companyId} onChanged={refreshSetup} canDiagnose={canDiagnose} />}
     {companyId && <DiscoverySetup key={companyId} companyId={companyId} />}
+    {companyId && <TicketSetup key={`tickets:${companyId}`} companyId={companyId} />}
     {companyId && <SupportToolkit key={companyId} companyId={companyId} />}
     {error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load cases: {String(error)}</p>}
     {overview.error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load overview: {String(overview.error)}</p>}
@@ -412,6 +416,7 @@ export function SupportPage(_props: PluginPageProps) {
         {caseId && detail.error && <p role="alert" className="text-sm text-destructive">Could not load conversation: {String(detail.error)}</p>}
         {caseId && !detail.loading && !detail.error && !selectedDetail && <p className="text-sm text-muted-foreground">Case not found.</p>}
         {selectedDetail && <div className="space-y-4">
+          {companyId && selectedDetail.ticketJob && <TicketProgress key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} companyPrefix={host.companyPrefix} job={selectedDetail.ticketJob} onChanged={() => detail.refresh()} />}
           {companyId && <SupportMessages key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} reviewVersion={selectedDetail.supportCase.review_version ?? 0} source={selectedDetail.supportCase.source} software={selectedDetail.supportCase.service_domain === "software"} routes={softwareRoutes.data ?? []} rows={selectedDetail.outbound ?? []} onChanged={() => detail.refresh()} />}
           <div><h2 className="text-lg font-semibold">{selectedDetail.supportCase.title}</h2>
             {selectedDetail.supportCase.external_url && <a href={selectedDetail.supportCase.external_url} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Open in source</a>}

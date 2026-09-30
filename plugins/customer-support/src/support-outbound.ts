@@ -6,6 +6,7 @@ import { resolveSoftwareRoute } from "./support-escalations.js";
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export interface OutboundRow {
+  policy_authorization?: { policySha256: string; agentId: string } | null;
   id: string; company_id: string; case_id: string; case_review_version: number;
   provider: DeliveryRequest["provider"]; account: string; kind: DeliveryRequest["kind"];
   destination: DeliveryRequest["destination"]; body: string; content_sha256: string;
@@ -77,6 +78,7 @@ function request(row: OutboundRow): DeliveryRequest {
 }
 export async function sendOutbound(ctx: PluginContext, cfg: Config, input: Scope & { deliveryId: unknown; contentSha256: unknown; confirmedBody?: unknown; confirmedDestination?: unknown }) {
   const row = await read(ctx,input);
+  if ((row as OutboundRow & { policy_authorization?: unknown }).policy_authorization) throw new IntakeError(409, "This is a policy-authorized ticket update; inspect its receipt rather than sending it as a human draft");
   if (row.content_sha256 !== input.contentSha256) throw new IntakeError(409,"Confirm the exact saved message hash");
   if (input.confirmedBody !== undefined && (input.confirmedBody !== row.body || !input.confirmedDestination ||
     deliveryHash({ ...row,companyId: row.company_id,caseId: row.case_id,destination: input.confirmedDestination as DeliveryRequest["destination"] }) !== row.content_sha256)) throw new IntakeError(409,"The displayed message differs from the saved draft");
@@ -123,7 +125,9 @@ export async function recordDeliveryReceipt(ctx: PluginContext, event: PluginEve
     metadata: { provider: event.actorId,reference: p.reference,code: p.code } });
 }
 export async function reconcilePendingDeliveries(ctx: PluginContext) {
-  const rows = await ctx.db.query<OutboundRow>(`SELECT * FROM ${ns(ctx)}.support_outbound WHERE status='pending' ORDER BY approved_at LIMIT 20`);
+  await ctx.db.execute(`UPDATE ${ns(ctx)}.support_outbound SET status='unknown',delivery_code='receipt_missing',updated_at=now()
+    WHERE policy_authorization IS NOT NULL AND status='pending' AND expires_at <= now()`);
+  const rows = await ctx.db.query<OutboundRow>(`SELECT * FROM ${ns(ctx)}.support_outbound WHERE status='pending' AND policy_authorization IS NULL ORDER BY approved_at LIMIT 20`);
   for (const row of rows) {
     // Reemit the same immutable id; the connector ledger can only repeat its
     // receipt, never replay an already-claimed provider call.

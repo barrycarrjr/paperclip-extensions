@@ -29,6 +29,8 @@ import { resolveRemoteAccess } from "./remote-access.js";
 import { listAssets } from "./asset-inventory.js";
 import { printerHistory } from "./printer-support.js";
 import { protectSource, readProtectedSource, redactSource, protectLegacySources } from "./source-protection.js";
+import { registerTicketTools } from "./ticket-tools.js";
+import { dispatchTickets, enqueueTicket, recordTicketRunEnd, resumeTicket } from "./ticket-investigation.js";
 
 let context: PluginContext | null = null;
 
@@ -117,8 +119,8 @@ export async function storeMessage(ctx: PluginContext, rawMessage: IncomingMessa
   await pinSourceAccount(ctx,message.companyId,supportCase.id,message.externalAccountId);
   const inserted = await ctx.db.execute(
     `INSERT INTO ${ns}.support_messages
-      (company_id, case_id, connection_id, external_route_id, external_conversation_id, external_message_id, author_kind, body, occurred_at, author_external_id, attachments, protected_source_ref, source_protection_version)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,1)
+      (company_id, case_id, connection_id, external_route_id, external_conversation_id, external_message_id, author_kind, body, occurred_at, author_external_id, attachments, protected_source_ref, source_protection_version, automation_eligible)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,1,true)
      ON CONFLICT (company_id, connection_id, external_route_id, external_conversation_id, external_message_id) DO NOTHING`,
     [message.companyId, supportCase.id, connection.id, message.externalRouteId, message.externalConversationId,
       message.externalMessageId, message.authorKind, message.body, message.occurredAt,
@@ -152,6 +154,7 @@ export async function storeMessage(ctx: PluginContext, rawMessage: IncomingMessa
       [message.companyId, recorded[0].id],
     );
   }
+  await enqueueTicket(ctx, await config(ctx), message.companyId,supportCase.id,recorded[0].id);
   return { caseId: supportCase.id, created: inserted.rowCount > 0 };
 }
 
@@ -207,9 +210,12 @@ const plugin = definePlugin({
     context = ctx;
     registerInteractiveTools(ctx, () => config(ctx));
     registerOutboundTools(ctx, () => config(ctx));
+    registerTicketTools(ctx, () => config(ctx));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
     ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));
     ctx.jobs.register("protect-legacy-sources", async () => { await protectLegacySources(ctx, await config(ctx)); });
+    ctx.jobs.register("dispatch-support-tickets", async () => { await dispatchTickets(ctx, () => config(ctx)); });
+    for (const event of ["agent.run.finished","agent.run.failed","agent.run.cancelled"] as const) ctx.events.on(event,input => recordTicketRunEnd(ctx,input));
     const proposeTool = manifest.tools?.find((tool) => tool.name === "support_propose_repair");
     if (!proposeTool) throw new Error("Support repair tool declaration is missing");
     ctx.tools.register("support_propose_repair", proposeTool, async (params, runCtx) => {
@@ -368,8 +374,9 @@ const plugin = definePlugin({
       const actions = await listSupportActions(ctx, params.companyId as string, params.caseId);
       const diagnostics = await ctx.db.query(`SELECT check_kind,result,created_at FROM ${dbNamespace(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 ORDER BY created_at DESC LIMIT 20`, [params.companyId, params.caseId]);
       const outbound = await listOutbound(ctx,params.companyId as string,params.caseId);
+      const ticketJobs = await ctx.db.query(`SELECT agent_id,issue_id,status,target_address,failure_code,updated_at FROM ${dbNamespace(ctx)}.support_ticket_jobs WHERE company_id=$1 AND case_id=$2`, [params.companyId,params.caseId]);
       return { supportCase: { ...cases[0], title: redactSource(cases[0].title) }, messages: messages.map(message => message.source_protection_version === 1
-        ? message : { ...message, body: "[Legacy source awaiting encrypted migration]", author_external_id: null, attachments: [] }), actions, diagnostics, outbound, linkedIssue: linked ? {
+        ? message : { ...message, body: "[Legacy source awaiting encrypted migration]", author_external_id: null, attachments: [] }), actions, diagnostics, outbound, ticketJob: ticketJobs[0] ?? null, linkedIssue: linked ? {
         id: linked.id, identifier: linked.identifier, title: linked.title, status: linked.status,
         assigneeAgentId: linked.assigneeAgentId, kind: links[0]!.issue_kind,
       } : null, escalation: escalations[0] ?? null };
@@ -377,7 +384,7 @@ const plugin = definePlugin({
   },
   async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
     if (!context) return { status: 503, body: { error: "Support Desk is starting" } };
-    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
+    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.ticket.resume" && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
         input.routeKey !== "remote.identity.setup" &&
         input.routeKey !== "cases.issue.create" && input.routeKey !== "cases.review" &&
         input.routeKey !== "cases.sync" && input.routeKey !== "cases.remote.identity" && input.routeKey !== "cases.work.start" &&
@@ -386,6 +393,11 @@ const plugin = definePlugin({
       return { status: 404, body: { error: "Unknown route" } };
     }
     try {
+      if (input.routeKey === "cases.ticket.resume") {
+        if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:repair") throw new IntakeError(403, "Support repair operator required to resume investigation");
+        if ((input.body as Record<string,unknown> | null)?.companyId !== input.companyId) throw new IntakeError(403, "Company mismatch");
+        return { status: 200,body: await resumeTicket(context,await config(context),{ companyId: input.companyId,caseId: input.params.caseId,userId: input.actor.userId }) };
+      }
       if (input.routeKey === "cases.source.read") {
         if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:repair") throw new IntakeError(403, "Restricted source requires support repair permission");
         const body = input.body as Record<string, unknown> | null;

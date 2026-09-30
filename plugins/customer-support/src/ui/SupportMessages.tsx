@@ -41,6 +41,7 @@ export function SupportMessages({ companyId,caseId,reviewVersion,source,software
     {rows.map(row => <article key={row.id} className="space-y-2 rounded-md border border-border p-3 text-sm">
       <p className="font-medium">{row.kind === "slack_reply" ? "Slack reply" : "Vendor email"} · {row.status.replaceAll("_"," ")}</p>
       <p>Via {row.provider}, account {row.account}</p>
+      {row.policy_authorization && <p className="text-muted-foreground">Automatic update authorized by the company investigation policy. It does not represent human repair approval.</p>}
       <p>{row.destination.to ? `To: ${row.destination.to}` : `Workspace: ${row.destination.workspaceId} · Channel: ${row.destination.channelId} · Thread: ${row.destination.threadTs}`}</p>
       {row.destination.subject && <p>Subject: {row.destination.subject}</p>}
       <pre className="whitespace-pre-wrap break-words font-sans">{row.body}</pre>
@@ -49,9 +50,9 @@ export function SupportMessages({ companyId,caseId,reviewVersion,source,software
       {row.status === "sent" && <p>Accepted by the provider. This does not mean the recipient read it.</p>}
       {row.status === "pending" && <p>Waiting for a receipt. Refresh this case to check; do not send another copy.</p>}
       {row.status === "unknown" && <p>Delivery is uncertain. Check the provider before any new message; automatic retry is blocked.</p>}
-      {row.status === "draft" && <button type="button" className={button} disabled={busy || row.case_review_version !== reviewVersion} onClick={() => post("send",{ deliveryId: row.id,contentSha256: row.content_sha256 })}>Approve and send this exact message</button>}
+      {row.status === "draft" && !row.policy_authorization && <button type="button" className={button} disabled={busy || row.case_review_version !== reviewVersion} onClick={() => post("send",{ deliveryId: row.id,contentSha256: row.content_sha256 })}>Approve and send this exact message</button>}
       {row.status === "draft" && row.case_review_version !== reviewVersion && <p>The case changed. Save a new reviewed draft.</p>}
-      {row.status === "not_sent" && <><p>No provider send was started. Check channel plugin setup.</p><button type="button" className={button} disabled={busy} onClick={() => post("retry",{ deliveryId: row.id })}>Prepare a new retry draft</button></>}
+      {row.status === "not_sent" && <><p>No accepted provider send was recorded. Check the connection and prepare a new reviewed message.</p>{!row.policy_authorization && <button type="button" className={button} disabled={busy} onClick={() => post("retry",{ deliveryId: row.id })}>Prepare a new retry draft</button>}</>}
     </article>)}
     <button type="button" className={button} disabled={busy} onClick={onChanged}>Refresh delivery receipts</button>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

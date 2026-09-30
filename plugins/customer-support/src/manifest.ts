@@ -2,6 +2,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { interactiveTools } from "./interactive-tools.js";
 import { outboundTools } from "./outbound-tools.js";
 import { setupPermissions } from "./support-setup.js";
+import { ticketTools } from "./ticket-tools.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -30,13 +31,14 @@ const manifest: PaperclipPluginManifestV1 = {
     "issues.read",
     "issues.create",
     "issues.wakeup",
+    "issues.checkout",
     "agent.tools.register",
     "events.emit",
     "events.subscribe",
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, {
     name: "support_propose_repair",
     displayName: "Propose support repair",
     description: "Propose an exact PowerShell repair and verification for an already reviewed IT or equipment case. This only creates a proposal; a board user must approve and start execution. Never place credentials or untrusted requester text into scripts.",
@@ -76,8 +78,16 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["connections", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks"],
+    propertyOrder: ["connections", "ticketPolicies", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks"],
     properties: {
+      ticketPolicies: { type: "array",title: "Automatic ticket investigation",description: "Opt in per company. Select its support agent, allowed read-only Windows diagnostics and original-thread updates. Repairs still require an authorized person's exact approval.",
+        items: { type: "object",additionalProperties: false,properties: {
+          companyId: { type: "string",format: "company-id",title: "Company" },
+          agentId: { type: "string",title: "Support agent ID" },
+          enabled: { type: "boolean",default: false,title: "Investigate incoming Slack tickets" },
+          diagnostics: { type: "array",title: "Allowed diagnostics",items: { type: "string",enum: ["inventory","health","performance","performance_trace","storage","services","events","network","printers","group_policy","directory","software","updates","tasks","certificates","shares"] } },
+          allowThreadUpdates: { type: "boolean",default: false,title: "Allow progress and findings in the original Slack thread",description: "Uses the intake connection's bot Secret; it needs chat:write and access to the mapped channel. Does not authorize vendor emails or repairs." },
+        },required: ["companyId","agentId","enabled","diagnostics","allowThreadUpdates"] } },
       connections: {
         type: "array",
         title: "Support connections (required for incoming messages)",
@@ -194,6 +204,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     required: ["connections"],
   },
   apiRoutes: [
+    { routeKey: "cases.ticket.resume",method: "POST",path: "/cases/:caseId/ticket/resume",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     { routeKey: "cases.source.read",method: "POST",path: "/cases/:caseId/messages/:messageId/protected-source",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     ...setupPermissions.map(action => ({ routeKey: `setup.permission.${action}`,method: "GET" as const,path: `/setup/permissions/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "query" as const,key: "companyId" },requiredUserPermission: `support:${action}` as const })),
     ...["draft","send","retry"].map(action => ({ routeKey: `cases.outbound.${action}`,method: "POST" as const,path: `/cases/:caseId/outbound/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "body" as const,key: "companyId" },requiredUserPermission: "support:respond" as const })),
@@ -317,6 +328,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
   jobs: [
     { jobKey: "reconcile-support-deliveries",displayName: "Reconcile support delivery receipts",schedule: "* * * * *" },
     { jobKey: "protect-legacy-sources",displayName: "Protect legacy support sources",schedule: "* * * * *" },
+    { jobKey: "dispatch-support-tickets",displayName: "Start permitted support investigations",schedule: "* * * * *" },
     { jobKey: "poll-slack-workflows", displayName: "Poll Slack support workflows", schedule: "*/2 * * * *" },
   ],
   ui: {
