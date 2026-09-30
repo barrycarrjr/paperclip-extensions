@@ -32,6 +32,8 @@ import { protectSource, readProtectedSource, redactSource, protectLegacySources,
 import { registerTicketTools } from "./ticket-tools.js";
 import { afterTicketRepair, recordTicketOutcome } from "./ticket-completion.js";
 import { dispatchTickets, enqueueTicket, recordTicketRunEnd, resumeTicket } from "./ticket-investigation.js";
+import { registerDirectoryTools } from "./directory-tools.js";
+import { directoryHistory, listDirectory, resolveDirectoryRoute, saveDirectoryRequest } from "./support-directory.js";
 
 let context: PluginContext | null = null;
 
@@ -212,6 +214,7 @@ const plugin = definePlugin({
     registerInteractiveTools(ctx, () => config(ctx));
     registerOutboundTools(ctx, () => config(ctx));
     registerTicketTools(ctx, () => config(ctx));
+    registerDirectoryTools(ctx, () => config(ctx));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
     ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));
     ctx.jobs.register("protect-legacy-sources", async () => { await protectLegacySources(ctx, await config(ctx)); });
@@ -282,6 +285,18 @@ const plugin = definePlugin({
     }));
     ctx.data.register("support.setup", async (params) => {
       return getSupportSetup(ctx, await config(ctx), params.companyId);
+    });
+    ctx.data.register("support.directory", async (params) => {
+      const cfg = await config(ctx); assertCompanyAccess(cfg,params.companyId);
+      return listDirectory(ctx,cfg,params.companyId,params);
+    });
+    ctx.data.register("support.directoryHistory", async (params) => {
+      const cfg = await config(ctx); assertCompanyAccess(cfg,params.companyId);
+      return directoryHistory(ctx,cfg,params.companyId,params.recordId);
+    });
+    ctx.data.register("support.ownerRoute", async (params) => {
+      const cfg = await config(ctx); assertCompanyAccess(cfg,params.companyId);
+      return resolveDirectoryRoute(ctx,cfg,params.companyId,params);
     });
     ctx.data.register("support.cases", async (params) => {
       const cfg = await config(ctx);
@@ -386,7 +401,7 @@ const plugin = definePlugin({
   },
   async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
     if (!context) return { status: 503, body: { error: "Support Desk is starting" } };
-    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.ticket.outcome" && input.routeKey !== "cases.ticket.resume" && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
+    if (input.routeKey !== "directory.save" && !input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.ticket.outcome" && input.routeKey !== "cases.ticket.resume" && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
         input.routeKey !== "remote.identity.setup" &&
         input.routeKey !== "cases.issue.create" && input.routeKey !== "cases.review" &&
         input.routeKey !== "cases.sync" && input.routeKey !== "cases.remote.identity" && input.routeKey !== "cases.work.start" &&
@@ -395,6 +410,7 @@ const plugin = definePlugin({
       return { status: 404, body: { error: "Unknown route" } };
     }
     try {
+      if (input.routeKey === "directory.save") return { status: 200,body: await saveDirectoryRequest(context,await config(context),input) };
       if (input.routeKey === "cases.ticket.outcome") {
         if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:repair") throw new IntakeError(403,"Authorized repair operator required");
         const body = input.body as Record<string,unknown> | null;

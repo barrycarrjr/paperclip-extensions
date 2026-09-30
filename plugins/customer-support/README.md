@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+Current development adds a reviewed company support directory for vendor contacts, responsible people/teams, equipment/warranties, brands, owner routing and specialist connection references. Clippy and assigned ticket agents can look up company records; operator writes require confirmation, current versions and same-company links. The Support page provides editing, revision history, owner lookup and installation checks that explicitly distinguish running plugins from tested connections. Company SOPs continue through the existing knowledge tools. This milestone is not released and does not yet add the specialist adapters or operational actions listed in the operations plan.
+
 Current development completes the opt-in Slack ticket handoff: an assigned agent proposes an evidenced catalog repair; a repair operator reviews and confirms its exact action in Clippy or the dashboard; the existing engine executes once and verifies separately. Changed requester evidence, company policy, source route, target or saved access invalidates the proposal. Recorded results are posted to the original thread under separately enabled update policy. An operator must confirm the original symptom to close the case; a command exit code or unauthenticated Slack reply cannot close it. Vendor software uses a filtered public-support draft and the existing reviewed email/form path. This build is not released.
 
 Current development adds opt-in Slack ticket investigations through a configured company agent and fixed diagnostic policy. New protected requests create durable assigned Paperclip work; issue ownership, agent availability, current routes and policy are checked on every agent call. The Support page includes a guided policy form and investigation status. Automatic original-thread progress/findings use the pinned intake bot with chat:write, explicit policy authorization and one-attempt receipts, separate from human-approved connector delivery. Bot replies cannot feed the investigation loop; requester replies resume waiting work. Interrupted/incomplete runs need operator review. This stage grants no automatic repair approval and is not released.
@@ -141,6 +143,31 @@ For a read-only transport test, run `Get-SupportIdentity.ps1` through the same r
 ```powershell
 .\scripts\Invoke-SupportRemoteScript.ps1 -Target workstation.example.local -Company 'Company Alpha' -CaseReference 'CASE-EXAMPLE' -ScriptPath .\scripts\Get-SupportIdentity.ps1 -Transport Auto -Credential (Get-Credential -UserName 'EXAMPLE\support-agent' -Message 'Account for the read-only connection test')
 ```
+
+## Company support directory
+
+Open a company's **Support → Company support directory: vendors, equipment and owners**. Windows access or an incoming route/discovery network must already enable Support Desk for that company. No company-specific contacts, domains, folders or equipment names ship in the plugin.
+
+1. Add **Responsible people and teams**, then **Vendors**. An owner can optionally link to an existing company agent. Contact information is reference data; saving it does not send a message or assign work.
+2. Add **Equipment and warranties**, linking its responsible owner and service vendor. Record the manufacturer, model, serial, location and warranty date. Equipment records do not grant remote access or implement physical machine controls.
+3. Add **Brands and signatures** as needed. Reply addresses/domains/signatures are saved company data; outbound adapters do not yet automatically apply these brand settings.
+4. Add **Owner routing** for a support area. Optionally restrict a rule to exact saved equipment and/or brand. **Who should handle this?** previews matching routes and contacts. Matching specific rules supersede general ones. Equal specificity requires clarification; unspecified equipment/brand uses general rules only. Software bugs still use the configured public vendor reporting route. Facilities and warehouse go to their responsible owner.
+5. Use **Specialist connections** to link a plugin key and its already saved account/workspace key. Open its settings from the record. Status distinguishes installation unknown, missing, inactive, and running but untested. This stores a reference; it does not configure that plugin, verify an account, implement an adapter, or run a connectivity test.
+
+Publishing or editing records requires **Approve and run repairs** (`support:repair`) and exact confirmation. The form previews the record before **Confirm and save record**. Edits require the current version; concurrent/stale edits are rejected. Previous record snapshots, reviewer and time are retained atomically with the save and can be inspected with **Review saved revisions**. Activity records contain record IDs, type and version, not contact values. Recognizable credentials and unsafe support URLs are rejected; passwords/tokens belong in Secrets. This filter cannot detect every unlabeled secret. Records are company-isolated, and linked records must have the expected type in the same company. No delete/archive operation is exposed in this milestone.
+
+In Clippy, try “Who handles facilities requests?” or “Find the service contact for this equipment.” Tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `support_search_directory` | Search reviewed company contacts, equipment, brands and connection links. Returns at most 20 records; narrow a truncated search. |
+| `support_save_directory` | Publish/edit one exact confirmed company record; never sends messages or changes equipment. |
+| `support_resolve_owner` | Resolve saved area/equipment/brand routing and return related contacts; ambiguity needs clarification. |
+| `support_lookup_ticket_directory` | Assigned, checked-out ticket agent reads company records or routing under its current policy. Cannot write directory records or authorize a repair. |
+
+`support_get_ticket` includes a bounded directory index; the lookup tool retrieves details. Staff SOPs use the existing `support_search_knowledge` / confirmed `support_save_knowledge` tools and remain visible in the reference library. Directory relationships do not change company agent permissions or remote target scopes.
+
+This milestone does not implement job-folder search/creation, preflight, UniFi access, deeper hardware diagnostics, storefront/order access, mailbox administration, automatic brand signatures, equipment consumables/service history, specialist test dispatch, or a daily support summary. See [the operations milestones](../../doc/plans/2026-09-30-support-operations.md).
 
 ## Reviewed replies and vendor emails
 

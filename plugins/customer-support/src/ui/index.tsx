@@ -11,6 +11,7 @@ import { SupportMessages } from "./SupportMessages.js";
 import type { OutboundRow } from "../support-outbound.js";
 import type { SupportSetup } from "../support-setup.js";
 import { SupportReadiness } from "./SupportReadiness.js";
+import { SupportDirectory } from "./SupportDirectory.js";
 
 interface CaseRow {
   id: string;
@@ -393,6 +394,7 @@ export function SupportPage(_props: PluginPageProps) {
     {companyId && <DiscoverySetup key={companyId} companyId={companyId} />}
     {companyId && <TicketSetup key={`tickets:${companyId}`} companyId={companyId} />}
     {companyId && <SupportToolkit key={companyId} companyId={companyId} />}
+    {companyId && <SupportDirectory key={`directory:${companyId}`} companyId={companyId} />}
     {error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load cases: {String(error)}</p>}
     {overview.error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load overview: {String(overview.error)}</p>}
     {loading && <p className="text-sm text-muted-foreground">Loading cases…</p>}

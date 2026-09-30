@@ -12,6 +12,8 @@ import { withRemoteSlot } from "./remote-task-queue.js";
 import type { Config,IncomingMessage } from "./routing.js";
 import { proposeTicketRepair,runOperatorTicketRepair,recordTicketOutcome,draftTicketEscalation } from "./ticket-completion.js";
 import { listSupportActions,decideSupportAction,executeSupportAction } from "./support-actions.js";
+import { saveDirectory } from "./support-directory.js";
+import { registerDirectoryTools } from "./directory-tools.js";
 
 const namespace = "plugin_customer_support_0c69412611";
 const companyId = "11111111-1111-4111-8111-111111111111";
@@ -72,6 +74,24 @@ test("policy-enabled intake creates durable investigation work once, preserves s
     assert.ok(!JSON.stringify([...f.issues.values()]).includes("synthetic-source-value"));
     assert.equal(ticket.actions.length,0); assert.equal(f.posts.length,0);
     assert.equal((await f.db.query(`SELECT * FROM ${namespace}.support_actions`)).rows.length,0);
+  } finally { await f.db.close(); }
+});
+
+test("assigned ticket agents read the reviewed directory through checkout but cannot publish or bypass ownership",async () => {
+  const f = await fixture();
+  try {
+    const owner = await saveDirectory(f.ctx,f.config(),companyId,"operator",{ kind: "owner",name: "Facilities team",details: { contactName: "Facilities manager",email: "facilities@example.com" } });
+    await saveDirectory(f.ctx,f.config(),companyId,"operator",{ kind: "route",name: "Building requests",details: { area: "facilities",ownerId: owner.id } });
+    await dispatchTickets(f.ctx,f.getConfig);
+    const ticket = await getTicket(f.ctx,f.config(),run,{ caseId: f.caseId });
+    assert.equal(ticket.directory.records.length,2);assert.ok(!JSON.stringify(ticket.directory).includes("facilities@example.com"));
+    const handlers = new Map<string,(params: unknown,run: ToolRunContext) => Promise<any>>();
+    registerDirectoryTools({ ...f.ctx,tools: { register: (name: string,_tool: unknown,handler: any) => handlers.set(name,handler) } } as unknown as PluginContext,f.getConfig);
+    const lookup = { caseId: f.caseId,area: "facilities" };
+    const result = await handlers.get("support_lookup_ticket_directory")!(lookup,run);
+    assert.equal(result.data.status,"matched");assert.equal(result.data.related[0].details.email,"facilities@example.com");
+    assert.ok((await handlers.get("support_save_directory")!({ kind: "vendor",name: "Unapproved",details: {} },run)).error);
+    f.setOwns(false);assert.ok((await handlers.get("support_lookup_ticket_directory")!(lookup,run)).error);
   } finally { await f.db.close(); }
 });
 

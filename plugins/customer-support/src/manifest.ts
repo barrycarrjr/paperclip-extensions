@@ -3,6 +3,7 @@ import { interactiveTools } from "./interactive-tools.js";
 import { outboundTools } from "./outbound-tools.js";
 import { setupPermissions } from "./support-setup.js";
 import { ticketTools } from "./ticket-tools.js";
+import { directoryTools } from "./directory-tools.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -39,7 +40,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",
@@ -63,6 +64,10 @@ const manifest: PaperclipPluginManifestV1 = {
 1. Select the company in Paperclip and open **Support**.
 2. Under **Connect Windows support**, enter the Windows account and the trusted DNS domain or office IPv4 range that contains the company's computers. Choose a password secret or create one in the same form. The account and allowed computer group are saved in Support Desk settings; the password is stored in Paperclip Secrets.
 3. Click **Save access group**. Enter one computer under **Computer to test** and click **Test identity (read only)**. You do not register each computer. This test works before any help desk connection is configured. For WMI, if the test says scripts are disabled, select **Allow PowerShell scripts for this WMI task only** and save again. That option changes only the launched process, not the computer's saved execution policy.
+
+## Save company contacts and owner routing
+
+Open **Support → Company support directory: vendors, equipment and owners**. Add responsible people/teams and vendors first; link them to equipment and owner routing rules. Optionally save brand details and specialist plugin/account references. Review the form, then confirm the exact record. Passwords remain in Secrets. Clippy can search contacts or ask who handles a support area; unclear routing requires clarification. Installation status does not verify a specialist account or implement its adapter. Staff SOPs use the existing company knowledge tools.
 
 ## Use IT tools in Clippy
 
@@ -206,6 +211,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     required: ["connections"],
   },
   apiRoutes: [
+    { routeKey: "directory.save",method: "POST",path: "/directory",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     { routeKey: "cases.ticket.outcome",method: "POST",path: "/cases/:caseId/ticket/outcome",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     { routeKey: "cases.ticket.resume",method: "POST",path: "/cases/:caseId/ticket/resume",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     { routeKey: "cases.source.read",method: "POST",path: "/cases/:caseId/messages/:messageId/protected-source",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },

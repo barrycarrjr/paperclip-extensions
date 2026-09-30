@@ -15,6 +15,7 @@ import { listSupportActions } from "./support-actions.js";
 import { listOutbound } from "./support-outbound.js";
 import { supportReferences, referenceUrl } from "./support-references.js";
 import { repairRecipes } from "./repair-catalog.js";
+import { listDirectory } from "./support-directory.js";
 
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const originKind = "plugin:customer-support:investigation" as const;
@@ -73,7 +74,9 @@ export async function getTicket(ctx: PluginContext,cfg: Config,run: ToolRunConte
   const messages = await ctx.db.query(`SELECT id,author_kind,body,occurred_at,attachments FROM ${ns(ctx)}.support_messages
     WHERE company_id=$1 AND case_id=$2 AND source_protection_version=1 ORDER BY occurred_at DESC LIMIT 30`, [run.companyId,ticket.job.case_id]);
   const knowledge = await ctx.db.query<{ title: string; body: string; topic: string; kind: string; created_at: string }>(`SELECT title,body,topic,kind,created_at FROM ${ns(ctx)}.support_knowledge WHERE company_id=$1 ORDER BY created_at DESC LIMIT 20`,[run.companyId]);
+  const directory = await listDirectory(ctx,cfg,run.companyId,{},50);
   return { caseId: ticket.job.case_id,title: redactSource(ticket.supportCase.title),status: ticket.job.status,
+    directory: { records: directory.records.map(record => ({ id: record.id,kind: record.kind,name: record.name,area: record.details.area })),truncated: directory.truncated,instruction: directory.instruction,lookupTool: "support_lookup_ticket_directory" },
     knowledge: knowledge.map(row => ({ ...row,title: redactSource(row.title),body: redactSource(row.body),topic: redactSource(row.topic) })),
     references: supportReferences.map(item => ({ id: item.id,title: item.title,topic: item.topic,url: referenceUrl(item) })),repairRecipes,
     softwareRoutes: (cfg.softwareRoutes ?? []).filter(route => route.reportingCompanyId === run.companyId).map(route => ({ id: route.id,productName: redactSource(route.productName),destinationKind: route.destinationKind })),
