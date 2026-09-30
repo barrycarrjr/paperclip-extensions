@@ -39,6 +39,8 @@ Equipment history section implemented: company equipment-linked immutable fault/
 
 Production handoff section implemented: saved preflight software/procedures, exact file/version handoffs, immutable operator-confirmed report findings and unavailable checks, plus built-in vendor software reporting routes/instructions. Opening/preparing a report never claims submission; a real provider reference is required for a manual submission record. No customer files are uploaded or analyzed during development. Automated production-software connectors require a supported vendor integration.
 
+UniFi observation section implemented in a separate reusable connector: official local Integration API, explicit company/site ownership, Secrets, verified TLS, bounded device/client/firmware/statistic observations and Support Desk receipts. Synthetic HTTP tests cover redirects, response bounds, partial failures and revoked access. Local controller compatibility needs a live read pilot. Approved network actions, configuration backups and an MCP alternative remain separate work.
+
 - Help desk: connect existing Help Scout tools to Support Desk intake/replies; brand-aware mailbox routing, tags, assignment and signatures. Mailbox/account changes require separate reviewed actions.
 - Network: a company-authorized UniFi connector/MCP; controller/AP/client/firmware observations, with approved scoped changes and disruption/verification/recovery details.
 - Phones: reuse 3CX and phone-assistant tools; diagnose extensions, voicemail, routing, desk/softphones, SBCs and hosting dependencies. Explicitly distinguish those components.

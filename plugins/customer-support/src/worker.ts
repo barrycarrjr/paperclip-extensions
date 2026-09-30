@@ -227,7 +227,7 @@ const plugin = definePlugin({
     registerSpecialistObservationTools(ctx, () => config(ctx));
     registerEquipmentTools(ctx, () => config(ctx));
     registerPreflightTools(ctx, () => config(ctx));
-    for (const provider of ["help-scout", "3cx-tools"]) ctx.events.on(`plugin.${provider}.support-observation-receipt`, event => recordSpecialistObservation(ctx, event));
+    for (const provider of ["help-scout", "3cx-tools", "unifi-tools"]) ctx.events.on(`plugin.${provider}.support-observation-receipt`, event => recordSpecialistObservation(ctx, event));
     ctx.jobs.register("daily-support-summaries", () => runDailySummaries(ctx, () => config(ctx)));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
     ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));

@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: `support_check_specialist` now supports the new optional `unifi-tools` companion. Save its company controller/site configuration and a Specialist connections account reference. Request `site` or `device` observations; receipt/profile/company guards remain enforced. This section supplies live API reads, not network configuration changes or an installed MCP server.
+
 - Foundation development: company **Preflight procedures** and `support_prepare_preflight`, confirmed `support_record_preflight_result`, and `support_preflight_history` delegate file checks to existing production software. Findings retain actual software/report/file-version references and explicit `operator_attested` provenance; Support Desk does not inspect/upload files or replace the preflight engine. Software escalation settings now accept `built_in` reporting with saved product-menu instructions and a manual provider-reference handoff, alongside email/Jira routes.
 
 - Foundation development: added `support_equipment_history`, confirmed append-only `support_record_equipment_event`, and `support_prepare_equipment_service`. Company equipment records now have recurring 90-day fault-code counts, consumable/service history and linked warranty/vendor/owner context. A service request is a draft until separately delivered/booked; operator history is not telemetry or proof a physical intervention occurred. Corrections append new evidence; duplicate IDs cannot overwrite it.
