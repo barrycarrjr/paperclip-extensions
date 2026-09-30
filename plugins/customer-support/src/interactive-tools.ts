@@ -6,12 +6,16 @@ import { diagnosticChecks, diagnosticIds } from "./diagnostic-catalog.js";
 import { repairRecipes, prepareRepair } from "./repair-catalog.js";
 import { searchReferences, readReference } from "./support-references.js";
 import { searchKnowledge, saveKnowledge, listDevices } from "./support-knowledge.js";
+import { discoverDevices, discoveryPorts } from "./network-discovery.js";
 
 const scope = { caseId: { type: "string" }, target: { type: "string", description: "Exact resolved hostname returned by support_open_case" }, expectedReviewVersion: { type: "integer" } };
 const repair = { ...scope, script: { type: "string", maxLength: 16384 }, verificationScript: { type: "string", maxLength: 16384 },
   expectedEffect: { type: "string", maxLength: 1000 }, recoveryNotes: { type: "string", maxLength: 2000 } };
 const repairRequired = Object.keys(repair);
 export const interactiveTools: NonNullable<PaperclipPluginManifestV1["tools"]> = [
+  { name: "support_discover_devices", displayName: "Discover office network devices", requiredUserPermission: "support:diagnose", executionTimeoutMs: 60_000,
+    description: "Scan a saved company office IPv4 network live from the Paperclip host through its existing network/VPN. Use when asked to discover devices, scan the office network, or look for visible network issues. No ticket or named computer is required. Checks ping and common Windows, web, SSH and printer TCP ports; returns observed IPs, names, ports, timestamps and partial-scan limits. Omit networkId to use the sole saved range or list choices. A missing range needs setup under Support → Discover office devices; no separate monitoring plugin is required. Discovery is not a health check: investigate a returned remoteTarget using support_open_case and diagnostics before claiming a problem or healthy device. No credentials or repairs run.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { networkId: { type: "string", description: "ID of one saved company discovery network" } } } },
   { name: "support_open_case", displayName: "Investigate a computer", requiredUserPermission: "support:diagnose", writes: true,
     description: "Investigate or troubleshoot a Windows computer, workstation or PC using the company's saved Windows support access and password secret. Start here when asked to investigate a hostname, slowness or a computer problem; no existing ticket, issue, printer or backup inventory entry is required. Open or resume this person's Clippy case with the named computer and a brief non-secret symptom summary. A unique company DNS domain can expand a short name. Ask when the target is ambiguous. Report the resolved computer, then use support_diagnose_case for actual findings. Do not infer missing credentials from a local shell failure or ask for a password in chat. This does not authorize repairs.",
     parametersSchema: { type: "object", additionalProperties: false, properties: { target: { type: "string" }, summary: { type: "string", maxLength: 300 } }, required: ["target", "summary"] } },
@@ -67,7 +71,7 @@ export const interactiveTools: NonNullable<PaperclipPluginManifestV1["tools"]> =
     description: "Ask the person to confirm publishing a concise non-secret company environment note, procedure or verified fix. Include applicability, evidence, steps, verification and recovery where relevant. A verified_fix requires an action with successful recorded verification in this person's case. This does not prove the original symptom was resolved or make the procedure universally safe. Passwords remain in Secrets.",
     parametersSchema: { type: "object", additionalProperties: false, properties: { title: { type: "string", maxLength: 150 }, topic: { type: "string", maxLength: 60 }, body: { type: "string", maxLength: 4000 }, kind: { type: "string", enum: ["environment", "procedure", "verified_fix"] }, caseId: scope.caseId, actionId: { type: "string" } }, required: ["title", "topic", "body", "kind"] } },
   { name: "support_list_devices", displayName: "Find previously investigated computers", requiredUserPermission: "support:diagnose",
-    description: "List this company's last 50 device inventory snapshots within currently configured access groups, with observation dates. This is previous evidence, not a live network scan or proof of access. Open the named computer case and refresh inventory before diagnosing a new incident.",
+    description: "List this company's last 50 device inventory snapshots and previous discovery results with observation dates. This is historical evidence, not a live network scan or proof of access. Use support_discover_devices for live network discovery. Open the named computer case and refresh diagnostics before diagnosing a new incident.",
     parametersSchema: { type: "object", additionalProperties: false, properties: {} } },
 ];
 
@@ -81,6 +85,7 @@ export function registerInteractiveTools(ctx: PluginContext, config: () => Promi
         const actor = person(run);
         if (!companyHasSupport(cfg, actor.companyId)) throw new IntakeError(403, "Support Desk is not configured for this company");
         const result = await (tool.name === "support_open_case" ? openInteractiveCase(ctx, cfg, run, body)
+          : tool.name === "support_discover_devices" ? discoverDevices(ctx, cfg, run, body)
           : tool.name === "support_diagnose_case" ? diagnoseInteractiveCase(ctx, cfg, run, body)
           : tool.name === "support_delegate_case" ? delegateInteractiveCase(ctx, cfg, run, body)
           : tool.name === "support_run_repair" ? runInteractiveRepair(ctx, cfg, run, body, false)
@@ -88,6 +93,7 @@ export function registerInteractiveTools(ctx: PluginContext, config: () => Promi
           : tool.name === "support_end_delegation" ? endInteractiveDelegation(ctx, cfg, run, body)
           : tool.name === "support_record_outcome" ? recordInteractiveOutcome(ctx, cfg, run, body)
           : tool.name === "support_list_capabilities" ? { diagnostics: diagnosticChecks, repairRecipes,
+            discovery: { tool: "support_discover_devices", ports: discoveryPorts, limits: "One saved company IPv4 network, /24 to /32, 30 seconds per scan. Reachability is not health." },
             knowledge: ["support_search_references", "support_read_reference", "support_search_knowledge", "support_save_knowledge", "support_list_devices"],
             instruction: "Diagnose first. Recipes only prepare scripts; execution still needs repair permission and inline consent or active case delegation. Arbitrary PowerShell repairs remain available through the existing confirmed repair tool. Missing capabilities must be reported, not silently installed. Company-wide directory or GPO changes need explicit explanation of their wider effect; single-computer delegation is not permission to change other devices." }
           : tool.name === "support_prepare_repair" ? prepareRepair(ctx, cfg, run, body)

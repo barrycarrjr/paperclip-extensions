@@ -15,9 +15,11 @@ test("knowledge and capability tools require host permission, a person and a con
   registerInteractiveTools(ctx, async () => cfg);
   const run: ToolRunContext = { companyId, userId: "operator", chatSessionId: "chat", agentId: "", runId: "turn", userPermission: "support:diagnose" };
   const catalog = callbacks.get("support_list_capabilities")!;
+  assert.ok(callbacks.has("support_discover_devices"));
   assert.ok((await catalog({}, run)).data);
   for (const invalid of [{ ...run, userPermission: undefined }, { ...run, userId: null }, { ...run, companyId: "22222222-2222-4222-8222-222222222222" }]) {
     assert.ok((await catalog({}, invalid)).error);
+    assert.ok((await callbacks.get("support_discover_devices")!({}, invalid)).error);
     assert.ok((await callbacks.get("support_search_knowledge")!({ query: "printer" }, invalid)).error);
   }
   assert.ok((await callbacks.get("support_save_knowledge")!({ title: "Note", topic: "printers", body: "Steps", kind: "procedure" }, { ...run, userPermission: "support:repair", userConfirmed: false })).error);

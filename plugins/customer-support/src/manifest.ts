@@ -63,6 +63,8 @@ const manifest: PaperclipPluginManifestV1 = {
 
 Open Clippy in the company and ask it to investigate a computer, troubleshoot a printer, or explain a Group Policy problem. It can discover the diagnostic catalog, inspect available modules, consult current official references, and prepare a repair for confirmation in the conversation. Technical reference questions do not require a computer or incoming ticket. Official article retrieval needs outbound HTTPS to Microsoft Learn; no extra API key is needed. Company notes and previously investigated computers appear under **IT tools, devices and reference library** on Support. Passwords stay in Secrets.
 
+For live network discovery, open **Support → Discover office devices**, save the office IPv4 network (for example 192.0.2.0/24), then ask Clippy to scan the office network. Each saved network belongs to one company and covers /24 to /32. No password is needed. This is separate from Windows administration access. Discovery reports ping, common TCP services and device names where available; firewalls and sleeping devices can be missed. It does not prove that the devices are healthy. Clippy can investigate an allowed Windows target from those results using the saved access group.
+
 After a change, Clippy reports the recorded repair and verification results and asks whether the original problem is gone when it cannot observe that remotely. Confirm recording the outcome in the conversation: resolved, still present, or needs follow-up. Recording ends previous delegation. If a problem returns, Clippy can reopen the case with your confirmation; unknown repair outcomes still require inspection.
 
 ## Receive support requests
@@ -71,7 +73,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["connections", "softwareRoutes", "remoteAccessProfiles"],
+    propertyOrder: ["connections", "softwareRoutes", "remoteAccessProfiles", "discoveryNetworks"],
     properties: {
       connections: {
         type: "array",
@@ -175,6 +177,15 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
           },
           required: ["id", "companyId", "credentialUser", "passwordRef"],
         },
+      },
+      discoveryNetworks: {
+        type: "array", title: "Office device discovery networks",
+        description: "Saved IPv4 networks for ping and common service-port discovery. Separate from remote administration access. Use the selected company's Support page for guided setup.",
+        items: { type: "object", additionalProperties: false, properties: {
+          id: { type: "string", title: "Network ID", maxLength: 120 },
+          companyId: { type: "string", format: "company-id", title: "Company" },
+          cidr: { type: "string", title: "IPv4 network (/24 to /32)", description: "For example 192.0.2.0/24. One network per scan." },
+        }, required: ["id", "companyId", "cidr"] },
       },
     },
     required: ["connections"],

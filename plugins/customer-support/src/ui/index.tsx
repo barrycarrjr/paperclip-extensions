@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useHostContext, usePluginData, type PluginPageProps, type PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { RemoteSetup } from "./RemoteSetup.js";
+import { DiscoverySetup } from "./DiscoverySetup.js";
 import { SupportToolkit } from "./SupportToolkit.js";
 import { SupportMessages } from "./SupportMessages.js";
 import type { OutboundRow } from "../support-outbound.js";
@@ -381,6 +382,7 @@ export function SupportPage(_props: PluginPageProps) {
     </div>
     {companyId && <SupportReadiness key={companyId} companyId={companyId} companyPrefix={host.companyPrefix} setup={setup.data} loading={setup.loading} error={setup.error} refreshToken={setupVersion} onRefresh={refreshSetup} onDiagnosticPermission={setCanDiagnose} />}
     {companyId && <RemoteSetup companyId={companyId} onChanged={refreshSetup} canDiagnose={canDiagnose} />}
+    {companyId && <DiscoverySetup key={companyId} companyId={companyId} />}
     {companyId && <SupportToolkit key={companyId} companyId={companyId} />}
     {error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load cases: {String(error)}</p>}
     {overview.error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load overview: {String(overview.error)}</p>}

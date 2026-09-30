@@ -17,6 +17,7 @@ export interface Config {
   connections?: Connection[];
   softwareRoutes?: SoftwareRoute[];
   remoteAccessProfiles?: RemoteAccessProfile[];
+  discoveryNetworks?: { id: string; companyId: string; cidr: string }[];
 }
 
 export interface RemoteAccessProfile {
@@ -157,5 +158,6 @@ export function companyHasConnection(config: Config, companyId: string | null): 
 /** Direct Clippy support needs a remote access group, not an external help desk route. */
 export function companyHasSupport(config: Config, companyId: string | null): boolean {
   return !!companyId && (companyHasConnection(config, companyId) ||
+    (config.discoveryNetworks ?? []).some((network) => network.companyId === companyId) ||
     (config.remoteAccessProfiles ?? []).some((profile) => profile.companyId === companyId));
 }
