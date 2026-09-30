@@ -5,6 +5,7 @@ import { setupPermissions } from "./support-setup.js";
 import { ticketTools } from "./ticket-tools.js";
 import { directoryTools } from "./directory-tools.js";
 import { jobFolderTools } from "./job-folder-tools.js";
+import { skillSyncTools } from "./skill-sync.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -41,7 +42,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",

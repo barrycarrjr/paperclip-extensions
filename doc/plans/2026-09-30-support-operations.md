@@ -22,6 +22,8 @@ Job-folder section implemented: saved local file-server root/naming profiles, bo
 
 Workstation diagnostic section implemented: device/driver/storage provider observations, battery capacity with unsupported estimates marked unknown, bounded crash metadata and AI command/PATH availability. Windows tests use synthetic provider results and local metadata. MCP authentication, affected-user configuration, cloud sync and restoration are separate checks; tool availability proves none of them.
 
+Skill comparison section implemented: reviewed company source/backup profiles, bounded Markdown hashes retained on the remote host, local copy counts, redirected-root rejection and partial-result reporting. Cloud upload verification and a restore rehearsal still require the provider/restore integration; local matching copies never claim either.
+
 - Approved file-root profiles and naming templates, literal customer/date folder search, previewed folder/subfolder creation, and stale/misfiled-job reports. No automatic deletion or moves. Confirm actual roots and naming rules through company settings.
 - Hardware diagnostics: device/driver failures, battery health and bounded crash evidence; warranty linkage and official-source part compatibility research.
 - AI workstation diagnostics: PATH/environment, installed tools, skills, MCP connections, task execution and backup/sync freshness. Report unavailable checks and distinguish historical backup from restored/sync-verified data.

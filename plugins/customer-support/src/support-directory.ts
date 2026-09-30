@@ -39,13 +39,14 @@ export function validateDirectory(input: Record<string, unknown>) {
     details[field.key] = value;
   }
   if (recordKind === "file_root" && (!/^[a-z0-9][a-z0-9._-]*$/i.test(details.target!) || !validJobRoot(details.root!) || !validJobTemplate(details.namingTemplate!) || !validJobComponent(details.originalsFolder!))) throw new IntakeError(422,"Use a saved Windows server, an absolute local folder beneath a drive, the three template tokens once each, and a plain original-files subfolder name");
+  if (recordKind === "sync_check" && (!/^[a-z0-9][a-z0-9._-]*$/i.test(details.target!) || !validJobRoot(details.sourcePath!) || !validJobRoot(details.backupPath!) || details.sourcePath!.toLowerCase() === details.backupPath!.toLowerCase())) throw new IntakeError(422,"Use a saved Windows host and two distinct absolute local folders beneath a drive");
   return { kind: recordKind, name, details };
 }
 export async function saveDirectory(ctx: PluginContext, cfg: Config, companyId: string, userId: string, input: Record<string, unknown>) {
   access(cfg, companyId);
   if (!userId) throw new IntakeError(403, "A human operator must review this record");
   const value = validateDirectory(input);
-  if (value.kind === "file_root") resolveRemoteAccess(cfg,companyId,value.details.target!);
+  if (["file_root", "sync_check"].includes(value.kind)) resolveRemoteAccess(cfg,companyId,value.details.target!);
   const id = input.id === undefined ? randomUUID() : input.id;
   if (typeof id !== "string" || !uuid.test(id)) throw new IntakeError(422, "Record ID must be a UUID");
   const expected = input.id === undefined ? 0 : input.expectedVersion;

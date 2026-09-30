@@ -1,12 +1,13 @@
 /** Company records are data, never credentials, access grants or executable instructions. */
 export const supportAreas = ["production_equipment", "job_files", "preflight", "network", "hardware", "storefront", "software", "phones", "email", "automations", "facilities", "warehouse", "general"] as const;
-export const directoryKinds = ["vendor", "owner", "equipment", "route", "brand", "connection", "file_root"] as const;
+export const directoryKinds = ["vendor", "owner", "equipment", "route", "brand", "connection", "file_root", "sync_check"] as const;
 export type DirectoryKind = typeof directoryKinds[number];
 export interface DirectoryRecord {
   id: string; kind: DirectoryKind; name: string; details: Record<string, string>; version: number; updated_at: string;
 }
 export interface DirectoryField { key: string; label: string; required?: boolean; link?: DirectoryKind; options?: readonly string[]; multiline?: boolean }
 export const directoryFields: Record<DirectoryKind, DirectoryField[]> = {
+  sync_check: [{ key: "target", label: "Windows host (saved access)", required: true }, { key: "sourcePath", label: "Local source folder", required: true }, { key: "backupPath", label: "Local backup or cloud-sync folder", required: true }, { key: "notes", label: "Cloud provider and restoration procedure", multiline: true }],
   vendor: [{ key: "service", label: "What they service" }, { key: "phone", label: "Phone" }, { key: "email", label: "Support email" }, { key: "website", label: "Official support website" }, { key: "notes", label: "Notes", multiline: true }],
   owner: [{ key: "contactName", label: "Responsible person or team", required: true }, { key: "email", label: "Email" }, { key: "phone", label: "Phone" }, { key: "agentId", label: "Paperclip agent (optional)" }, { key: "notes", label: "Responsibilities", multiline: true }],
   equipment: [{ key: "manufacturer", label: "Manufacturer" }, { key: "model", label: "Model" }, { key: "serial", label: "Serial number" }, { key: "location", label: "Location" }, { key: "vendorId", label: "Service vendor", link: "vendor" }, { key: "ownerId", label: "Responsible person or team", link: "owner" }, { key: "warrantyEndsOn", label: "Warranty end date (YYYY-MM-DD)" }, { key: "notes", label: "Equipment notes", multiline: true }],

@@ -3,7 +3,7 @@ import { usePluginData } from "@paperclipai/plugin-sdk/ui";
 import { directoryFields, directoryKinds, specialistStatus, supportAreas, type DirectoryKind, type DirectoryRecord } from "../directory-schema.js";
 import { checkSetupPermission } from "./setup-client.js";
 
-const labels: Record<DirectoryKind,string> = { vendor: "Vendors",owner: "Responsible people and teams",equipment: "Equipment and warranties",route: "Owner routing",brand: "Brands and signatures",connection: "Specialist connections",file_root: "Job folders" };
+const labels: Record<DirectoryKind,string> = { vendor: "Vendors",owner: "Responsible people and teams",equipment: "Equipment and warranties",route: "Owner routing",brand: "Brands and signatures",connection: "Specialist connections",file_root: "Job folders",sync_check: "Skill backup checks" };
 const inputClass = "mt-1 block w-full rounded-md border border-border bg-background p-2 text-foreground";
 const button = "rounded-md border border-border px-3 py-1.5 disabled:opacity-50";
 type Directory = { records: DirectoryRecord[]; truncated: boolean };

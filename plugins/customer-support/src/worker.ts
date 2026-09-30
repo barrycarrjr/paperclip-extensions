@@ -35,6 +35,7 @@ import { dispatchTickets, enqueueTicket, recordTicketRunEnd, resumeTicket } from
 import { registerDirectoryTools } from "./directory-tools.js";
 import { directoryHistory, listDirectory, resolveDirectoryRoute, saveDirectoryRequest } from "./support-directory.js";
 import { registerJobFolderTools } from "./job-folder-tools.js";
+import { registerSkillSyncTools } from "./skill-sync.js";
 
 let context: PluginContext | null = null;
 
@@ -217,6 +218,7 @@ const plugin = definePlugin({
     registerTicketTools(ctx, () => config(ctx));
     registerDirectoryTools(ctx, () => config(ctx));
     registerJobFolderTools(ctx, () => config(ctx));
+    registerSkillSyncTools(ctx, () => config(ctx));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
     ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));
     ctx.jobs.register("protect-legacy-sources", async () => { await protectLegacySources(ctx, await config(ctx)); });
