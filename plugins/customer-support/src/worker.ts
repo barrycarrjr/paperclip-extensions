@@ -30,6 +30,7 @@ import { listAssets } from "./asset-inventory.js";
 import { printerHistory } from "./printer-support.js";
 import { protectSource, readProtectedSource, redactSource, protectLegacySources } from "./source-protection.js";
 import { registerTicketTools } from "./ticket-tools.js";
+import { afterTicketRepair, recordTicketOutcome } from "./ticket-completion.js";
 import { dispatchTickets, enqueueTicket, recordTicketRunEnd, resumeTicket } from "./ticket-investigation.js";
 
 let context: PluginContext | null = null;
@@ -221,18 +222,19 @@ const plugin = definePlugin({
     ctx.tools.register("support_propose_repair", proposeTool, async (params, runCtx) => {
       const body = params && typeof params === "object" && !Array.isArray(params) ? params as Record<string, unknown> : {};
       try {
+        if (!runCtx.userId || !runCtx.chatSessionId || runCtx.userPermission !== "support:repair") throw new IntakeError(403,"Use an authorized operator conversation; automatic tickets use support_propose_ticket_repair");
         const cfg = await config(ctx);
         assertCompanyAccess(cfg, runCtx.companyId);
         const result = await proposeSupportAction(ctx, cfg, {
           companyId: runCtx.companyId, caseId: body.caseId as string,
-          actorUserId: `agent:${runCtx.agentId}`, expectedReviewVersion: body.expectedReviewVersion as number,
+          actorUserId: runCtx.userId, expectedReviewVersion: body.expectedReviewVersion as number,
           script: body.script, verificationScript: body.verificationScript,
           expectedEffect: body.expectedEffect, recoveryNotes: body.recoveryNotes,
         });
         return { content: "Repair proposal created for board review. It has not been executed.",
           data: { actionId: result.id, status: result.status, scriptSha256: result.script_sha256 } };
       } catch (error) {
-        return { error: error instanceof Error ? error.message : "Repair proposal failed" };
+        return { error: error instanceof IntakeError ? error.message : "Repair proposal failed" };
       }
     });
     ctx.jobs.register("poll-slack-workflows", async () => {
@@ -374,7 +376,7 @@ const plugin = definePlugin({
       const actions = await listSupportActions(ctx, params.companyId as string, params.caseId);
       const diagnostics = await ctx.db.query(`SELECT check_kind,result,created_at FROM ${dbNamespace(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 ORDER BY created_at DESC LIMIT 20`, [params.companyId, params.caseId]);
       const outbound = await listOutbound(ctx,params.companyId as string,params.caseId);
-      const ticketJobs = await ctx.db.query(`SELECT agent_id,issue_id,status,target_address,failure_code,updated_at FROM ${dbNamespace(ctx)}.support_ticket_jobs WHERE company_id=$1 AND case_id=$2`, [params.companyId,params.caseId]);
+      const ticketJobs = await ctx.db.query(`SELECT latest_message_id,agent_id,issue_id,status,target_address,failure_code,updated_at FROM ${dbNamespace(ctx)}.support_ticket_jobs WHERE company_id=$1 AND case_id=$2`, [params.companyId,params.caseId]);
       return { supportCase: { ...cases[0], title: redactSource(cases[0].title) }, messages: messages.map(message => message.source_protection_version === 1
         ? message : { ...message, body: "[Legacy source awaiting encrypted migration]", author_external_id: null, attachments: [] }), actions, diagnostics, outbound, ticketJob: ticketJobs[0] ?? null, linkedIssue: linked ? {
         id: linked.id, identifier: linked.identifier, title: linked.title, status: linked.status,
@@ -384,7 +386,7 @@ const plugin = definePlugin({
   },
   async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
     if (!context) return { status: 503, body: { error: "Support Desk is starting" } };
-    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.ticket.resume" && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
+    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.ticket.outcome" && input.routeKey !== "cases.ticket.resume" && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
         input.routeKey !== "remote.identity.setup" &&
         input.routeKey !== "cases.issue.create" && input.routeKey !== "cases.review" &&
         input.routeKey !== "cases.sync" && input.routeKey !== "cases.remote.identity" && input.routeKey !== "cases.work.start" &&
@@ -393,6 +395,13 @@ const plugin = definePlugin({
       return { status: 404, body: { error: "Unknown route" } };
     }
     try {
+      if (input.routeKey === "cases.ticket.outcome") {
+        if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:repair") throw new IntakeError(403,"Authorized repair operator required");
+        const body = input.body as Record<string,unknown> | null;
+        if (!body || body.companyId !== input.companyId) throw new IntakeError(403,"Company mismatch");
+        return { status: 200,body: await recordTicketOutcome(context,() => config(context!),{ companyId: input.companyId,caseId: input.params.caseId,userId: input.actor.userId,
+          expectedReviewVersion: body.expectedReviewVersion as number,expectedMessageId: body.expectedMessageId,outcome: body.outcome,basis: body.basis,summary: body.summary,evidence: body.evidence }) };
+      }
       if (input.routeKey === "cases.ticket.resume") {
         if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:repair") throw new IntakeError(403, "Support repair operator required to resume investigation");
         if ((input.body as Record<string,unknown> | null)?.companyId !== input.companyId) throw new IntakeError(403, "Company mismatch");
@@ -486,15 +495,16 @@ const plugin = definePlugin({
           const result = await decideSupportAction(context, {
             companyId: input.companyId, caseId: input.params.caseId, actionId: input.params.actionId,
             actorUserId: input.actor.userId, decision: body.decision as "approved" | "rejected",
-          });
+          },cfg);
           return { status: 200, body: result };
         }
         if (input.routeKey === "cases.actions.execute") {
           const result = await executeSupportAction(context, cfg, {
             companyId: input.companyId, caseId: input.params.caseId, actionId: input.params.actionId,
             actorUserId: input.actor.userId,
-          });
-          return { status: 200, body: result };
+          },undefined,undefined,() => config(context!));
+          const delivery = await afterTicketRepair(context,() => config(context!),input.companyId,input.params.caseId,result);
+          return { status: 200, body: { ...result,delivery } };
         }
         if (input.routeKey === "cases.actions.reconcile") {
           const result = await markInterruptedActionUnknown(context, {
@@ -586,6 +596,8 @@ const plugin = definePlugin({
           return { status: 200, body: { messages } };
         }
         if (input.routeKey === "cases.review") {
+          const [ticket] = await context.db.query<{ status: string }>(`SELECT c.status FROM ${dbNamespace(context)}.support_ticket_jobs j JOIN ${dbNamespace(context)}.support_cases c ON c.company_id=j.company_id AND c.id=j.case_id WHERE j.company_id=$1 AND j.case_id=$2`,[input.companyId,input.params.caseId]);
+          if (ticket && (body.status === "resolved" || ticket.status === "resolved")) throw new IntakeError(409,"Use the ticket outcome confirmation to close or reopen this automated case");
           const result = await reviewCase(context, {
             companyId: input.companyId,
             caseId: input.params.caseId,

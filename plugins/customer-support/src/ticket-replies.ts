@@ -58,6 +58,7 @@ export async function sendTicketReply(ctx: PluginContext,getConfig: () => Promis
 
 export async function reportTicket(ctx: PluginContext,getConfig: () => Promise<Config>,run: ToolRunContext,input: Record<string,unknown>) {
   const ticket = await authorizedTicket(ctx,await getConfig(),run,input.caseId);
+  if (["awaiting_approval","resolved","needs_operator"].includes(ticket.job.status)) throw new IntakeError(409,"This ticket is awaiting operator review; the agent cannot resume or close it through a status report");
   if (typeof input.body !== "string" || !["investigating","waiting_requester","needs_operator","vendor_escalation"].includes(input.status as string)) throw new IntakeError(422, "Choose investigation, clarification, operator review or vendor escalation");
   const delivery = await sendTicketReply(ctx,getConfig,{ companyId: run.companyId,caseId: ticket.job.case_id,body: input.body,actorAgentId: run.agentId });
   await ctx.db.execute(`UPDATE ${ns(ctx)}.support_ticket_jobs SET status=$3,updated_at=now() WHERE company_id=$1 AND case_id=$2 AND status <> 'resolved'`,

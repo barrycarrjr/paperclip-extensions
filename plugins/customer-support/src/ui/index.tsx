@@ -4,6 +4,7 @@ import { RemoteSetup } from "./RemoteSetup.js";
 import { RestrictedSource } from "./RestrictedSource.js";
 import { TicketSetup } from "./TicketSetup.js";
 import { TicketProgress } from "./TicketProgress.js";
+import { TicketOutcome } from "./TicketOutcome.js";
 import { DiscoverySetup } from "./DiscoverySetup.js";
 import { SupportToolkit } from "./SupportToolkit.js";
 import { SupportMessages } from "./SupportMessages.js";
@@ -34,7 +35,7 @@ interface CaseRow {
   symptom_recorded_at?: string | null;
 }
 interface Detail {
-  ticketJob?: { agent_id: string; issue_id: string | null; status: string; failure_code: string | null; target_address: string | null } | null;
+  ticketJob?: { latest_message_id: string; agent_id: string; issue_id: string | null; status: string; failure_code: string | null; target_address: string | null } | null;
   outbound: OutboundRow[];
   diagnostics: { check_kind: string; result: unknown; created_at: string }[];
   supportCase: CaseRow;
@@ -44,6 +45,7 @@ interface Detail {
   escalation: { id: string; route_id: string; product_name: string; destination_kind: "email" | "jira_form";
     destination: string; title: string; evidence: string; status: "draft" | "submitted"; external_ticket_ref: string | null } | null;
   actions: { id: string; target_address: string; script_text: string; script_sha256: string;
+    ticket_proof?: { disruption: string } | null;
     verification_text: string; verification_sha256: string; expected_effect: string; recovery_notes: string;
     status: string; proposed_by_user_id: string; approved_by_user_id: string | null;
     repair_run_id: string | null; verification_run_id: string | null;
@@ -70,11 +72,11 @@ function SupportActions({ companyId, detail, onChanged }: { companyId: string; d
         method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ companyId, ...body }),
       });
-      const result = await response.json() as { error?: string; status?: string };
+      const result = await response.json() as { error?: string; status?: string; delivery?: { status: string } };
       if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
-      setNotice(result.status === "verified" ? "Repair and verification completed. Confirm the reported symptom before resolving the case."
+      setNotice((result.status === "verified" ? "Repair and verification completed. Confirm the reported symptom before resolving the case."
         : result.status === "unknown" ? "Outcome is unknown. Inspect the device before considering another action."
-          : `Action ${result.status ?? "saved"}.`);
+          : `Action ${result.status ?? "saved"}.`) + (result.delivery ? ` Original thread update: ${result.delivery.status}.` : ""));
       onChanged();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -117,6 +119,7 @@ function SupportActions({ companyId, detail, onChanged }: { companyId: string; d
     {detail.actions.map((action) => <div key={action.id} className="space-y-2 rounded-md border border-border p-3">
       <p><strong>{action.status}</strong> · {action.target_address} · SHA-256 {action.script_sha256}</p>
       <p>Expected effect: {action.expected_effect}</p>
+      {action.ticket_proof && <p>Disruption: {action.ticket_proof.disruption}</p>}
       <p>Recovery: {action.recovery_notes}</p>
       <details><summary className="cursor-pointer">Review exact repair and verification scripts</summary>
         <p className="mt-2 font-medium">Repair</p><pre className="overflow-x-auto whitespace-pre-wrap break-words rounded bg-background p-2">{action.script_text}</pre>
@@ -149,7 +152,7 @@ function SupportActions({ companyId, detail, onChanged }: { companyId: string; d
   </section>;
 }
 
-function CaseReviewForm({ companyId, supportCase, onSaved }: { companyId: string; supportCase: CaseRow; onSaved: () => void }) {
+function CaseReviewForm({ companyId, supportCase, onSaved,automated = false }: { companyId: string; supportCase: CaseRow; onSaved: () => void; automated?: boolean }) {
   const [serviceDomain, setServiceDomain] = useState(supportCase.service_domain);
   const [workKind, setWorkKind] = useState(supportCase.work_kind);
   const [status, setStatus] = useState(supportCase.status);
@@ -186,6 +189,7 @@ function CaseReviewForm({ companyId, supportCase, onSaved }: { companyId: string
 
   return <form onSubmit={save} className="space-y-3 rounded-md border border-border p-3">
     <h3 className="font-semibold">Review and route case</h3>
+    {automated && <p className="text-sm text-muted-foreground">Close or reopen this ticket using “Confirm the reported problem.” A review changes the target/classification and invalidates earlier repair approvals.</p>}
     <div className="grid gap-3 sm:grid-cols-3">
       <label className="text-sm">Service domain
         <select value={serviceDomain} onChange={(event) => {
@@ -210,7 +214,7 @@ function CaseReviewForm({ companyId, supportCase, onSaved }: { companyId: string
       <label className="text-sm">Status
         <select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-foreground">
           <option value="new">New</option><option value="triage">Triage</option>
-          <option value="waiting">Waiting</option><option value="resolved">Resolved</option>
+          <option value="waiting">Waiting</option><option value="resolved" disabled={automated}>Resolved</option>
         </select>
       </label>
     </div>
@@ -417,6 +421,7 @@ export function SupportPage(_props: PluginPageProps) {
         {caseId && !detail.loading && !detail.error && !selectedDetail && <p className="text-sm text-muted-foreground">Case not found.</p>}
         {selectedDetail && <div className="space-y-4">
           {companyId && selectedDetail.ticketJob && <TicketProgress key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} companyPrefix={host.companyPrefix} job={selectedDetail.ticketJob} onChanged={() => detail.refresh()} />}
+          {companyId && selectedDetail.ticketJob && <TicketOutcome key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} reviewVersion={selectedDetail.supportCase.review_version ?? 0} messageId={selectedDetail.ticketJob.latest_message_id} onChanged={() => detail.refresh()} />}
           {companyId && <SupportMessages key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} reviewVersion={selectedDetail.supportCase.review_version ?? 0} source={selectedDetail.supportCase.source} software={selectedDetail.supportCase.service_domain === "software"} routes={softwareRoutes.data ?? []} rows={selectedDetail.outbound ?? []} onChanged={() => detail.refresh()} />}
           <div><h2 className="text-lg font-semibold">{selectedDetail.supportCase.title}</h2>
             {selectedDetail.supportCase.external_url && <a href={selectedDetail.supportCase.external_url} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Open in source</a>}
@@ -428,7 +433,7 @@ export function SupportPage(_props: PluginPageProps) {
             </button>
             {syncError && <p role="alert" className="mt-2 text-sm text-destructive">{syncError}</p>}
           </div>}
-          {companyId && <CaseReviewForm key={`${companyId}:${selectedDetail.supportCase.id}:${selectedDetail.supportCase.review_version}`} companyId={companyId}
+          {companyId && <CaseReviewForm automated={!!selectedDetail.ticketJob} key={`${companyId}:${selectedDetail.supportCase.id}:${selectedDetail.supportCase.review_version}`} companyId={companyId}
             supportCase={selectedDetail.supportCase} onSaved={() => { detail.refresh(); refresh(); overview.refresh(); }} />}
           {companyId && selectedDetail.supportCase.target_address && ["it", "equipment"].includes(selectedDetail.supportCase.service_domain) &&
             <SupportActions key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} detail={detail.data!} onChanged={() => detail.refresh()} />}

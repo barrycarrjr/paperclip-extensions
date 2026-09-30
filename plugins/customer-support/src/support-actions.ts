@@ -4,6 +4,7 @@ import { IntakeError, type Config } from "./routing.js";
 import { resolveRemoteAccess } from "./remote-access.js";
 import { runRemoteActionScript, runRemoteActionScriptUnlocked } from "./remote-action.js";
 import { withRemoteSlot } from "./remote-task-queue.js";
+import { assertTicketActionCurrent, operatorTicketProof, type TicketProof } from "./ticket-action-proof.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
@@ -19,6 +20,7 @@ function text(value: unknown, name: string, max: number): string {
 }
 
 export interface SupportAction {
+  ticket_proof?: TicketProof | null;
   id: string;
   company_id: string;
   case_id: string;
@@ -59,6 +61,7 @@ async function readAction(ctx: PluginContext, input: { companyId: string; caseId
 export async function proposeSupportAction(ctx: PluginContext, cfg: Config, input: {
   companyId: string; caseId: string; actorUserId: string; expectedReviewVersion: number;
   script: unknown; verificationScript: unknown; expectedEffect: unknown; recoveryNotes: unknown;
+  ticketProof?: TicketProof; proposalKey?: string;
 }) {
   if (!uuid.test(input.companyId) || !uuid.test(input.caseId) || !input.actorUserId) throw new IntakeError(422, "Invalid action scope");
   if (!Number.isInteger(input.expectedReviewVersion) || input.expectedReviewVersion < 1) throw new IntakeError(422, "Review the target before proposing a repair");
@@ -77,15 +80,22 @@ export async function proposeSupportAction(ctx: PluginContext, cfg: Config, inpu
   if (!supportCase.target_address || !["it", "equipment"].includes(supportCase.service_domain)) throw new IntakeError(422, "Review an IT or equipment target first");
   if (supportCase.review_version !== input.expectedReviewVersion) throw new IntakeError(409, "Case review changed; refresh before proposing a repair");
   resolveRemoteAccess(cfg, input.companyId, supportCase.target_address);
+  input.ticketProof ??= await operatorTicketProof(ctx,cfg,input.companyId,input.caseId,supportCase.target_address,input.actorUserId);
+  await assertTicketActionCurrent(ctx,cfg,{ company_id: input.companyId,case_id: input.caseId,target_address: supportCase.target_address,ticket_proof: input.ticketProof });
+  if (input.proposalKey) {
+    const [existing] = await ctx.db.query<SupportAction>(`SELECT * FROM ${ns}.support_actions WHERE company_id=$1 AND case_id=$2 AND proposal_key=$3`,[input.companyId,input.caseId,input.proposalKey]);
+    if (existing) return existing;
+  }
   const actionId = randomUUID();
   const inserted = await ctx.db.execute(
     `INSERT INTO ${ns}.support_actions
       (company_id, case_id, case_review_version, target_address, script_text, script_sha256,
-       verification_text, verification_sha256, expected_effect, recovery_notes, proposed_by_user_id,id)
-     SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12
-     WHERE EXISTS (SELECT 1 FROM ${ns}.support_cases WHERE company_id=$1 AND id=$2 AND review_version=$3 AND target_address=$4 AND status <> 'resolved')`,
+       verification_text, verification_sha256, expected_effect, recovery_notes, proposed_by_user_id,id,ticket_proof,proposal_key)
+     SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14
+     WHERE EXISTS (SELECT 1 FROM ${ns}.support_cases WHERE company_id=$1 AND id=$2 AND review_version=$3 AND target_address=$4 AND status <> 'resolved')
+       AND ($13::jsonb IS NULL OR EXISTS (SELECT 1 FROM ${ns}.support_ticket_jobs WHERE company_id=$1 AND case_id=$2 AND latest_message_id=($13::jsonb->>'messageId')::uuid))`,
     [input.companyId, input.caseId, input.expectedReviewVersion, supportCase.target_address,
-      script, sha256(script), verification, sha256(verification), effect, recovery, input.actorUserId, actionId],
+      script, sha256(script), verification, sha256(verification), effect, recovery, input.actorUserId, actionId,input.ticketProof ? JSON.stringify(input.ticketProof) : null,input.proposalKey ?? null],
   );
   if (inserted.rowCount !== 1) throw new IntakeError(409, "Case target changed; refresh before proposing a repair");
   const action = await readAction(ctx, { ...input, actionId });
@@ -96,10 +106,13 @@ export async function proposeSupportAction(ctx: PluginContext, cfg: Config, inpu
 
 export async function decideSupportAction(ctx: PluginContext, input: {
   companyId: string; caseId: string; actionId: string; actorUserId: string; decision: "approved" | "rejected";
-}) {
+}, cfg?: Config) {
   if (![input.companyId, input.caseId, input.actionId].every((value) => uuid.test(value)) || !input.actorUserId) throw new IntakeError(422, "Invalid action scope");
   if (!["approved", "rejected"].includes(input.decision)) throw new IntakeError(422, "Invalid decision");
   const ns = namespace(ctx);
+  const [original] = await ctx.db.query<SupportAction>(`SELECT * FROM ${ns}.support_actions WHERE company_id=$1 AND case_id=$2 AND id=$3`,[input.companyId,input.caseId,input.actionId]);
+  if (!original) throw new IntakeError(409,"Action is missing in this company case");
+  if (input.decision === "approved") await assertTicketActionCurrent(ctx,cfg,original);
   const changed = await ctx.db.execute(
     `UPDATE ${ns}.support_actions AS a SET status=$4, approved_by_user_id=$5,
        approved_at=CASE WHEN $4='approved' THEN now() ELSE NULL END, updated_at=now()
@@ -111,6 +124,7 @@ export async function decideSupportAction(ctx: PluginContext, input: {
   );
   if (changed.rowCount !== 1) throw new IntakeError(409, "Action is missing, already decided, or its case target changed");
   const action = await readAction(ctx, input);
+  if (input.decision === "rejected" && action.ticket_proof) await ctx.db.execute(`UPDATE ${ns}.support_ticket_jobs SET status='needs_operator',failure_code='proposal_rejected',updated_at=now() WHERE company_id=$1 AND case_id=$2 AND proposal_action_id=$3`,[input.companyId,input.caseId,input.actionId]);
   await ctx.activity.log({ companyId: input.companyId, message: `Remote repair ${input.decision}`, entityType: "support_case", entityId: input.caseId,
     metadata: { actionId: input.actionId, actorUserId: input.actorUserId, scriptSha256: action.script_sha256 } });
   return action;
@@ -118,16 +132,17 @@ export async function decideSupportAction(ctx: PluginContext, input: {
 
 export async function executeSupportAction(ctx: PluginContext, cfg: Config, input: {
   companyId: string; caseId: string; actionId: string; actorUserId: string;
-}, runner: typeof runRemoteActionScript = runRemoteActionScriptUnlocked, beforeExecution?: () => Promise<void>) {
+}, runner: typeof runRemoteActionScript = runRemoteActionScriptUnlocked, beforeExecution?: () => Promise<void>, getConfig?: () => Promise<Config>) {
   if (![input.companyId, input.caseId, input.actionId].every((value) => uuid.test(value)) || !input.actorUserId) throw new IntakeError(422, "Invalid action scope");
   const action = await readAction(ctx, input);
-  return withRemoteSlot(action.target_address, () => executeSupportActionInSlot(ctx, cfg, input, runner, beforeExecution));
+  return withRemoteSlot(action.target_address, async () => executeSupportActionInSlot(ctx,getConfig ? await getConfig() : cfg,input,runner,beforeExecution));
 }
 
 async function executeSupportActionInSlot(ctx: PluginContext, cfg: Config, input: {
   companyId: string; caseId: string; actionId: string; actorUserId: string;
 }, runner: typeof runRemoteActionScript, beforeExecution?: () => Promise<void>) {
   const ns = namespace(ctx);
+  await assertTicketActionCurrent(ctx,cfg,await readAction(ctx,input));
   let claimed: { rowCount: number };
   try {
     claimed = await ctx.db.execute(
@@ -136,6 +151,7 @@ async function executeSupportActionInSlot(ctx: PluginContext, cfg: Config, input
      WHERE a.company_id=$1 AND a.case_id=$2 AND a.id=$3 AND a.status='approved'
        AND c.company_id=a.company_id AND c.id=a.case_id AND c.review_version=a.case_review_version
        AND c.target_address=a.target_address AND c.service_domain IN ('it','equipment') AND c.status <> 'resolved'
+       AND (a.ticket_proof IS NULL OR EXISTS (SELECT 1 FROM ${ns}.support_ticket_jobs j WHERE j.company_id=a.company_id AND j.case_id=a.case_id AND j.latest_message_id=(a.ticket_proof->>'messageId')::uuid))
        AND NOT EXISTS (SELECT 1 FROM ${ns}.support_actions prior JOIN ${ns}.support_cases prior_case
          ON prior_case.company_id=prior.company_id AND prior_case.id=prior.case_id
          WHERE lower(prior.target_address)=lower(a.target_address) AND prior.status='unknown'
@@ -162,6 +178,7 @@ async function executeSupportActionInSlot(ctx: PluginContext, cfg: Config, input
     }
     const access = resolveRemoteAccess(cfg, input.companyId, action.target_address);
     if (beforeExecution) await beforeExecution();
+    await assertTicketActionCurrent(ctx,cfg,action);
     const currentCase = await ctx.db.query<{ id: string }>(
       `SELECT id FROM ${ns}.support_cases WHERE company_id=$1 AND id=$2 AND review_version=$3
          AND target_address=$4 AND service_domain IN ('it','equipment') AND status <> 'resolved'`,

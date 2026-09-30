@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile,readdir } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
@@ -20,9 +20,7 @@ test("a company-scoped proposed repair needs a fresh board decision and runs onc
   const db = new PGlite();
   try {
     await db.exec(`CREATE SCHEMA ${namespace}`);
-    for (const name of ["001_init.sql", "002_issue_links.sql", "003_thread_context.sql", "004_case_review.sql",
-      "005_nonsoftware_work.sql", "006_issue_assignee.sql", "007_software_escalation.sql", "008_target_access.sql",
-      "009_connection_methods.sql", "010_email_source.sql", "011_support_actions.sql", "015_device_execution_guard.sql"]) {
+    for (const name of (await readdir(new URL("../migrations/",import.meta.url))).filter(name => name.endsWith(".sql")).sort()) {
       await db.exec(await readFile(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
     }
     await db.query(`INSERT INTO ${namespace}.support_cases

@@ -36,7 +36,7 @@ export async function protectSource(ctx: PluginContext, message: IncomingMessage
   return { secretRef: ref, message: { ...message, title: redactSource(message.title), body: redactSource(message.body),
     authorExternalId: message.authorExternalId ? redactSource(message.authorExternalId) : undefined,
     externalUrl: safeLink(message.externalUrl), attachments: message.attachments?.map(file => ({ ...file,
-      name: redactSource(file.name), permalink: safeLink(file.permalink) })) } };
+      id: redactSource(file.id),name: redactSource(file.name),mimeType: file.mimeType ? redactSource(file.mimeType) : undefined,permalink: safeLink(file.permalink) })) } };
 }
 
 /** Only a host-authorized repair operator can reveal the original in the dashboard.
@@ -58,13 +58,22 @@ export async function readProtectedSource(ctx: PluginContext, input: { companyId
  * Only pinned source accounts still mapped to the same company can be migrated. */
 export async function protectLegacySources(ctx: PluginContext, cfg: Config) {
   if (!/^plugin_[a-z0-9_]+$/.test(ctx.db.namespace)) throw new Error("Invalid support namespace");
+  const scopes: { companyId: string; connectionId: string; accountId: string; routeId: string }[] = [];
+  for (const connection of cfg.connections ?? []) for (const route of connection.routes ?? []) {
+    try { resolveConnection(cfg,{ companyId: route.companyId,connectionId: connection.id,externalAccountId: connection.externalAccountId,externalRouteId: route.externalRouteId } as IncomingMessage); }
+    catch { continue; }
+    scopes.push({ companyId: route.companyId,connectionId: connection.id,accountId: connection.externalAccountId,routeId: route.externalRouteId });
+  }
   const rows = await ctx.db.query<{ id: string; case_id: string; company_id: string; connection_id: string;
     external_route_id: string; external_conversation_id: string; external_message_id: string; title: string; body: string;
     author_kind: IncomingMessage["authorKind"]; occurred_at: string; author_external_id: string | null;
     attachments: IncomingMessage["attachments"]; external_url: string | null; source_account_id: string }>(
     `SELECT m.*,c.title,c.external_url,c.source_account_id FROM ${ctx.db.namespace}.support_messages m
      JOIN ${ctx.db.namespace}.support_cases c ON c.company_id=m.company_id AND c.id=m.case_id
-     WHERE m.source_protection_version=0 AND c.source_account_id IS NOT NULL ORDER BY m.occurred_at LIMIT 20`);
+     WHERE m.source_protection_version=0 AND c.source_account_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM jsonb_array_elements($1::jsonb) s WHERE s->>'companyId'=m.company_id::text
+         AND s->>'connectionId'=c.connection_id AND s->>'accountId'=c.source_account_id AND s->>'routeId'=c.external_route_id)
+     ORDER BY m.occurred_at LIMIT 20`,[JSON.stringify(scopes)]);
   let migrated = 0;
   for (const row of rows) {
     const message: IncomingMessage = { companyId: row.company_id, connectionId: row.connection_id,

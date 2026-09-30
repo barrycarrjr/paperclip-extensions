@@ -5,7 +5,7 @@ import { ns, ownedCase } from "./interactive-support.js";
 
 const hash = (value: string) => createHash("sha256").update(value.trim(), "utf8").digest("hex");
 interface RecoveryScript { script: string; verificationScript: string; expectedEffect: string; recoveryNotes: string }
-export async function rememberRecovery(ctx: PluginContext, run: ToolRunContext, caseId: string, target: string, version: number,
+export async function rememberRecovery(ctx: PluginContext, run: { companyId: string; userId?: string }, caseId: string, target: string, version: number,
   repair: { script: string; verificationScript: string }, priorState: Record<string, unknown>, recovery: Record<string, unknown>) {
   await ctx.db.execute(`INSERT INTO ${ns(ctx)}.support_recovery_plans(company_id,case_id,target_address,case_review_version,script_sha256,verification_sha256,prior_state,recovery,created_by_user_id)
     VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9) ON CONFLICT(company_id,case_id,script_sha256,verification_sha256) DO NOTHING`,

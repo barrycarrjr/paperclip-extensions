@@ -30,6 +30,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "agents.read",
     "issues.read",
     "issues.create",
+    "issues.update",
     "issues.wakeup",
     "issues.checkout",
     "agent.tools.register",
@@ -40,6 +41,7 @@ const manifest: PaperclipPluginManifestV1 = {
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
   tools: [...interactiveTools, ...outboundTools, ...ticketTools, {
     name: "support_propose_repair",
+    requiredUserPermission: "support:repair",
     displayName: "Propose support repair",
     description: "Propose an exact PowerShell repair and verification for an already reviewed IT or equipment case. This only creates a proposal; a board user must approve and start execution. Never place credentials or untrusted requester text into scripts.",
     writes: true,
@@ -204,6 +206,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     required: ["connections"],
   },
   apiRoutes: [
+    { routeKey: "cases.ticket.outcome",method: "POST",path: "/cases/:caseId/ticket/outcome",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     { routeKey: "cases.ticket.resume",method: "POST",path: "/cases/:caseId/ticket/resume",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     { routeKey: "cases.source.read",method: "POST",path: "/cases/:caseId/messages/:messageId/protected-source",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     ...setupPermissions.map(action => ({ routeKey: `setup.permission.${action}`,method: "GET" as const,path: `/setup/permissions/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "query" as const,key: "companyId" },requiredUserPermission: `support:${action}` as const })),
@@ -235,6 +238,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "cases.review",
+      requiredUserPermission: "support:repair",
       method: "POST",
       path: "/cases/:caseId/review",
       auth: "board",
@@ -260,6 +264,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "cases.actions.propose",
+      requiredUserPermission: "support:repair",
       method: "POST",
       path: "/cases/:caseId/actions",
       auth: "board",
@@ -286,6 +291,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "cases.actions.reconcile",
+      requiredUserPermission: "support:repair",
       method: "POST",
       path: "/cases/:caseId/actions/:actionId/reconcile",
       auth: "board",

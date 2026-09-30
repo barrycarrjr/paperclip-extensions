@@ -82,16 +82,22 @@ export function buildRepairRecipe(operation: string, input: unknown) {
 export async function prepareRepair(ctx: PluginContext, cfg: Config, run: ToolRunContext, input: Record<string, unknown>) {
   if (run.userPermission !== "support:repair") throw new IntakeError(403, "Repair permission required");
   const supportCase = await ownedCase(ctx, cfg, run, input.caseId);
+  return prepareCaseRecipe(ctx,cfg,{ companyId: run.companyId,actorId: run.userId! },supportCase,input);
+}
+
+/** Preparation stores evidence/recovery only. It grants neither approval nor execution authority. */
+export async function prepareCaseRecipe(ctx: PluginContext,cfg: Config,actor: { companyId: string; actorId: string },
+  supportCase: { id: string; target_address: string; review_version: number; status: string },input: Record<string,unknown>) {
   if (supportCase.status === "resolved") throw new IntakeError(409, "Case is resolved; review it before a new repair");
   if (input.options !== undefined && (!input.options || typeof input.options !== "object" || Array.isArray(input.options))) throw new IntakeError(422, "Repair options must be an object");
   const options = { ...((input.options ?? {}) as Record<string, unknown>) };
-  if (input.operation === "flush_dns") options.testTarget = resolveInteractiveTarget(cfg, run.companyId, options.testTarget);
+  if (input.operation === "flush_dns") options.testTarget = resolveInteractiveTarget(cfg, actor.companyId, options.testTarget);
   const prepared = buildRepairRecipe(input.operation as string, options);
   let recoveryRepair: Record<string, unknown> | undefined;
   let priorState: Record<string, unknown> | undefined;
   if (input.operation === "change_printer_port") {
     const [diagnostic] = await ctx.db.query<{ result: { findings?: { printers?: { Name: string; PortName: string; DriverName: string; JobCount: number }[]; ports?: { Name: string; PrinterHostAddress?: string }[] } } }>(
-      `SELECT result FROM ${ns(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 AND check_kind='printers' AND created_at>now()-interval '30 minutes' ORDER BY created_at DESC LIMIT 1`, [run.companyId, supportCase.id]);
+      `SELECT result FROM ${ns(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 AND check_kind='printers' AND created_at>now()-interval '30 minutes' ORDER BY created_at DESC LIMIT 1`, [actor.companyId, supportCase.id]);
     const findings = diagnostic?.result?.findings;
     const queue = findings?.printers?.find(item => item.Name === options.printer);
     const destination = findings?.ports?.find(item => item.Name === options.newPortName);
@@ -110,7 +116,7 @@ export async function prepareRepair(ctx: PluginContext, cfg: Config, run: ToolRu
   // a separately reviewable object and never executes during preparation.
   const parameters = { script: prepared.script, verificationScript: prepared.verificationScript, recoveryNotes: prepared.recoveryNotes, expectedEffect: prepared.expectedEffect };
   const { recipe, disruption } = prepared;
-  const recoveryPlanId = priorState && recoveryRepair ? await rememberRecovery(ctx, run, supportCase.id, supportCase.target_address, supportCase.review_version, parameters, priorState, recoveryRepair) : undefined;
+  const recoveryPlanId = priorState && recoveryRepair ? await rememberRecovery(ctx,{ companyId: actor.companyId,userId: actor.actorId },supportCase.id,supportCase.target_address,supportCase.review_version,parameters,priorState,recoveryRepair) : undefined;
   return { operation: recipe.id, disruption, ...(priorState ? { priorState, recoveryRepair, recoveryPlanId } : {}), repair: { caseId: supportCase.id, target: supportCase.target_address, expectedReviewVersion: supportCase.review_version, ...parameters },
     instruction: "Prepared only; nothing was executed or approved. Confirm diagnosis and applicability, explain disruption/recovery, then pass the exact repair object to support_run_repair or the actively delegated repair tool. The host still checks consent. Verification covers the stated check, not every possible cause." };
 }
