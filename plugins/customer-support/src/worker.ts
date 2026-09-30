@@ -28,6 +28,7 @@ import { supportReferences, referenceUrl } from "./support-references.js";
 import { resolveRemoteAccess } from "./remote-access.js";
 import { listAssets } from "./asset-inventory.js";
 import { printerHistory } from "./printer-support.js";
+import { protectSource, readProtectedSource, redactSource, protectLegacySources } from "./source-protection.js";
 
 let context: PluginContext | null = null;
 
@@ -62,6 +63,7 @@ interface MessageRow {
   activity_logged_at?: string | null;
   author_external_id?: string | null;
   attachments?: { id: string; name: string; mimeType?: string; permalink?: string }[];
+  source_protection_version?: number;
 }
 
 interface ThreadRow {
@@ -89,8 +91,11 @@ function dbNamespace(ctx: PluginContext): string {
   return ctx.db.namespace;
 }
 
-async function storeMessage(ctx: PluginContext, message: IncomingMessage, connection: Connection): Promise<{ caseId: string; created: boolean }> {
+export async function storeMessage(ctx: PluginContext, rawMessage: IncomingMessage, connection: Connection): Promise<{ caseId: string; created: boolean }> {
   const ns = dbNamespace(ctx);
+  // Encrypt before any ordinary case/message persistence or agent dispatch.
+  const protectedSource = await protectSource(ctx, rawMessage);
+  const message = protectedSource.message;
 
   await ctx.db.execute(
     `INSERT INTO ${ns}.support_cases
@@ -112,12 +117,12 @@ async function storeMessage(ctx: PluginContext, message: IncomingMessage, connec
   await pinSourceAccount(ctx,message.companyId,supportCase.id,message.externalAccountId);
   const inserted = await ctx.db.execute(
     `INSERT INTO ${ns}.support_messages
-      (company_id, case_id, connection_id, external_route_id, external_conversation_id, external_message_id, author_kind, body, occurred_at, author_external_id, attachments)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+      (company_id, case_id, connection_id, external_route_id, external_conversation_id, external_message_id, author_kind, body, occurred_at, author_external_id, attachments, protected_source_ref, source_protection_version)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,1)
      ON CONFLICT (company_id, connection_id, external_route_id, external_conversation_id, external_message_id) DO NOTHING`,
     [message.companyId, supportCase.id, connection.id, message.externalRouteId, message.externalConversationId,
       message.externalMessageId, message.authorKind, message.body, message.occurredAt,
-      message.authorExternalId ?? null, JSON.stringify(message.attachments ?? [])],
+      message.authorExternalId ?? null, JSON.stringify(message.attachments ?? []), protectedSource.secretRef],
   );
   if (inserted.rowCount > 0) {
     await ctx.db.execute(
@@ -204,6 +209,7 @@ const plugin = definePlugin({
     registerOutboundTools(ctx, () => config(ctx));
     for (const provider of ["slack-tools","email-tools"]) ctx.events.on(`plugin.${provider}.support-delivery-receipt`,event => recordDeliveryReceipt(ctx,event));
     ctx.jobs.register("reconcile-support-deliveries",() => reconcilePendingDeliveries(ctx));
+    ctx.jobs.register("protect-legacy-sources", async () => { await protectLegacySources(ctx, await config(ctx)); });
     const proposeTool = manifest.tools?.find((tool) => tool.name === "support_propose_repair");
     if (!proposeTool) throw new Error("Support repair tool declaration is missing");
     ctx.tools.register("support_propose_repair", proposeTool, async (params, runCtx) => {
@@ -277,13 +283,14 @@ const plugin = definePlugin({
         throw new IntakeError(422, "Invalid case status filter");
       }
       const whereStatus = status === "all" ? "" : " AND status=$2";
-      return ctx.db.query<CaseRow>(
+      const rows = await ctx.db.query<CaseRow>(
         `SELECT id, company_id, connection_id, source, external_route_id, external_conversation_id,
                 title, status, service_domain, work_kind, external_url, first_message_at, last_message_at
          FROM ${dbNamespace(ctx)}.support_cases WHERE company_id=$1${whereStatus}
          ORDER BY last_message_at DESC LIMIT 100`,
         status === "all" ? [params.companyId] : [params.companyId, status],
       );
+      return rows.map(row => ({ ...row, title: redactSource(row.title) }));
     });
     ctx.data.register("support.overview", async (params) => {
       const cfg = await config(ctx);
@@ -342,7 +349,7 @@ const plugin = definePlugin({
       );
       if (!cases[0]) return null;
       const messages = await ctx.db.query<MessageRow>(
-        `SELECT id, author_kind, author_external_id, body, attachments, occurred_at FROM ${dbNamespace(ctx)}.support_messages
+        `SELECT id, author_kind, author_external_id, body, attachments, occurred_at, source_protection_version FROM ${dbNamespace(ctx)}.support_messages
          WHERE company_id=$1 AND case_id=$2 ORDER BY occurred_at ASC LIMIT 500`,
         [params.companyId, params.caseId],
       );
@@ -361,7 +368,8 @@ const plugin = definePlugin({
       const actions = await listSupportActions(ctx, params.companyId as string, params.caseId);
       const diagnostics = await ctx.db.query(`SELECT check_kind,result,created_at FROM ${dbNamespace(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 ORDER BY created_at DESC LIMIT 20`, [params.companyId, params.caseId]);
       const outbound = await listOutbound(ctx,params.companyId as string,params.caseId);
-      return { supportCase: cases[0], messages, actions, diagnostics, outbound, linkedIssue: linked ? {
+      return { supportCase: { ...cases[0], title: redactSource(cases[0].title) }, messages: messages.map(message => message.source_protection_version === 1
+        ? message : { ...message, body: "[Legacy source awaiting encrypted migration]", author_external_id: null, attachments: [] }), actions, diagnostics, outbound, linkedIssue: linked ? {
         id: linked.id, identifier: linked.identifier, title: linked.title, status: linked.status,
         assigneeAgentId: linked.assigneeAgentId, kind: links[0]!.issue_kind,
       } : null, escalation: escalations[0] ?? null };
@@ -369,7 +377,7 @@ const plugin = definePlugin({
   },
   async onApiRequest(input: PluginApiRequestInput): Promise<PluginApiResponse> {
     if (!context) return { status: 503, body: { error: "Support Desk is starting" } };
-    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
+    if (!input.routeKey.startsWith("setup.permission.") && !input.routeKey.startsWith("cases.outbound.") && input.routeKey !== "cases.source.read" && input.routeKey !== "messages.ingest" && input.routeKey !== "slack.workflow.ingest" &&
         input.routeKey !== "remote.identity.setup" &&
         input.routeKey !== "cases.issue.create" && input.routeKey !== "cases.review" &&
         input.routeKey !== "cases.sync" && input.routeKey !== "cases.remote.identity" && input.routeKey !== "cases.work.start" &&
@@ -378,6 +386,14 @@ const plugin = definePlugin({
       return { status: 404, body: { error: "Unknown route" } };
     }
     try {
+      if (input.routeKey === "cases.source.read") {
+        if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:repair") throw new IntakeError(403, "Restricted source requires support repair permission");
+        const body = input.body as Record<string, unknown> | null;
+        if (!body || body.companyId !== input.companyId) throw new IntakeError(403, "Company mismatch");
+        assertCompanyAccess(await config(context), input.companyId);
+        return { status: 200, body: await readProtectedSource(context, { companyId: input.companyId,
+          caseId: input.params.caseId, messageId: input.params.messageId, userId: input.actor.userId }) };
+      }
       if (input.routeKey.startsWith("setup.permission.")) return probeSetupPermission(input);
       if (["cases.outbound.draft","cases.outbound.send","cases.outbound.retry"].includes(input.routeKey)) {
         if (input.actor.actorType !== "user" || !input.actor.userId || input.actor.grantedPermission !== "support:respond") throw new IntakeError(403,"A person with support reply permission is required");
@@ -590,7 +606,8 @@ const plugin = definePlugin({
       return await ingest(context, input);
     } catch (error) {
       if (error instanceof IntakeError) return { status: error.status, body: { error: error.message } };
-      context.logger.error("customer-support intake failed", { error: String(error) });
+      // Provider/storage errors must never copy source material to worker logs.
+      context.logger.error("customer-support intake failed", { routeKey: input.routeKey });
       return { status: 500, body: { error: "Support intake failed" } };
     }
   },

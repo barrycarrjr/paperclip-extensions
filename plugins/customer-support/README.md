@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+Current development encrypts original incoming messages and attachment metadata in company Secrets before intake advances. Ordinary case text is filtered for recognizable credentials; restricted originals are available only through an audited repair-operator dashboard action, never an agent tool. Storage failures stop intake without writing plaintext cases. A bounded job protects legacy source rows with still-pinned company routes; unprotected legacy bodies are hidden in normal case views. This requires the matching host `secrets.store` capability and is not released. Filtering cannot identify every unlabeled secret, and derived legacy notes/backups need separate review.
+
 Current development adds durable captured recovery plans, `support_prepare_recovery`, and a controlled remote-write rehearsal with read-only marker inspection. Saved plans bind to the original repair and verification script hashes; retrieving one never runs it or bypasses approval/unknown-outcome controls. Live testing corrected a WMI receipt bug for successful scripts with no output and validated write, verification, cleanup and interrupted-recovery handling through company Secrets. This development build is not released.
 
 Current development adds direct read-only network printer status through IPP, richer Windows queue/driver/port diagnostics, and a confirmed queue-port repair with captured prior settings and a separate recovery repair. The direct check needs a saved company discovery range and the printer's supported endpoint; it never prints or changes hardware. SNMP and vendor-specific device administration remain future connectors. This development build is not released.
@@ -40,7 +42,7 @@ Set up at least one communication route for each company before expecting extern
 
 Cases may cover internal IT, computers, equipment, shipping, production, facilities, or software. Form categories and ownership clicks are context that a board operator reviews. The diagnosis and outcome may appear in thread replies or attached screenshots and videos. The poller syncs one known thread per connection on each two-minute run, storing reply text and file references without downloading file contents. New workflow cases link to their original Slack post. A board operator can also request an immediate sync. For a busy workspace, background freshness may lag; an event-based connector remains the target.
 
-Some troubleshooting threads include credentials intentionally shared for access. This version stores ingested message text as received and has no controlled credential handoff. Before live intake of such threads, add restricted credential handling so approved staff or agents can use access information without copying it into issue summaries, logs, or reusable knowledge.
+Some troubleshooting threads include credentials intentionally shared for access. Originals now go into encrypted company Secrets; known credential patterns are replaced in ordinary case text. Repair operators can use **View restricted original** on a message, with company/case checks and an activity entry. Keep any account password needed for execution in its configured Windows access Secret. The original is not sent to diagnostic agents. Unlabeled credentials can evade deterministic filtering, so review the route's message format before live intake. Legacy source migration does not erase old backups or sanitize previously derived issues/notes.
 
 ## Setup
 

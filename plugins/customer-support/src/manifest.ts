@@ -24,6 +24,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "plugin.state.read",
     "plugin.state.write",
     "secrets.read-ref",
+    "secrets.store",
     "http.outbound",
     "agents.read",
     "issues.read",
@@ -193,6 +194,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     required: ["connections"],
   },
   apiRoutes: [
+    { routeKey: "cases.source.read",method: "POST",path: "/cases/:caseId/messages/:messageId/protected-source",auth: "board",capability: "api.routes.register",companyResolution: { from: "body",key: "companyId" },requiredUserPermission: "support:repair" },
     ...setupPermissions.map(action => ({ routeKey: `setup.permission.${action}`,method: "GET" as const,path: `/setup/permissions/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "query" as const,key: "companyId" },requiredUserPermission: `support:${action}` as const })),
     ...["draft","send","retry"].map(action => ({ routeKey: `cases.outbound.${action}`,method: "POST" as const,path: `/cases/:caseId/outbound/${action}`,auth: "board" as const,capability: "api.routes.register" as const,companyResolution: { from: "body" as const,key: "companyId" },requiredUserPermission: "support:respond" as const })),
     {
@@ -314,6 +316,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
   ],
   jobs: [
     { jobKey: "reconcile-support-deliveries",displayName: "Reconcile support delivery receipts",schedule: "* * * * *" },
+    { jobKey: "protect-legacy-sources",displayName: "Protect legacy support sources",schedule: "* * * * *" },
     { jobKey: "poll-slack-workflows", displayName: "Poll Slack support workflows", schedule: "*/2 * * * *" },
   ],
   ui: {

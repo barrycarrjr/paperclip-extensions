@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useHostContext, usePluginData, type PluginPageProps, type PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { RemoteSetup } from "./RemoteSetup.js";
+import { RestrictedSource } from "./RestrictedSource.js";
 import { DiscoverySetup } from "./DiscoverySetup.js";
 import { SupportToolkit } from "./SupportToolkit.js";
 import { SupportMessages } from "./SupportMessages.js";
@@ -435,6 +436,7 @@ export function SupportPage(_props: PluginPageProps) {
           {selectedDetail.messages.map((message) => <article key={message.id} className="rounded-md border border-border p-3">
             <div className="text-xs text-muted-foreground">{message.author_kind}{message.author_external_id ? ` (${message.author_external_id})` : ""} · {new Date(message.occurred_at).toLocaleString()}</div>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm">{message.body}</p>
+            {companyId && <RestrictedSource key={`${companyId}:${message.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} messageId={message.id} />}
             {message.attachments?.length > 0 && <ul className="mt-2 space-y-1 text-xs">
               {message.attachments.map((file) => <li key={file.id}>
                 {file.permalink ? <a href={file.permalink} target="_blank" rel="noreferrer" className="text-primary underline">{file.name}</a> : <span>{file.name}</span>}
