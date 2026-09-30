@@ -13,11 +13,12 @@ export function redactSource(value: string): string {
   result = result.replace(/^.*\b(?:pass(?:word|wd|phrase)?|pwd|api[ _-]?key|access[ _-]?token|auth(?:orization)?|bearer|client[ _-]?secret|private[ _-]?key|recovery[ _-]?key)\b["'*\s]*(?:[:=]|\bis\b|\bBearer\b).*$/gim, marker);
   return result;
 }
-function safeLink(value?: string) {
+export function safeLink(value?: string) {
   if (!value || redactSource(value) !== value) return undefined;
   try {
     const parsed = new URL(value);
-    if (parsed.username || parsed.password || [...parsed.searchParams.keys()].some(key => /token|pass|secret|key|auth|signature/i.test(key))) return undefined;
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password ||
+      [...parsed.searchParams.keys(),...new URLSearchParams(parsed.hash.slice(1)).keys()].some(key => /token|pass|secret|key|auth|signature/i.test(key))) return undefined;
     return value;
   } catch { return undefined; }
 }

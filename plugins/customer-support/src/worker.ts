@@ -28,7 +28,7 @@ import { supportReferences, referenceUrl } from "./support-references.js";
 import { resolveRemoteAccess } from "./remote-access.js";
 import { listAssets } from "./asset-inventory.js";
 import { printerHistory } from "./printer-support.js";
-import { protectSource, readProtectedSource, redactSource, protectLegacySources } from "./source-protection.js";
+import { protectSource, readProtectedSource, redactSource, protectLegacySources, safeLink } from "./source-protection.js";
 import { registerTicketTools } from "./ticket-tools.js";
 import { afterTicketRepair, recordTicketOutcome } from "./ticket-completion.js";
 import { dispatchTickets, enqueueTicket, recordTicketRunEnd, resumeTicket } from "./ticket-investigation.js";
@@ -298,7 +298,7 @@ const plugin = definePlugin({
          ORDER BY last_message_at DESC LIMIT 100`,
         status === "all" ? [params.companyId] : [params.companyId, status],
       );
-      return rows.map(row => ({ ...row, title: redactSource(row.title) }));
+      return rows.map(row => ({ ...row, title: redactSource(row.title),external_url: safeLink(row.external_url ?? undefined) ?? null }));
     });
     ctx.data.register("support.overview", async (params) => {
       const cfg = await config(ctx);
@@ -377,7 +377,7 @@ const plugin = definePlugin({
       const diagnostics = await ctx.db.query(`SELECT check_kind,result,created_at FROM ${dbNamespace(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 ORDER BY created_at DESC LIMIT 20`, [params.companyId, params.caseId]);
       const outbound = await listOutbound(ctx,params.companyId as string,params.caseId);
       const ticketJobs = await ctx.db.query(`SELECT latest_message_id,agent_id,issue_id,status,target_address,failure_code,updated_at FROM ${dbNamespace(ctx)}.support_ticket_jobs WHERE company_id=$1 AND case_id=$2`, [params.companyId,params.caseId]);
-      return { supportCase: { ...cases[0], title: redactSource(cases[0].title) }, messages: messages.map(message => message.source_protection_version === 1
+      return { supportCase: { ...cases[0], title: redactSource(cases[0].title),external_url: safeLink(cases[0].external_url ?? undefined) ?? null }, messages: messages.map(message => message.source_protection_version === 1
         ? message : { ...message, body: "[Legacy source awaiting encrypted migration]", author_external_id: null, attachments: [] }), actions, diagnostics, outbound, ticketJob: ticketJobs[0] ?? null, linkedIssue: linked ? {
         id: linked.id, identifier: linked.identifier, title: linked.title, status: linked.status,
         assigneeAgentId: linked.assigneeAgentId, kind: links[0]!.issue_kind,

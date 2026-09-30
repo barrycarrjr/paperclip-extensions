@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
-import { protectSource, redactSource, readProtectedSource, protectLegacySources } from "./source-protection.js";
+import { protectSource, redactSource, readProtectedSource, protectLegacySources, safeLink } from "./source-protection.js";
 import { storeMessage } from "./worker.js";
 import type { IncomingMessage, Connection } from "./routing.js";
 
@@ -36,6 +36,9 @@ test("source filtering removes labeled credentials, multiline keys, bearer token
   const result = await protectSource(ctx, { ...message, attachments: [{ id: "file", name: "Password: synthetic-file", permalink: "https://example.com/log?token=synthetic-link" }] });
   assert.equal(result.message.attachments![0]!.permalink, undefined);
   assert.equal(result.message.attachments![0]!.name, "[restricted access information]");
+  assert.equal(safeLink("https://example.com/log#access_token=synthetic-link"),undefined);
+  assert.equal(safeLink("javascript:alert(1)"),undefined);
+  assert.equal(safeLink("https://example.com/ticket/123"),"https://example.com/ticket/123");
 });
 test("intake persists only filtered text and a reference, keeps originals usable behind case/company scope and audits access", async () => {
   const f = await fixture();
