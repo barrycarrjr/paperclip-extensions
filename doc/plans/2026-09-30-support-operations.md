@@ -35,6 +35,8 @@ Daily summary section implemented: saved opt-in Slack channel/timezone/schedule,
 
 Observation bridge section implemented: authenticated, expiring, company/conversation/profile-bound requests to the existing Help Scout and 3CX plugins. Provider-side exact opt-in and Help Scout mailbox ownership checks precede reads; PBX scope stays with its existing engine. Actual metadata, unavailable components and receipt times are exposed in Clippy. Native Help Scout intake/replies, network administration, phone configuration and other adapter sections below remain pending.
 
+Equipment history section implemented: company equipment-linked immutable fault/consumable/completed-service evidence, repeat-ID protection, 90-day recurring code counts, and contact-aware vendor service-call drafts. Tests confirm consent, isolation and that preparing a service request neither sends nor records service completion. Manufacturer controllers and physical repair remain with qualified specialists; records are not machine telemetry.
+
 - Help desk: connect existing Help Scout tools to Support Desk intake/replies; brand-aware mailbox routing, tags, assignment and signatures. Mailbox/account changes require separate reviewed actions.
 - Network: a company-authorized UniFi connector/MCP; controller/AP/client/firmware observations, with approved scoped changes and disruption/verification/recovery details.
 - Phones: reuse 3CX and phone-assistant tools; diagnose extensions, voicemail, routing, desk/softphones, SBCs and hosting dependencies. Explicitly distinguish those components.
