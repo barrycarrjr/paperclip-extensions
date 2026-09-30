@@ -13,6 +13,9 @@ gate.
 
 ## Recent changes
 
+- Development fix: native Help Scout intake now uses its explicit operator-configured fixed Paperclip API endpoint directly, with an actual 15-second/remaining-budget deadline and bounded acknowledgement. The host HTTP bridge intentionally blocks private/loopback addresses and does not carry AbortSignals, so it cannot perform this local intake transfer. Actual loopback-server tests verify the authenticated POST and stalled-response abort; immutable lost-acknowledgement deduplication remains unchanged. Standard host HTTP security policy is unchanged.
+
+
 - Development: native opt-in company/mailbox intake into Support Desk's authenticated message API. Durable pending queues/cursors, encrypted connector originals/comparison snapshots, stable revision IDs, lost-acknowledgement deduplication, exact mailbox/account rechecks and fair scheduled route rotation. Only complete acknowledged batches move the cursor. Provider files are not downloaded; drafts/hidden/line-item events are omitted. This intake does not authorize repairs or broaden a Slack-only investigation policy. Support Desk can separately opt this company into Help Scout investigations; findings go to the assigned issue, and customer replies still use reviewed human actions.
 
 - Development: human Clippy reply/tag/assignment preparation, full-plan inline confirmation, live company/mailbox/recipient/configuration rechecks, a durable one-attempt journal and receipt/state inspection. Saved brand mailbox identity/signature is part of the exact reply. Unknown actions block repetition and need explicit operator acknowledgement after provider inspection. Matching provider state is not proof of customer email delivery. These tools require the bundled fork SDK and matching Paperclip host permission support; native intake remains a separate section.

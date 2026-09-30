@@ -2,6 +2,7 @@ import { createHash,randomUUID } from "node:crypto";
 import type { PluginContext,ToolRunContext,PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { getHelpScoutAccount,type InstanceConfig,type ConfigAccount,type ResolvedAccount } from "./helpScoutClient.js";
 import { companySupportMailboxes } from "./support-observations.js";
+import { postSupportIntake } from "./support-intake-http.js";
 import { supportRead } from "./reviewed-support.js";
 export interface IntakeRoute { key:string;companyId:string;mailboxId:string;connectionId:string;externalAccountId:string;paperclipBaseUrl:string;apiKeyRef:string;startAt:string;enabled:boolean }
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i,providerId=/^[1-9][0-9]{0,14}$/;
@@ -34,7 +35,7 @@ type Read=typeof supportRead;
 async function assertCurrent(ctx:PluginContext,companyId:string,key:string,routeKey:string,hash:string){if(selectIntakeRoute(await ctx.config.get() as InstanceConfig,companyId,key,routeKey).configHash!==hash)throw new Error("Intake configuration changed");}
 /** Connector originals and comparison snapshots remain encrypted. The only raw
  * content transfer is the authenticated intake API; event/ordinary state is metadata. */
-async function deliverThread(ctx:PluginContext,route:IntakeRoute,routeHash:string,conversationId:string,threadId:string,current:Source,check:()=>Promise<void>,deadline:number){
+async function deliverThread(ctx:PluginContext,route:IntakeRoute,routeHash:string,conversationId:string,threadId:string,current:Source,check:()=>Promise<void>,deadline:number,send:(url:string,init?:RequestInit)=>Promise<Response>){
  await ctx.db.execute(`INSERT INTO ${ns(ctx)}.support_intake_threads(route_sha256,company_id,conversation_id,thread_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,[routeHash,route.companyId,conversationId,threadId]);
  const get=async()=>(await ctx.db.query<Thread>(`SELECT * FROM ${ns(ctx)}.support_intake_threads WHERE route_sha256=$1 AND company_id=$2 AND conversation_id=$3 AND thread_id=$4`,[routeHash,route.companyId,conversationId,threadId]))[0]!;
  let row=await get(),sent=0;
@@ -50,19 +51,14 @@ async function deliverThread(ctx:PluginContext,route:IntakeRoute,routeHash:strin
    if(Date.now()>deadline)throw new Error("Intake work budget exhausted");
    await check();const payload=JSON.parse(await ctx.secrets.resolve(row.pending_secret_ref!,route.companyId)) as {message:Record<string,unknown>};
    const key=await ctx.secrets.resolve(route.apiKeyRef);
-   const response=await ctx.http.fetch(intakeEndpoint(route.paperclipBaseUrl),{method:"POST",redirect:"manual",signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${key}`,"Content-Type":"application/json"},body:JSON.stringify(payload.message)});
-   if(![200,201].includes(response.status)){await response.body?.cancel();throw new Error("Support Desk intake not acknowledged");}
-   // Small acknowledgement only; never echo its body into logs or tools.
-   const reader=response.body?.getReader();if(!reader)throw new Error("Missing intake acknowledgement");let ackText="",bytes=0;const decoder=new TextDecoder();
-   try{while(true){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>2000)throw new Error("Invalid intake acknowledgement");ackText+=decoder.decode(part.value,{stream:true});}ackText+=decoder.decode();}finally{await reader.cancel();}
-   const ack=JSON.parse(ackText) as {caseId?:string;created?:boolean};
-   if(!uuid.test(ack.caseId??"")||typeof ack.created!=="boolean")throw new Error("Invalid intake acknowledgement");
+   await check();
+   const ack=await postSupportIntake(intakeEndpoint(route.paperclipBaseUrl),key,payload.message,deadline,send);
    await ctx.db.execute(`UPDATE ${ns(ctx)}.support_intake_threads SET delivered_version=pending_version,delivered_secret_ref=pending_secret_ref,pending_version=NULL,pending_secret_ref=NULL WHERE route_sha256=$1 AND company_id=$2 AND conversation_id=$3 AND thread_id=$4 AND pending_version=$5 AND pending_secret_ref=$6`,[routeHash,route.companyId,conversationId,threadId,row.pending_version,row.pending_secret_ref]);
    sent+=Number(ack.created);row=await get();
  }
  return sent;
 }
-export async function pollSupportIntake(ctx:PluginContext,companyId:string,accountKey:string,routeKey:string,read:Read=supportRead,resolve=getHelpScoutAccount){
+export async function pollSupportIntake(ctx:PluginContext,companyId:string,accountKey:string,routeKey:string,read:Read=supportRead,resolve=getHelpScoutAccount,send:(url:string,init?:RequestInit)=>Promise<Response>=globalThis.fetch){
  const selected=selectIntakeRoute(await ctx.config.get() as InstanceConfig,companyId,accountKey,routeKey),{route,routeHash}=selected;
  const lease=randomUUID(),deadline=Date.now()+45000,check=()=>assertCurrent(ctx,companyId,accountKey,routeKey,selected.configHash);
  const claim=await ctx.db.execute(`INSERT INTO ${ns(ctx)}.support_intake_routes(route_sha256,company_id,cursor_at,lease_id,lease_until) VALUES($1,$2,$3::timestamptz,$4,now()+interval '2 minutes') ON CONFLICT(route_sha256) DO UPDATE SET lease_id=$4,lease_until=now()+interval '2 minutes' WHERE support_intake_routes.company_id=$2 AND (support_intake_routes.lease_until IS NULL OR support_intake_routes.lease_until<now())`,[routeHash,companyId,route.startAt,lease]);
@@ -102,7 +98,7 @@ export async function pollSupportIntake(ctx:PluginContext,companyId:string,accou
        if(Date.now()>deadline)throw new Error("Intake work budget exhausted");
        const result=await read(ctx,account,`/conversations/${conversationId}/threads?page=${page}`),items=(result._embedded as {threads?:Record<string,unknown>[]}|undefined)?.threads,meta=result.page as {totalPages?:unknown}|undefined;
        if(!Array.isArray(items)||items.length>100||!Number.isInteger(meta?.totalPages)||Number(meta!.totalPages)>5)throw new Error("Thread listing incomplete or exceeds five pages");
-       for(const thread of [...items].reverse()){const value=source(route,conversation,thread);if(value)count+=await deliverThread(ctx,route,routeHash,conversationId,String(thread.id),value,check,deadline);}
+       for(const thread of [...items].reverse()){const value=source(route,conversation,thread);if(value)count+=await deliverThread(ctx,route,routeHash,conversationId,String(thread.id),value,check,deadline,send);}
        if(page>=Number(meta!.totalPages))break;
      }
      await check();offset++;completed++;

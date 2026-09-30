@@ -4,6 +4,9 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Development fix: native Help Scout intake now uses its explicit operator-configured fixed Paperclip API endpoint directly, with an actual 15-second/remaining-budget deadline and bounded acknowledgement. The host HTTP bridge intentionally blocks private/loopback addresses and does not carry AbortSignals, so it cannot perform this local intake transfer. Actual loopback-server tests verify the authenticated POST and stalled-response abort; immutable lost-acknowledgement deduplication remains unchanged. Standard host HTTP security policy is unchanged.
+
+
 - Foundation development: optional `phone-tools` specialist observations for company-owned saved Vapi assistant/number IDs. Use `assistant_routing` with the companion profile key. Returned configuration distinguishes unavailable resources and dynamic/other routing, omitting prompts, phone numbers and call records. This is separate from 3CX, SBC, host and end-to-end call health.
 
 

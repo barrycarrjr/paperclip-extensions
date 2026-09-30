@@ -28,16 +28,16 @@ async function fixture(){
 }
 test("native intake encrypts originals, deduplicates unchanged threads and retains provider edits as revisions",async()=>{
  const f=await fixture();try{
-  const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(result.status,"complete");assert.equal(result.newMessages,1);assert.equal(f.received.size,1);
+  const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http));assert.equal(result.status,"complete");assert.equal(result.newMessages,1);assert.equal(f.received.size,1);
   const stored=JSON.stringify((await f.db.query(`SELECT * FROM plugin_help_scout_dcee45a1d3.support_intake_threads`)).rows);assert.ok(!stored.includes("synthetic-test-value"));assert.ok(!stored.includes("example.pdf"));assert.ok(f.secrets.size>0);
-  assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve)).newMessages,0);assert.equal(f.attempts.length,1);
-  f.edit();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve)).newMessages,1);assert.equal(f.received.size,2);assert.match(String([...f.received.values()][1]!.body),/Provider edit revision 2/);
+  assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http))).newMessages,0);assert.equal(f.attempts.length,1);
+  f.edit();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http))).newMessages,1);assert.equal(f.received.size,2);assert.match(String([...f.received.values()][1]!.body),/Provider edit revision 2/);
  }finally{await f.db.close();}
 });
 test("lost intake acknowledgements hold the cursor and replay only the same deduplicable revision",async()=>{
  const f=await fixture();try{
-  f.lose();const first=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(first.status,"incomplete");assert.equal(first.cursorAdvanced,false);assert.equal(f.received.size,1);
-  const second=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(second.status,"complete");assert.equal(second.newMessages,0);assert.equal(f.attempts[0],f.attempts[1]);assert.equal(f.received.size,1);
+  f.lose();const first=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http));assert.equal(first.status,"incomplete");assert.equal(first.cursorAdvanced,false);assert.equal(f.received.size,1);
+  const second=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http));assert.equal(second.status,"complete");assert.equal(second.newMessages,0);assert.equal(f.attempts[0],f.attempts[1]);assert.equal(f.received.size,1);
  }finally{await f.db.close();}
 });
 test("company ownership, moved mailboxes and revocation prevent imports; safe origins cannot redirect credentials",async()=>{
@@ -47,10 +47,10 @@ test("company ownership, moved mailboxes and revocation prevent imports; safe or
  const rotated=structuredClone(initial);rotated.accounts![0]!.supportIntakeRoutes![0]!.apiKeyRef="55555555-5555-4555-8555-555555555555";
  assert.equal(selectIntakeRoute(rotated,companyId,"example","example").routeHash,selectIntakeRoute(initial,companyId,"example","example").routeHash);
  assert.notEqual(selectIntakeRoute(rotated,companyId,"example","example").configHash,selectIntakeRoute(initial,companyId,"example","example").configHash);
- const f=await fixture();try{f.move();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve)).status,"incomplete");assert.equal(f.received.size,0);f.revoke();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve)).status,"incomplete");assert.equal(f.received.size,0);}finally{await f.db.close();}
+ const f=await fixture();try{f.move();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http))).status,"incomplete");assert.equal(f.received.size,0);f.revoke();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http))).status,"incomplete");assert.equal(f.received.size,0);}finally{await f.db.close();}
 });
 test("first-page exclusion scanning retains a durable backlog across three-conversation batches without moving the cursor early",async()=>{
- const f=await fixture();try{f.many();const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(result.status,"pending");assert.equal(result.cursorAdvanced,false);assert.equal(result.pendingConversations,1);assert.equal(f.received.size,3);assert.ok(f.scanQueries[1]!.includes("NOT (id:20)"));const next=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(next.status,"complete");assert.equal(f.received.size,4);}finally{await f.db.close();}
+ const f=await fixture();try{f.many();const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http));assert.equal(result.status,"pending");assert.equal(result.cursorAdvanced,false);assert.equal(result.pendingConversations,1);assert.equal(f.received.size,3);assert.ok(f.scanQueries[1]!.includes("NOT (id:20)"));const next=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http));assert.equal(next.status,"complete");assert.equal(f.received.size,4);}finally{await f.db.close();}
 });
 test("native connector reaches actual Support Desk encrypted storage and does not activate a Slack-only policy",async()=>{
  const f=await fixture(),namespace="plugin_customer_support_0c69412611";
@@ -60,11 +60,11 @@ test("native connector reaches actual Support Desk encrypted storage and does no
   await f.db.exec(`CREATE SCHEMA ${namespace}`);for(const file of (await readdir(new URL("../../customer-support/migrations/",import.meta.url))).filter(n=>n.endsWith(".sql")).sort())await f.db.exec(await readFile(new URL(`../../customer-support/migrations/${file}`,import.meta.url),"utf8"));
   const support={db:{namespace,query:async(sql:string,params:unknown[])=>(await f.db.query(sql,params)).rows,execute:async(sql:string,params:unknown[])=>({rowCount:(await f.db.query(sql,params)).affectedRows})},config:{get:async()=>cfg},activity:{log:async()=>{}},secrets:{store:async(company:string,key:string,value:string)=>{assert.equal(company,companyId);const existing=immutable.get(key);if(existing){assert.equal(existing.value,value);return{secretRef:existing.secretRef};}const secretRef=randomUUID();immutable.set(key,{secretRef,value});return{secretRef};}}} as unknown as PluginContext;
   f.ctx.http.fetch=async(_url,options)=>{const message=parseMessage(JSON.parse(options!.body as string));const connection=resolveConnection(cfg,message);const result=await storeMessage(support,message,connection);return Response.json(result,{status:result.created?201:200});};
-  const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve);assert.equal(result.status,"complete");assert.equal(result.newMessages,1);
+  const result=await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http));assert.equal(result.status,"complete");assert.equal(result.newMessages,1);
   const records=(await f.db.query<{body:string;source_protection_version:number}>(`SELECT body,source_protection_version FROM ${namespace}.support_messages`)).rows;assert.equal(records.length,1);assert.ok(!records[0]!.body.includes("synthetic-test-value"));assert.equal(records[0]!.source_protection_version,1);assert.ok([...immutable.values()][0]!.value.includes("synthetic-test-value"));
   assert.equal((await f.db.query(`SELECT * FROM ${namespace}.support_ticket_jobs`)).rows.length,0);
   cfg.ticketPolicies![0]!.sources=["helpscout"];
-  f.edit();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve)).newMessages,1);
+  f.edit();assert.equal((await pollSupportIntake(f.ctx,companyId,"example","example",f.read,f.resolve,f.ctx.http.fetch.bind(f.ctx.http))).newMessages,1);
   const [job]=(await f.db.query<{latest_message_id:string}>(`SELECT latest_message_id FROM ${namespace}.support_ticket_jobs`)).rows;assert.ok(job);
   const messages=(await f.db.query<{id:string}>(`SELECT id FROM ${namespace}.support_messages ORDER BY created_at DESC`)).rows;assert.equal(job!.latest_message_id,messages[0]!.id);
  }finally{await f.db.close();}
