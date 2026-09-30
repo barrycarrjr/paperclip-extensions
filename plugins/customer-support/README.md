@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: `support_check_specialist` / `support_get_specialist_observation` request authenticated Help Scout mailbox/conversation metadata or a company-scoped 3CX queue/extension/presence snapshot. Save a **Specialist connections** record with the companion plugin key and saved account key. The companion must explicitly opt in the exact company; Help Scout additionally maps mailboxes uniquely to companies. Requests expire, profile revisions invalidate old reads, and receipts bind the provider/company/request hash. This section does not implement native Help Scout intake/replies, PBX configuration, SBC diagnostics or UniFi.
+
 - Foundation development: added **Daily support summaries** settings and `support_preview_daily_summary`. Choose a saved Slack connection, exact destination channel, IANA timezone and local send time; preview in Clippy, then enable. Sends yesterday's aggregate counts once per company/day and retains the last seven receipts in preview. No case text, staff names or device names leave via summaries. Current backlog and latest action state are explicitly distinguished from historical end-of-day counts. Unknown delivery never replays automatically.
 
 - Foundation development: added company directory **Skill backup checks** profiles and `support_check_skill_sync`. Compare bounded local Markdown files through saved Windows access; counts identify missing/different copies without returning document names, contents or hashes. This does not verify cloud upload or restoration. Save source and backup folders once per host/profile; do not supply paths from incoming tickets.

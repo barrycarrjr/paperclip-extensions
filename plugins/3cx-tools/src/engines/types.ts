@@ -35,6 +35,7 @@ export interface CompanyTenantEntry {
 }
 
 export interface ConfigAccount {
+  supportReadEnabled?: boolean;
   key: string;
   displayName?: string;
   pbxBaseUrl: string;

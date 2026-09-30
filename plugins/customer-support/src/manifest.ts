@@ -8,6 +8,7 @@ import { jobFolderTools } from "./job-folder-tools.js";
 import { skillSyncTools } from "./skill-sync.js";
 import { dailySummaryTools } from "./daily-summaries.js";
 import { diagnosticIds } from "./diagnostic-catalog.js";
+import { specialistObservationTools } from "./specialist-observations.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -44,7 +45,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, {
+  tools: [...interactiveTools, ...outboundTools, ...ticketTools, ...directoryTools, ...jobFolderTools, ...skillSyncTools, ...dailySummaryTools, ...specialistObservationTools, {
     name: "support_propose_repair",
     requiredUserPermission: "support:repair",
     displayName: "Propose support repair",

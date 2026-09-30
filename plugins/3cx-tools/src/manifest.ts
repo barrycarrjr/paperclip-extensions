@@ -113,6 +113,7 @@ const accountItemSchema = {
   propertyOrder: [
     "key",
     "displayName",
+    "supportReadEnabled",
     "pbxBaseUrl",
     "pbxVersion",
     "clientIdRef",
@@ -137,6 +138,7 @@ const accountItemSchema = {
       description:
         "Human-readable label shown on this settings page only (e.g. \"Primary PBX\"). Free-form.",
     },
+    supportReadEnabled: { type: "boolean", title: "Allow Support Desk observations", default: false, description: "Opt in read-only queue/extension/presence snapshots from the trusted Support Desk plugin. Requires an explicit company allow-list and preserves manual/native PBX company scope. Does not enable configuration changes or prove SBC/host health." },
     pbxBaseUrl: {
       type: "string",
       title: "PBX base URL",
@@ -305,6 +307,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
+    "events.subscribe",
     "agent.tools.register",
     "instance.settings.register",
     "secrets.read-ref",

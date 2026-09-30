@@ -9,6 +9,8 @@ const accountItemSchema = {
   propertyOrder: [
     "key",
     "displayName",
+    "supportReadEnabled",
+    "supportMailboxes",
     "clientIdRef",
     "clientSecretRef",
     "defaultMailbox",
@@ -20,6 +22,8 @@ const accountItemSchema = {
     "watchMailboxId",
   ],
   properties: {
+    supportReadEnabled: { type: "boolean", title: "Allow Support Desk observations", default: false, description: "Read-only mailbox/conversation metadata through the trusted Support Desk plugin. Requires exact company/mailbox mappings below. Does not authorize intake or replies." },
+    supportMailboxes: { type: "array", title: "Support Desk company mailboxes", description: "Each mailbox belongs to one company; shared ambiguous mappings are refused. The company must also appear explicitly in Allowed companies.", items: { type: "object", additionalProperties: false, properties: { companyId: { type: "string", format: "company-id" }, mailboxIds: { type: "array", items: { type: "string" }, title: "Mailbox IDs" } }, required: ["companyId", "mailboxIds"] } },
     key: {
       type: "string",
       title: "Identifier",
@@ -203,6 +207,8 @@ const manifest: PaperclipPluginManifestV1 & {
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
+    "events.subscribe",
+    "events.emit",
     "agent.tools.register",
     "instance.settings.register",
     "secrets.read-ref",

@@ -32,6 +32,7 @@ import {
   triageCursorScope,
 } from "./triage-cursor.js";
 import { runWatch } from "./watch.js";
+import { registerHelpScoutObservations } from "./support-observations.js";
 
 /** Schema the host provisions for this plugin. */
 const NS = "plugin_help_scout_dcee45a1d3";
@@ -110,6 +111,7 @@ const REPORT_CACHE_TTL_MS = 60 * 1000;
 
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
+    registerHelpScoutObservations(ctx);
     ctx.logger.info("help-scout plugin setup");
 
     const rawConfig = (await ctx.config.get()) as InstanceConfig;

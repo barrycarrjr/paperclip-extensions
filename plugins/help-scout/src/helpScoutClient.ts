@@ -2,6 +2,8 @@ import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { assertCompanyAccess } from "./companyAccess.js";
 
 export interface ConfigAccount {
+  supportReadEnabled?: boolean;
+  supportMailboxes?: { companyId: string; mailboxIds: string[] }[];
   key?: string;
   displayName?: string;
   clientIdRef?: string;
