@@ -9,6 +9,7 @@ import { registerCalendarTools } from "./tools/calendar.js";
 import { registerTasksTools } from "./tools/tasks.js";
 import { registerSheetsTools } from "./tools/sheets.js";
 import { registerDriveTools } from "./tools/drive.js";
+import { registerBackupObservations } from "./support-backups.js";
 import { registerOAuthFlow } from "./oauthFlow.js";
 
 const plugin = definePlugin({
@@ -59,6 +60,7 @@ const plugin = definePlugin({
     registerTasksTools(ctx);
     registerSheetsTools(ctx);
     registerDriveTools(ctx);
+    registerBackupObservations(ctx);
     registerOAuthFlow(ctx);
   },
 

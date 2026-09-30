@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BridgeEvent } from "./support-delivery.js";
 export const observationEvent = "plugin.customer-support.observation-requested";
-export const observationOperations = { "help-scout": ["mailbox", "conversation"], "3cx-tools": ["overview"], "unifi-tools": ["site", "device"] } as const;
+export const observationOperations = { "help-scout": ["mailbox", "conversation"], "3cx-tools": ["overview"], "unifi-tools": ["site", "device"], "google-workspace": ["backup_verify"] } as const;
 export type ObservationProvider = keyof typeof observationOperations;
 export interface ObservationRequest {
   version: 1; requestId: string; companyId: string; provider: ObservationProvider; account: string;
@@ -15,6 +15,7 @@ export function parseObservation(event: BridgeEvent, provider: ObservationProvid
   const p = event.payload as ObservationRequest | null;
   if (!p || p.version !== 1 || p.provider !== provider || p.companyId !== event.companyId || !/^[a-f0-9-]{36}$/i.test(p.companyId) || !/^[a-f0-9-]{36}$/i.test(p.requestId) || typeof p.account !== "string" || !/^[a-z0-9_-]{1,120}$/i.test(p.account) || !(observationOperations[provider] as readonly string[]).includes(p.operation) || typeof p.resourceId !== "string" || p.resourceId.length > 100 || !Number.isFinite(Date.parse(p.expiresAt)) || Date.parse(p.expiresAt) < Date.now() || Date.parse(p.expiresAt) > Date.now() + 180000 || observationHash(p) !== p.requestSha256) return null;
   if (provider === "help-scout" && !/^[1-9][0-9]{0,14}$/.test(p.resourceId)) return null;
+  if (provider === "google-workspace" && !/^[a-z0-9_-]{1,100}$/i.test(p.resourceId)) return null;
   if (provider === "3cx-tools" && p.resourceId !== "") return null;
   if (provider === "unifi-tools" && !(p.operation === "site" ? /^[a-f0-9-]{36}$/i : /^[a-f0-9-]{36}\/[a-f0-9-]{36}$/i).test(p.resourceId)) return null;
   return p;

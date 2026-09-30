@@ -137,6 +137,9 @@ const manifest: PaperclipPluginManifestV1 & {
     "secrets.read-ref",
     "http.outbound",
     "telemetry.track",
+    "events.subscribe",
+    "events.emit",
+    "activity.log.write",
     "ui.page.register",
   ],
   entrypoints: {
@@ -225,6 +228,16 @@ const manifest: PaperclipPluginManifestV1 & {
               title: "Refresh token (secret UUID)",
               description:
                 "Paste the UUID of the secret holding this account's long-lived refresh token. Obtain by running `pnpm --filter paperclip-plugin-google-workspace grant <account-key>` from the plugins repo — it opens a browser for consent and prints the refresh token. Then create a Secret with that token's value and paste the resulting UUID here.",
+            },
+            backupVerificationProfiles: {
+              type: "array", title: "Support Desk backup verification", description: "Opt in an exact company, Drive folder and local Markdown source root ON THIS GOOGLE WORKER HOST. Clippy requests a checksum comparison and isolated temporary restore through Support Desk. Never uploads, runs restored files or overwrites originals. A workstation path belongs on its worker, not here.",
+              items: {type:"object",additionalProperties:false,required:["key","companyId","driveFolderId","sourceRoot","enabled"],properties:{
+                key:{type:"string",title:"Verification profile key",pattern:"^[a-zA-Z0-9_-]{1,100}$"},
+                companyId:{type:"string",format:"company-id",title:"Exact company"},
+                driveFolderId:{type:"string",title:"Exact Drive backup folder ID"},
+                sourceRoot:{type:"string",title:"Absolute local Markdown source folder on this worker host"},
+                enabled:{type:"boolean",title:"Enable comparison and temporary restore",default:false}
+              }}
             },
             scopes: {
               type: "array",

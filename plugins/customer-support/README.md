@@ -4,6 +4,9 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- Foundation development: the Google Workspace companion can now compare an explicitly saved worker-host Markdown source root with a company Drive folder and test downloaded files in a disposable restore directory. Request `support_check_specialist` with a saved `google-workspace` connection, `operation: backup_verify` and `resourceId` set to the companion?s verification-profile key. Findings expose counts only; source edits, partial listings, ambiguous names, changed metadata or unavailable downloads prevent success. This does not upload, restore in place or read a different workstation.
+
+
 - Foundation development: explicit opt-in Help Scout ticket investigation alongside the compatible Slack default. Current source/account/company, agent assignment, checkout and policy hashes gate diagnostics/proposals. Provider edits use ingestion order to refresh evidence even when original timestamps stay unchanged. Findings become sanitized assigned-issue comments; customer replies remain reviewed human actions, and exact operator approval still gates repairs. Retrying a local findings report can create another issue comment; no customer send is attempted.
 
 

@@ -27,6 +27,12 @@ test("specialist receipts bind provider/company/hash/conversation/profile and re
     assert.equal(result.status, "available"); assert.doesNotMatch(JSON.stringify(result.findings), /synthetic-test-value/);
     await assert.rejects(getSpecialistObservation(ctx, cfg, { ...run, chatSessionId: "other" }, pending.requestId));
     await assert.rejects(getSpecialistObservation(ctx, cfg, { ...run, companyId: "22222222-2222-4222-8222-222222222222" }, pending.requestId));
+    const cloud = await saveDirectory(ctx,cfg,companyId,"operator",{kind:"connection",name:"Example cloud backup",details:{pluginKey:"google-workspace",accountKey:"example",area:"automations"}});
+    await assert.rejects(requestSpecialistObservation(ctx,cfg,run,{profileId:cloud.id,operation:"backup_verify",resourceId:"../not-saved"}));
+    const check=await requestSpecialistObservation(ctx,cfg,run,{profileId:cloud.id,operation:"backup_verify",resourceId:"skills"});
+    assert.equal(request!.provider,"google-workspace");
+    await recordSpecialistObservation(ctx,{eventType:"plugin.google-workspace.support-observation-receipt",actorType:"plugin",actorId:"google-workspace",companyId,payload:{version:1,companyId,requestId:check.requestId,requestSha256:request!.requestSha256,status:"available",findings:{status:"matched_and_restore_tested",restoreTestedFiles:1,temporaryFilesRemoved:true},observedAtUtc:new Date().toISOString()}});
+    assert.equal((await getSpecialistObservation(ctx,cfg,run,check.requestId)).status,"available");
     await saveDirectory(ctx, cfg, companyId, "operator", { id: profile.id, expectedVersion: 1, kind: "connection", name: "Updated", details: { pluginKey: "help-scout", accountKey: "example", area: "email" } });
     await assert.rejects(getSpecialistObservation(ctx, cfg, run, pending.requestId), /profile changed/);
   } finally { await db.close(); }
