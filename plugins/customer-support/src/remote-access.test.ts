@@ -31,14 +31,14 @@ test("duplicate bindings and invalid secret references fail closed", () => {
 test("one company access group covers its DNS domain and office IP range", () => {
   const profile = { ...config.remoteAccessProfiles![0]!, targets: [], scopes: [
     { kind: "dns_suffix" as const, value: "office.example.local", transport: "Wmi" as const },
-    { kind: "ipv4_cidr" as const, value: "192.168.25.0/24", transport: "Wmi" as const },
+    { kind: "ipv4_cidr" as const, value: "192.0.2.0/24", transport: "Wmi" as const },
   ] };
   const grouped: Config = { remoteAccessProfiles: [profile] };
-  assert.equal(resolveRemoteAccess(grouped, alpha, "ws11.office.example.local").target, "ws11.office.example.local");
-  assert.equal(resolveRemoteAccess(grouped, alpha, "192.168.25.41").target, "192.168.25.41");
-  assert.throws(() => resolveRemoteAccess(grouped, beta, "ws11.office.example.local"), IntakeError);
-  assert.throws(() => resolveRemoteAccess(grouped, alpha, "ws11.eviloffice.example.local"), IntakeError);
-  assert.throws(() => resolveRemoteAccess(grouped, alpha, "192.168.26.41"), IntakeError);
+  assert.equal(resolveRemoteAccess(grouped, alpha, "pc01.office.example.local").target, "pc01.office.example.local");
+  assert.equal(resolveRemoteAccess(grouped, alpha, "192.0.2.41").target, "192.0.2.41");
+  assert.throws(() => resolveRemoteAccess(grouped, beta, "pc01.office.example.local"), IntakeError);
+  assert.throws(() => resolveRemoteAccess(grouped, alpha, "pc01.eviloffice.example.local"), IntakeError);
+  assert.throws(() => resolveRemoteAccess(grouped, alpha, "198.51.100.41"), IntakeError);
 });
 
 test("an exact computer overrides a broad group and overlapping groups fail closed", () => {
@@ -46,8 +46,8 @@ test("an exact computer overrides a broad group and overlapping groups fail clos
     { kind: "dns_suffix" as const, value: "office.example.local", transport: "Auto" as const },
   ] };
   const exact = { ...config.remoteAccessProfiles![0]!, id: "exact", targets: [
-    { address: "ws11.office.example.local", transport: "Wmi" as const },
+    { address: "pc01.office.example.local", transport: "Wmi" as const },
   ] };
-  assert.equal(resolveRemoteAccess({ remoteAccessProfiles: [group, exact] }, alpha, "ws11.office.example.local").transport, "Wmi");
-  assert.throws(() => resolveRemoteAccess({ remoteAccessProfiles: [group, group] }, alpha, "ws11.office.example.local"), IntakeError);
+  assert.equal(resolveRemoteAccess({ remoteAccessProfiles: [group, exact] }, alpha, "pc01.office.example.local").transport, "Wmi");
+  assert.throws(() => resolveRemoteAccess({ remoteAccessProfiles: [group, group] }, alpha, "pc01.office.example.local"), IntakeError);
 });

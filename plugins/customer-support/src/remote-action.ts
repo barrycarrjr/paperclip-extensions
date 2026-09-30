@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { IntakeError } from "./routing.js";
 import type { ResolvedRemoteAccess } from "./remote-access.js";
+import { withRemoteSlot } from "./remote-task-queue.js";
 
 const bridgePath = resolve(fileURLToPath(new URL("./scripts/Invoke-SupportActionFromStdin.ps1", import.meta.url)));
 
@@ -13,6 +14,7 @@ export interface RemoteActionReceipt {
   runId: string | null;
   status: string;
   exitCode: number | null;
+  output?: string;
 }
 
 export function validateRemoteActionReceipt(
@@ -40,6 +42,14 @@ export async function runRemoteActionScript(
   access: ResolvedRemoteAccess,
   caseReference: string,
   script: string,
+  includeDiagnosticOutput = false,
+): Promise<RemoteActionReceipt> {
+  return withRemoteSlot(access.target, () => runRemoteActionScriptUnlocked(ctx, access, caseReference, script, includeDiagnosticOutput));
+}
+
+/** Internal executor: caller must hold the target slot for the whole action sequence. */
+export async function runRemoteActionScriptUnlocked(
+  ctx: PluginContext, access: ResolvedRemoteAccess, caseReference: string, script: string, includeDiagnosticOutput = false,
 ): Promise<RemoteActionReceipt> {
   if (process.platform !== "win32" || !existsSync(bridgePath)) {
     throw new IntakeError(422, "Remote PowerShell actions require a Windows plugin host with the support scripts installed");
@@ -54,10 +64,13 @@ export async function runRemoteActionScript(
     let stdout = "";
     let settled = false;
     let tooLarge = false;
+    let stderrSize = 0;
     const timer = setTimeout(() => {
       child.kill();
       if (!settled) { settled = true; reject(new IntakeError(504, "Remote action timed out; outcome is unknown")); }
-    }, 150_000);
+    // Two write/verification legs plus a 30-second queue wait fit under the
+    // host's five-minute tool ceiling. Diagnostics have a separate budget.
+    }, includeDiagnosticOutput ? 150_000 : 125_000);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -65,7 +78,8 @@ export async function runRemoteActionScript(
       if (stdout.length > 131_072) { tooLarge = true; child.kill(); }
     });
     child.stderr.on("data", (chunk: string) => {
-      if (chunk.length > 131_072) { tooLarge = true; child.kill(); }
+      stderrSize += chunk.length;
+      if (stderrSize > 131_072) { tooLarge = true; child.kill(); }
     });
     child.stdin.on("error", () => {});
     child.on("error", () => {
@@ -79,9 +93,14 @@ export async function runRemoteActionScript(
       if (tooLarge) { reject(new IntakeError(502, "Remote output exceeded the limit; outcome is unknown")); return; }
       try {
         const result = JSON.parse(stdout) as Record<string, unknown>;
-        done(validateRemoteActionReceipt(result, code, {
+        const receipt = validateRemoteActionReceipt(result, code, {
           target: access.target, companyId: access.companyId, caseReference, scriptSha256: expectedHash,
-        }));
+        });
+        if (includeDiagnosticOutput && receipt.status === "succeeded" && typeof result.output === "string") {
+          if (result.output.length > 65_536) throw new IntakeError(502, "Diagnostic output exceeded the limit; narrow the diagnostic filter");
+          receipt.output = result.output.split(password).join("[credential removed]");
+        }
+        done(receipt);
       } catch (error) {
         reject(error instanceof IntakeError ? error : new IntakeError(502, "Remote action returned an invalid result"));
       }

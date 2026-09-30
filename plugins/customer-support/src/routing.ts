@@ -151,3 +151,9 @@ export function companyHasConnection(config: Config, companyId: string | null): 
     connection.allowedCompanies?.includes(companyId) && connection.routes?.some((route) => route.companyId === companyId),
   );
 }
+
+/** Direct Clippy support needs a remote access group, not an external help desk route. */
+export function companyHasSupport(config: Config, companyId: string | null): boolean {
+  return !!companyId && (companyHasConnection(config, companyId) ||
+    (config.remoteAccessProfiles ?? []).some((profile) => profile.companyId === companyId));
+}

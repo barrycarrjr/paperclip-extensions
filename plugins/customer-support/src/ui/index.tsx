@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useHostContext, usePluginData, type PluginPageProps, type PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { RemoteSetup } from "./RemoteSetup.js";
+import { SupportToolkit } from "./SupportToolkit.js";
 
 interface CaseRow {
   id: string;
@@ -19,8 +20,13 @@ interface CaseRow {
   order_ref?: string | null;
   vendor_ref?: string | null;
   resolution_summary?: string | null;
+  symptom_outcome?: string | null;
+  symptom_evidence?: string | null;
+  symptom_basis?: string | null;
+  symptom_recorded_at?: string | null;
 }
 interface Detail {
+  diagnostics: { check_kind: string; result: unknown; created_at: string }[];
   supportCase: CaseRow;
   messages: { id: string; author_kind: string; author_external_id: string | null; body: string; occurred_at: string; attachments: { id: string; name: string; mimeType?: string; permalink?: string }[] }[];
   linkedIssue: { id: string; identifier: string | null; title: string; status: string; kind: string;
@@ -88,6 +94,12 @@ function SupportActions({ companyId, detail, onChanged }: { companyId: string; d
 
   return <section className="space-y-3 rounded-md border border-border p-3 text-sm">
     <h3 className="font-semibold">Remote repair actions</h3>
+    {detail.supportCase.symptom_outcome && <div className="space-y-1 rounded-md border border-border p-3" role="status">
+      <p><strong>Reported problem: {detail.supportCase.symptom_outcome.replaceAll("_", " ")}</strong></p>
+      <p>{detail.supportCase.resolution_summary}</p>
+      <p className="text-muted-foreground">Evidence ({detail.supportCase.symptom_basis?.replaceAll("_", " ")}): {detail.supportCase.symptom_evidence}</p>
+      {detail.supportCase.symptom_recorded_at && <p className="text-xs text-muted-foreground">Recorded {new Date(detail.supportCase.symptom_recorded_at).toLocaleString()}</p>}
+    </div>}
     <p className="text-muted-foreground">Review the exact PowerShell script, its verification, and the target before approving. The script runs on the selected device with its configured support account. Keep passwords out of the script.</p>
     <div><button type="button" disabled={busy} onClick={checkIdentity} className="rounded-md border border-border px-3 py-1.5 disabled:opacity-50">Test remote identity (read only)</button>
       {identity && <p role="status" className="mt-1 text-muted-foreground">{identity}</p>}
@@ -375,7 +387,8 @@ export function SupportPage(_props: PluginPageProps) {
       <button type="button" onClick={() => { refresh(); overview.refresh(); if (caseId) detail.refresh(); }} className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent/30">Refresh</button>
     </div>
     {companyId && <RemoteSetup companyId={companyId} />}
-    {!setup.loading && !setup.error && !setup.data?.configured && <p role="status" className="rounded-md border border-border p-3 text-sm">Configure at least one communication route for this company in Support Desk settings. Use built-in Slack polling or connect a communication plugin to the message API.</p>}
+    {companyId && <SupportToolkit key={companyId} companyId={companyId} />}
+    {!setup.loading && !setup.error && !setup.data?.configured && <p role="status" className="rounded-md border border-border p-3 text-sm">You can ask Clippy to investigate a computer directly. To receive Slack or help desk requests, configure a communication route in Support Desk settings.</p>}
     {setup.error && <p role="alert" className="text-sm text-destructive">Could not load communication setup: {String(setup.error)}</p>}
     {setup.data?.configured && <p className="text-xs text-muted-foreground">Communication routes: {setup.data.connections.map((connection) => `${connection.source} via ${connection.delivery}`).join(", ")}. Confirm that the source delivers messages before relying on intake.</p>}
     {pluginLookupError && <p role="alert" className="text-xs text-destructive">Could not check communication plugin installation: {pluginLookupError}</p>}
@@ -426,6 +439,12 @@ export function SupportPage(_props: PluginPageProps) {
             supportCase={selectedDetail.supportCase} onSaved={() => { detail.refresh(); refresh(); overview.refresh(); }} />}
           {companyId && selectedDetail.supportCase.target_address && ["it", "equipment"].includes(selectedDetail.supportCase.service_domain) &&
             <SupportActions key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} detail={detail.data!} onChanged={() => detail.refresh()} />}
+          {selectedDetail.diagnostics?.length > 0 && <section className="space-y-2"><h3 className="font-semibold">Recorded diagnostic findings</h3>
+            {selectedDetail.diagnostics.map((item, index) => <details key={`${item.created_at}:${index}`} className="rounded-md border border-border p-3 text-sm">
+              <summary className="cursor-pointer">{item.check_kind} · {new Date(item.created_at).toLocaleString()}</summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words">{JSON.stringify(item.result, null, 2)}</pre>
+            </details>)}
+          </section>}
           {selectedDetail.messages.map((message) => <article key={message.id} className="rounded-md border border-border p-3">
             <div className="text-xs text-muted-foreground">{message.author_kind}{message.author_external_id ? ` (${message.author_external_id})` : ""} · {new Date(message.occurred_at).toLocaleString()}</div>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm">{message.body}</p>

@@ -84,7 +84,7 @@ export function RemoteSetup({ companyId }: { companyId: string }) {
       const account = userName.trim();
       if (!/^[^\\\s]+\\[^\\\s]+$/.test(account)) throw new Error("Enter the Windows account as DOMAIN\\username.");
       if (kind === "dns_suffix" && !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/.test(value)) throw new Error("Enter a DNS domain such as office.example.local.");
-      if (kind === "ipv4_cidr" && !/^\d{1,3}(?:\.\d{1,3}){3}\/(?:[89]|[12]\d|3[0-2])$/.test(value)) throw new Error("Enter an IPv4 range such as 192.168.25.0/24.");
+      if (kind === "ipv4_cidr" && !/^\d{1,3}(?:\.\d{1,3}){3}\/(?:[89]|[12]\d|3[0-2])$/.test(value)) throw new Error("Enter an IPv4 range such as 192.0.2.0/24.");
       if (kind === "exact" && !/^[a-z0-9._-]+$/.test(value)) throw new Error("Enter one computer hostname or IP address.");
       const saved = await request<{ configJson?: Config } | null>("/api/plugins/customer-support/config");
       const config = saved?.configJson ?? {};
@@ -140,7 +140,7 @@ export function RemoteSetup({ companyId }: { companyId: string }) {
           <option value="dns_suffix">DNS domain (all computers beneath it)</option><option value="ipv4_cidr">Office IPv4 range</option><option value="exact">One computer only</option>
         </select></label>
         <label>{kind === "dns_suffix" ? "DNS domain" : kind === "ipv4_cidr" ? "IPv4 range (CIDR)" : "Computer hostname or IP"}
-          <input required placeholder={kind === "dns_suffix" ? "office.example.local" : kind === "ipv4_cidr" ? "192.168.25.0/24" : "workstation.example.local"}
+          <input required placeholder={kind === "dns_suffix" ? "office.example.local" : kind === "ipv4_cidr" ? "192.0.2.0/24" : "workstation.example.local"}
             value={scope} onChange={(event) => setScope(event.target.value)} className="mt-1 block w-full rounded-md border border-border bg-background p-2" /></label>
         <label>Connection method<select value={method} onChange={(event) => setMethod(event.target.value as Method)} className="mt-1 block w-full rounded-md border border-border bg-background p-2">
           <option value="Auto">Auto</option><option value="Wmi">WMI / DCOM + SMB</option><option value="WinRMHttps">WinRM HTTPS</option><option value="WinRMHttp">WinRM HTTP</option>

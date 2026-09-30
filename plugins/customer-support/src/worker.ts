@@ -7,7 +7,7 @@ import {
   type PluginContext,
 } from "@paperclipai/plugin-sdk";
 import manifest from "./manifest.js";
-import { companyHasConnection, IntakeError, parseMessage, resolveConnection, type Config, type Connection, type IncomingMessage } from "./routing.js";
+import { companyHasSupport, IntakeError, parseMessage, resolveConnection, type Config, type Connection, type IncomingMessage } from "./routing.js";
 import { parseSlackWorkflowPost } from "./slack-workflow.js";
 import { pollSlackWorkflows, syncSlackThread, verifySlackWorkspace } from "./slack-poller.js";
 import { createReviewedIssue, type ReviewedIssueInput } from "./support-issues.js";
@@ -16,6 +16,11 @@ import { startSupportWork } from "./support-work.js";
 import { createEscalationDraft, markEscalationSubmitted, type EscalationDraftInput } from "./support-escalations.js";
 import { runRemoteIdentity } from "./remote-identity.js";
 import { decideSupportAction, executeSupportAction, listSupportActions, markInterruptedActionUnknown, proposeSupportAction } from "./support-actions.js";
+import { registerInteractiveTools } from "./interactive-tools.js";
+import { diagnosticChecks } from "./diagnostic-catalog.js";
+import { repairRecipes } from "./repair-catalog.js";
+import { supportReferences, referenceUrl } from "./support-references.js";
+import { resolveRemoteAccess } from "./remote-access.js";
 
 let context: PluginContext | null = null;
 
@@ -67,7 +72,7 @@ async function config(ctx: PluginContext): Promise<Config> {
 }
 
 function assertCompanyAccess(cfg: Config, companyId: unknown): asserts companyId is string {
-  if (typeof companyId !== "string" || !companyHasConnection(cfg, companyId)) {
+  if (typeof companyId !== "string" || !companyHasSupport(cfg, companyId)) {
     throw new IntakeError(403, "Support Desk is not configured for this company");
   }
 }
@@ -184,6 +189,7 @@ async function ingest(ctx: PluginContext, input: PluginApiRequestInput): Promise
 const plugin = definePlugin({
   async setup(ctx) {
     context = ctx;
+    registerInteractiveTools(ctx, () => config(ctx));
     const proposeTool = manifest.tools?.find((tool) => tool.name === "support_propose_repair");
     if (!proposeTool) throw new Error("Support repair tool declaration is missing");
     ctx.tools.register("support_propose_repair", proposeTool, async (params, runCtx) => {
@@ -261,7 +267,7 @@ const plugin = definePlugin({
     });
     ctx.data.register("support.cases", async (params) => {
       const cfg = await config(ctx);
-      if (!companyHasConnection(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
+      if (!companyHasSupport(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
       const status = params.status ?? "all";
       if (typeof status !== "string" || !["all", "new", "triage", "waiting", "resolved"].includes(status)) {
         throw new IntakeError(422, "Invalid case status filter");
@@ -277,16 +283,25 @@ const plugin = definePlugin({
     });
     ctx.data.register("support.overview", async (params) => {
       const cfg = await config(ctx);
-      if (!companyHasConnection(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
+      if (!companyHasSupport(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
       return ctx.db.query<{ status: string; count: string }>(
         `SELECT status, count(*)::text AS count FROM ${dbNamespace(ctx)}.support_cases
          WHERE company_id=$1 GROUP BY status`,
         [params.companyId],
       );
     });
+    ctx.data.register("support.toolkit", async (params) => {
+      const cfg = await config(ctx);
+      assertCompanyAccess(cfg, params.companyId);
+      const devices = await ctx.db.query<{ target_address: string; snapshot: unknown; last_seen_at: string }>(
+        `SELECT target_address,snapshot,last_seen_at FROM ${dbNamespace(ctx)}.support_devices WHERE company_id=$1 ORDER BY last_seen_at DESC LIMIT 50`, [params.companyId]);
+      const knowledge = await ctx.db.query(`SELECT id,title,topic,kind,body,created_at FROM ${dbNamespace(ctx)}.support_knowledge WHERE company_id=$1 ORDER BY created_at DESC LIMIT 20`, [params.companyId]);
+      return { diagnostics: diagnosticChecks, repairRecipes, references: supportReferences.map(item => ({ id: item.id, title: item.title, topic: item.topic, url: referenceUrl(item) })),
+        devices: devices.filter(item => { try { resolveRemoteAccess(cfg, params.companyId as string, item.target_address); return true; } catch { return false; } }), knowledge };
+    });
     ctx.data.register("support.softwareRoutes", async (params) => {
       const cfg = await config(ctx);
-      if (!companyHasConnection(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
+      if (!companyHasSupport(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
       const routes = (cfg.softwareRoutes ?? []).filter((route) => route.reportingCompanyId === params.companyId);
       return routes.map((route) => ({
         id: route.id, productName: route.productName, destinationKind: route.destinationKind,
@@ -295,7 +310,7 @@ const plugin = definePlugin({
     });
     ctx.data.register("support.agents", async (params) => {
       const cfg = await config(ctx);
-      if (!companyHasConnection(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
+      if (!companyHasSupport(cfg, typeof params.companyId === "string" ? params.companyId : null)) return [];
       const agents = await ctx.agents.list({ companyId: params.companyId as string, limit: 200 });
       return agents.map((agent) => ({ id: agent.id, name: agent.name, status: agent.status }));
     });
@@ -306,7 +321,8 @@ const plugin = definePlugin({
       const cases = await ctx.db.query<CaseRow>(
         `SELECT id, company_id, connection_id, source, external_route_id, external_conversation_id,
                 title, status, service_domain, work_kind, asset_ref, target_address, access_method, order_ref, vendor_ref,
-                resolution_summary, review_version, external_url, first_message_at, last_message_at
+                  resolution_summary, symptom_outcome,symptom_evidence,symptom_basis,symptom_recorded_at,
+                  review_version, external_url, first_message_at, last_message_at
          FROM ${dbNamespace(ctx)}.support_cases WHERE company_id=$1 AND id=$2`,
         [params.companyId, params.caseId],
       );
@@ -329,7 +345,8 @@ const plugin = definePlugin({
          WHERE company_id=$1 AND case_id=$2`, [params.companyId, params.caseId],
       );
       const actions = await listSupportActions(ctx, params.companyId as string, params.caseId);
-      return { supportCase: cases[0], messages, actions, linkedIssue: linked ? {
+      const diagnostics = await ctx.db.query(`SELECT check_kind,result,created_at FROM ${dbNamespace(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 ORDER BY created_at DESC LIMIT 20`, [params.companyId, params.caseId]);
+      return { supportCase: cases[0], messages, actions, diagnostics, linkedIssue: linked ? {
         id: linked.id, identifier: linked.identifier, title: linked.title, status: linked.status,
         assigneeAgentId: linked.assigneeAgentId, kind: links[0]!.issue_kind,
       } : null, escalation: escalations[0] ?? null };
@@ -347,6 +364,7 @@ const plugin = definePlugin({
     }
     try {
       if (input.routeKey === "remote.identity.setup") {
+        if (input.actor.grantedPermission !== "support:diagnose") throw new IntakeError(403, "Paperclip must verify your diagnostic permission");
         if (input.actor.actorType !== "user" || !input.actor.userId) throw new IntakeError(403, "Board user required");
         const body = input.body && typeof input.body === "object" && !Array.isArray(input.body)
           ? input.body as Record<string, unknown> : {};
@@ -389,6 +407,8 @@ const plugin = definePlugin({
         const body = input.body && typeof input.body === "object" && !Array.isArray(input.body)
           ? input.body as Record<string, unknown> : {};
         if (body.companyId !== input.companyId) throw new IntakeError(403, "Company mismatch");
+        const permission = manifest.apiRoutes?.find((route) => route.routeKey === input.routeKey)?.requiredUserPermission;
+        if (permission && input.actor.grantedPermission !== permission) throw new IntakeError(403, "Paperclip must verify your support permission; update the host if needed");
         if (input.routeKey === "cases.actions.propose") {
           const result = await proposeSupportAction(context, cfg, {
             companyId: input.companyId, caseId: input.params.caseId, actorUserId: input.actor.userId,

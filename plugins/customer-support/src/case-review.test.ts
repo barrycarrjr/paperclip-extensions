@@ -14,7 +14,7 @@ test("reviewed service routing is company-scoped, versioned, and keeps non-softw
   const db = new PGlite();
   try {
     await db.exec(`CREATE SCHEMA ${namespace}`);
-    for (const name of ["001_init.sql", "002_issue_links.sql", "003_thread_context.sql", "004_case_review.sql", "005_nonsoftware_work.sql", "006_issue_assignee.sql", "007_software_escalation.sql", "008_target_access.sql"]) {
+    for (const name of ["001_init.sql", "002_issue_links.sql", "003_thread_context.sql", "004_case_review.sql", "005_nonsoftware_work.sql", "006_issue_assignee.sql", "007_software_escalation.sql", "008_target_access.sql", "014_symptom_outcomes.sql"]) {
       await db.exec(await readFile(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
     }
     await db.query(

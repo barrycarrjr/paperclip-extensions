@@ -1,4 +1,5 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
+import { interactiveTools } from "./interactive-tools.js";
 
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
@@ -30,7 +31,7 @@ const manifest: PaperclipPluginManifestV1 = {
   ],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   database: { namespaceSlug: "customer_support", migrationsDir: "migrations" },
-  tools: [{
+  tools: [...interactiveTools, {
     name: "support_propose_repair",
     displayName: "Propose support repair",
     description: "Propose an exact PowerShell repair and verification for an already reviewed IT or equipment case. This only creates a proposal; a board user must approve and start execution. Never place credentials or untrusted requester text into scripts.",
@@ -53,6 +54,12 @@ const manifest: PaperclipPluginManifestV1 = {
 1. Select the company in Paperclip and open **Support**.
 2. Under **Connect Windows support**, enter the Windows account and the trusted DNS domain or office IPv4 range that contains the company's computers. Choose a password secret or create one in the same form. The account and allowed computer group are saved in Support Desk settings; the password is stored in Paperclip Secrets.
 3. Click **Save access group**. Enter one computer under **Computer to test** and click **Test identity (read only)**. You do not register each computer. This test works before any help desk connection is configured. For WMI, if the test says scripts are disabled, select **Allow PowerShell scripts for this WMI task only** and save again. That option changes only the launched process, not the computer's saved execution policy.
+
+## Use IT tools in Clippy
+
+Open Clippy in the company and ask it to investigate a computer, troubleshoot a printer, or explain a Group Policy problem. It can discover the diagnostic catalog, inspect available modules, consult current official references, and prepare a repair for confirmation in the conversation. Technical reference questions do not require a computer or incoming ticket. Official article retrieval needs outbound HTTPS to Microsoft Learn; no extra API key is needed. Company notes and previously investigated computers appear under **IT tools, devices and reference library** on Support. Passwords stay in Secrets.
+
+After a change, Clippy reports the recorded repair and verification results and asks whether the original problem is gone when it cannot observe that remotely. Confirm recording the outcome in the conversation: resolved, still present, or needs follow-up. Recording ends previous delegation. If a problem returns, Clippy can reopen the case with your confirmation; unknown repair outcomes still require inspection.
 
 ## Receive support requests
 
@@ -185,6 +192,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "remote.identity.setup",
+      requiredUserPermission: "support:diagnose",
       method: "POST",
       path: "/remote/identity",
       auth: "board",
@@ -209,6 +217,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "cases.remote.identity",
+      requiredUserPermission: "support:diagnose",
       method: "POST",
       path: "/cases/:caseId/remote/identity",
       auth: "board",
@@ -225,6 +234,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "cases.actions.decide",
+      requiredUserPermission: "support:repair",
       method: "POST",
       path: "/cases/:caseId/actions/:actionId/decision",
       auth: "board",
@@ -233,6 +243,7 @@ In the **Configuration** tab, add a Support connection for each workspace or hel
     },
     {
       routeKey: "cases.actions.execute",
+      requiredUserPermission: "support:repair",
       method: "POST",
       path: "/cases/:caseId/actions/:actionId/execute",
       auth: "board",

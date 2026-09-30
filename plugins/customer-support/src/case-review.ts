@@ -65,7 +65,9 @@ export async function reviewCase(ctx: PluginContext, input: CaseReviewInput): Pr
      SET service_domain=$4, work_kind=$5, status=$6, asset_ref=$7, order_ref=$8,
          vendor_ref=$9, resolution_summary=$10, reviewed_by_user_id=$11,
          target_address=$12, access_method=$13,
-         reviewed_at=now(), review_version=review_version+1, updated_at=now()
+         reviewed_at=now(), review_version=review_version+1, updated_at=now(),
+         symptom_outcome=NULL,symptom_evidence=NULL,symptom_basis=NULL,
+         symptom_recorded_by_user_id=NULL,symptom_recorded_at=NULL
      WHERE company_id=$1 AND id=$2 AND review_version=$3`,
     [value.companyId, value.caseId, value.expectedVersion, value.serviceDomain, value.workKind,
       value.status, value.assetRef, value.orderRef, value.vendorRef, value.resolutionSummary,

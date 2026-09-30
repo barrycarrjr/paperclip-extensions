@@ -22,7 +22,7 @@ test("a company-scoped proposed repair needs a fresh board decision and runs onc
     await db.exec(`CREATE SCHEMA ${namespace}`);
     for (const name of ["001_init.sql", "002_issue_links.sql", "003_thread_context.sql", "004_case_review.sql",
       "005_nonsoftware_work.sql", "006_issue_assignee.sql", "007_software_escalation.sql", "008_target_access.sql",
-      "009_connection_methods.sql", "010_email_source.sql", "011_support_actions.sql"]) {
+      "009_connection_methods.sql", "010_email_source.sql", "011_support_actions.sql", "015_device_execution_guard.sql"]) {
       await db.exec(await readFile(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
     }
     await db.query(`INSERT INTO ${namespace}.support_cases
@@ -32,7 +32,16 @@ test("a company-scoped proposed repair needs a fresh board decision and runs onc
     [caseId, companyId, target]);
     const activity: unknown[] = [];
     const ctx = {
-      db: { namespace, query: async (sql: string, params?: unknown[]) => (await db.query(sql, params)).rows },
+      db: { namespace,
+        query: async (sql: string, params?: unknown[]) => {
+          assert.match(sql.trim(), /^SELECT\b/i, "Plugin db.query only permits reads");
+          return (await db.query(sql, params)).rows;
+        },
+        execute: async (sql: string, params?: unknown[]) => {
+          assert.match(sql.trim(), /^(INSERT|UPDATE|DELETE)\b/i);
+          return { rowCount: (await db.query(sql, params)).affectedRows };
+        },
+      },
       activity: { log: async (entry: unknown) => { activity.push(entry); } },
     } as unknown as PluginContext;
     const proposal = { companyId, caseId, actorUserId: "operator", expectedReviewVersion: 1,
@@ -52,6 +61,11 @@ test("a company-scoped proposed repair needs a fresh board decision and runs onc
     await assert.rejects(decideSupportAction(ctx, { ...scope, companyId: otherCompanyId, decision: "approved" }),
       (error: { status?: number }) => error.status === 409);
     assert.equal((await decideSupportAction(ctx, { ...scope, decision: "approved" })).status, "approved");
+    await db.query(`UPDATE ${namespace}.support_cases SET status='resolved' WHERE id=$1`, [caseId]);
+    await assert.rejects(executeSupportAction(ctx, config, scope, runner), (error: { status?: number }) => error.status === 409);
+    assert.equal(calls, 0);
+    assert.equal((await listSupportActions(ctx, companyId, caseId))[0]!.status, "approved");
+    await db.query(`UPDATE ${namespace}.support_cases SET status='triage' WHERE id=$1`, [caseId]);
     assert.equal((await executeSupportAction(ctx, config, scope, runner)).status, "verified");
     assert.equal(calls, 2);
     await assert.rejects(executeSupportAction(ctx, config, scope, runner),
