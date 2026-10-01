@@ -346,11 +346,20 @@ const plugin = definePlugin({
     });
     ctx.data.register("support.toolkit", async (params) => {
       const cfg = await config(ctx);
-      assertCompanyAccess(cfg, params.companyId);
+      if (typeof params.companyId !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(params.companyId)) {
+        throw new IntakeError(422, "Company ID must be a UUID");
+      }
+      const catalog = { diagnostics: diagnosticChecks, repairRecipes,
+        references: supportReferences.map(item => ({ id: item.id, title: item.title, topic: item.topic, url: referenceUrl(item) })) };
+      // Setup is an expected page state, not a failed fetch. Only the generic
+      // catalog is visible until this exact company has a saved support route.
+      if (!companyHasSupport(cfg, params.companyId)) {
+        return { ...catalog, configured: false, assets: [], printers: [], fleet: [], devices: [], knowledge: [] };
+      }
       const devices = await ctx.db.query<{ target_address: string; snapshot: unknown; last_seen_at: string }>(
         `SELECT target_address,snapshot,last_seen_at FROM ${dbNamespace(ctx)}.support_devices WHERE company_id=$1 ORDER BY last_seen_at DESC LIMIT 50`, [params.companyId]);
       const knowledge = await ctx.db.query(`SELECT id,title,topic,kind,body,created_at FROM ${dbNamespace(ctx)}.support_knowledge WHERE company_id=$1 ORDER BY created_at DESC LIMIT 20`, [params.companyId]);
-      return { diagnostics: diagnosticChecks, repairRecipes, references: supportReferences.map(item => ({ id: item.id, title: item.title, topic: item.topic, url: referenceUrl(item) })),
+      return { ...catalog, configured: true,
         assets: await listAssets(ctx, cfg, params.companyId as string),
         printers: await printerHistory(ctx, cfg, params.companyId as string),
         fleet: await ctx.db.query(`SELECT f.id,f.status,f.created_at,

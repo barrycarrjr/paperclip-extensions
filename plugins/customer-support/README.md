@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- **v0.1.2** - Show an explicit setup notice and the generic IT catalog when the selected company has no support configuration, without loading any saved company records. Add a headset icon beside Support in the sidebar and render readable public error messages throughout the support dashboard. Configured companies retain their existing access checks; real fetch failures remain visible.
+
 - **v0.1.1** - Release the reusable Support Desk foundation: company-routed protected intake, direct Clippy diagnostics, reviewed repair and guarded recovery, network discovery, directory/job/equipment/preflight workflows, specialist observations, MCP checks and reported WooCommerce order reads. Requires the matching fork host; configure exact company access and Secrets before use. Installed pilot validation and documented connector gaps remain open.
 
 - Foundation development: `add_machine_path` prepares an exact reviewed append of one existing trusted local tool directory. A recent same-target/case-review `ai_environment` snapshot gates preparation; execution rechecks raw PATH/type and directory/parent ownership and write permissions. Preserves existing entries and expandable registry type, verifies configuration and saves a separately approved suffix-only recovery. No install, tool launch, restart or staff-session impersonation. Windows tests use isolated registry fixtures and leave the host PATH unchanged.

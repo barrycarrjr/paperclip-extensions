@@ -1,3 +1,4 @@
+import { supportErrorMessage } from "./error-message.js";
 import { useEffect, useState } from "react";
 import { usePluginData } from "@paperclipai/plugin-sdk/ui";
 import { directoryFields, directoryKinds, specialistStatus, supportAreas, type DirectoryKind, type DirectoryRecord } from "../directory-schema.js";
@@ -12,7 +13,7 @@ function History({ companyId,recordId }: { companyId: string;recordId: string })
   const history = usePluginData<{ revisions: { version: number;name: string;details: Record<string,string>;actorUserId: string;recordedAt: string }[] }>("support.directoryHistory",{ companyId,recordId });
   return <div className="mt-2 space-y-2">
     {history.loading && <p role="status">Loading revisions…</p>}
-    {history.error && <p role="alert" className="text-destructive">Could not load revisions: {String(history.error)}</p>}
+    {history.error && <p role="alert" className="text-destructive">Could not load revisions: {supportErrorMessage(history.error)}</p>}
     {history.data?.revisions.map(revision => <details key={revision.version}><summary>Version {revision.version} · {new Date(revision.recordedAt).toLocaleString()}</summary><p>Reviewed by {revision.actorUserId}</p><p>{revision.name}</p>{Object.entries(revision.details).map(([key,value]) => <p key={key} className="whitespace-pre-wrap break-words">{Object.values(directoryFields).flat().find(field => field.key === key)?.label ?? key}: {value}</p>)}</details>)}
   </div>;
 }
@@ -25,7 +26,7 @@ function OwnerLookup({ companyId,records }: { companyId: string;records: Directo
       {(["equipment","brand"] as const).map(kind => <label key={kind}>{kind === "equipment" ? "Equipment (optional)" : "Brand (optional)"}<select className={inputClass} value={kind === "equipment" ? equipmentId : brandId} onChange={event => kind === "equipment" ? setEquipmentId(event.target.value) : setBrandId(event.target.value)}><option value="">Unspecified — general routes only</option>{records.filter(record => record.kind === kind).map(record => <option key={record.id} value={record.id}>{record.name}</option>)}</select></label>)}
     </div>
     {result.loading && <p role="status">Looking up saved routes…</p>}
-    {result.error && <p role="alert" className="text-destructive">Could not look up the owner: {String(result.error)}</p>}
+    {result.error && <p role="alert" className="text-destructive">Could not look up the owner: {supportErrorMessage(result.error)}</p>}
     {!result.loading && !result.error && result.data && <>
       <p>{result.data.status === "matched" ? "One matching route. Review the owner and handoff instructions below." : result.data.status === "needs_clarification" ? "Several routes may apply. Clarify the equipment, brand or owner before handing off." : "No matching route saved. Ask who owns this support area."}</p>
       {result.data.routes.map(route => <div key={route.id}><strong>{route.name}</strong><p className="whitespace-pre-wrap">{route.details.notes}</p></div>)}
@@ -68,7 +69,7 @@ export function SupportDirectory({ companyId }: { companyId: string }) {
     <p className="mt-3 text-muted-foreground">Save company contacts, equipment warranties, routing rules and brand details here. Clippy can look them up. Keep passwords in Secrets. Publish staff how-tos using Clippy’s company knowledge tools.</p>
     <button type="button" className={`${button} my-3`} onClick={() => { directory.refresh();agents.refresh();setRefreshVersion(value => value+1); }}>Refresh records and connection checks</button>
     {directory.loading && <p role="status">Loading company records…</p>}
-    {directory.error && <p role="alert" className="text-destructive">Could not load company records: {String(directory.error)}</p>}
+    {directory.error && <p role="alert" className="text-destructive">Could not load company records: {supportErrorMessage(directory.error)}</p>}
     {permissionError && <p role="alert" className="text-destructive">{permissionError}</p>}
     {pluginError && <p role="alert" className="text-destructive">{pluginError}</p>}
     {saved && <p role="status">Company record saved. Clippy can now find it.</p>}
@@ -98,7 +99,7 @@ export function SupportDirectory({ companyId }: { companyId: string }) {
             </select> : field.multiline ? <textarea required={field.required} maxLength={4000} className={inputClass} value={details[field.key] ?? ""} onChange={event => change(field.key,event.target.value)} /> : <input required={field.required} maxLength={255} className={inputClass} value={details[field.key] ?? ""} onChange={event => change(field.key,event.target.value)} />}
           </label>)}
         </fieldset>
-        {agents.error && kind === "owner" && <p role="alert" className="text-destructive">Could not load this company’s agent choices: {String(agents.error)}</p>}
+        {agents.error && kind === "owner" && <p role="alert" className="text-destructive">Could not load this company’s agent choices: {supportErrorMessage(agents.error)}</p>}
         <div className="flex gap-2"><button type="submit" disabled={busy} className={button}>Review record</button><button type="button" disabled={busy} className={button} onClick={() => edit(null)}>Clear form</button></div>
         {preview && <div className="space-y-2 rounded-md border border-border p-3"><h4 className="font-semibold">Confirm this company record</h4><p>{name}</p>{directoryFields[kind].filter(field => details[field.key]).map(field => <p key={field.key} className="whitespace-pre-wrap break-words">{field.label}: {field.link ? records.find(record => record.id === details[field.key])?.name ?? details[field.key] : details[field.key]}</p>)}<p className="text-muted-foreground">This saves reference information and revision history. It does not send a message or change equipment.</p><button type="button" disabled={busy} className={button} onClick={save}>{busy ? "Saving…" : "Confirm and save record"}</button></div>}
         {error && <p role="alert" className="text-destructive">{error}</p>}

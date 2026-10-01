@@ -1,3 +1,4 @@
+import { supportErrorMessage } from "./error-message.js";
 import { useEffect, useMemo, useState } from "react";
 import { useHostContext, usePluginData, type PluginPageProps, type PluginSidebarProps } from "@paperclipai/plugin-sdk/ui";
 import { RemoteSetup } from "./RemoteSetup.js";
@@ -253,7 +254,15 @@ export function SupportSidebar(_props: PluginSidebarProps) {
   const { data, loading, error } = usePluginData<{ visible: boolean }>("support.sidebar", { companyId: host.companyId });
   if (loading || error || !data?.visible) return null;
   const href = host.companyPrefix ? `/${host.companyPrefix}/support` : "/support";
-  return <a href={href} className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] font-medium text-foreground hover:bg-accent/30">Support</a>;
+  return <a href={href} className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] font-medium text-foreground hover:bg-accent/30">
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+      <path d="M3 14v-3a9 9 0 0 1 18 0v3" />
+      <rect x="2" y="12" width="4" height="8" rx="2" />
+      <rect x="18" y="12" width="4" height="8" rx="2" />
+      <path d="M18 20a6 6 0 0 1-6 3" />
+    </svg>
+    <span>Support</span>
+  </a>;
 }
 
 export function SupportPage(_props: PluginPageProps) {
@@ -395,8 +404,8 @@ export function SupportPage(_props: PluginPageProps) {
     {companyId && <TicketSetup key={`tickets:${companyId}`} companyId={companyId} />}
     {companyId && <SupportToolkit key={companyId} companyId={companyId} />}
     {companyId && <SupportDirectory key={`directory:${companyId}`} companyId={companyId} />}
-    {error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load cases: {String(error)}</p>}
-    {overview.error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load overview: {String(overview.error)}</p>}
+    {error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load cases: {supportErrorMessage(error)}</p>}
+    {overview.error && <p role="alert" className="rounded-md border border-destructive p-3 text-sm text-destructive">Could not load overview: {supportErrorMessage(overview.error)}</p>}
     {loading && <p className="text-sm text-muted-foreground">Loading cases…</p>}
     {!overview.loading && !overview.error && <div className="grid grid-cols-2 gap-2 md:grid-cols-5" aria-label="Case overview">
       {(["all", "new", "triage", "waiting", "resolved"] as const).map((status) => <button
@@ -419,7 +428,7 @@ export function SupportPage(_props: PluginPageProps) {
       <div className="rounded-md border border-border bg-card p-4 text-card-foreground">
         {!caseId && <p className="text-sm text-muted-foreground">Select a case to read its messages.</p>}
         {caseId && detail.loading && <p className="text-sm text-muted-foreground">Loading conversation…</p>}
-        {caseId && detail.error && <p role="alert" className="text-sm text-destructive">Could not load conversation: {String(detail.error)}</p>}
+        {caseId && detail.error && <p role="alert" className="text-sm text-destructive">Could not load conversation: {supportErrorMessage(detail.error)}</p>}
         {caseId && !detail.loading && !detail.error && !selectedDetail && <p className="text-sm text-muted-foreground">Case not found.</p>}
         {selectedDetail && <div className="space-y-4">
           {companyId && selectedDetail.ticketJob && <TicketProgress key={`${companyId}:${selectedDetail.supportCase.id}`} companyId={companyId} caseId={selectedDetail.supportCase.id} companyPrefix={host.companyPrefix} job={selectedDetail.ticketJob} onChanged={() => detail.refresh()} />}
@@ -494,7 +503,7 @@ export function SupportPage(_props: PluginPageProps) {
           {!selectedDetail.linkedIssue && !selectedDetail.escalation && selectedDetail.supportCase.service_domain !== "unclassified" && ["bug", "feature", "task", "incident"].includes(selectedDetail.supportCase.work_kind) ? <form onSubmit={createIssue} className="space-y-3 rounded-md border border-border p-3">
             <h3 className="font-semibold">{selectedDetail.supportCase.service_domain === "software" ? "Draft vendor escalation" : "Create reviewed work item"}</h3>
             <p className="text-xs text-muted-foreground">Write a reviewed title and evidence. Use the vendor's built-in reporting, support email or Jira form. A draft or opened form is not submission.</p>
-            {selectedDetail.supportCase.service_domain === "software" && softwareRoutes.error && <p role="alert" className="text-sm text-destructive">Could not load software routes: {String(softwareRoutes.error)}</p>}
+            {selectedDetail.supportCase.service_domain === "software" && softwareRoutes.error && <p role="alert" className="text-sm text-destructive">Could not load software routes: {supportErrorMessage(softwareRoutes.error)}</p>}
             {selectedDetail.supportCase.service_domain === "software" && <label className="block text-sm">Product and intake channel
               <select required value={softwareRouteId} onChange={(event) => setSoftwareRouteId(event.target.value)}
                 className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-foreground">
@@ -505,7 +514,7 @@ export function SupportPage(_props: PluginPageProps) {
             {selectedDetail.supportCase.service_domain === "software" && !softwareRoutes.loading && !softwareRoutes.error && softwareRoutes.data?.length === 0 &&
               <p className="text-sm text-muted-foreground">Configure the vendor's product reporting, email or Jira route before drafting an escalation.</p>}
             {softwareRoutes.data?.find(route => route.id === softwareRouteId)?.reportingInstructions && <p className="whitespace-pre-wrap text-sm">Reporting steps: {softwareRoutes.data.find(route => route.id === softwareRouteId)!.reportingInstructions}</p>}
-            {agents.error && <p role="alert" className="text-sm text-destructive">Could not load agents: {String(agents.error)}</p>}
+            {agents.error && <p role="alert" className="text-sm text-destructive">Could not load agents: {supportErrorMessage(agents.error)}</p>}
             {selectedDetail.supportCase.service_domain !== "software" && <label className="block text-sm">Assign agent (optional)
               <select value={assigneeAgentId} onChange={(event) => setAssigneeAgentId(event.target.value)}
                 className="mt-1 block w-full rounded-md border border-border bg-background p-2 text-foreground">

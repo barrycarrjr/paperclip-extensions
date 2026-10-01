@@ -1,3 +1,4 @@
+import { supportErrorMessage } from "./error-message.js";
 import { useEffect, useState } from "react";
 import type { SupportSetup } from "../support-setup.js";
 import { checkSetupPermission, type PermissionState } from "./setup-client.js";
@@ -59,7 +60,7 @@ export function SupportReadiness({ companyId, companyPrefix, setup, loading, err
     <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">Support setup checklist</h2><button type="button" onClick={onRefresh} className="rounded-md border border-border px-3 py-1.5">Refresh setup checks</button></div>
     <p className="text-muted-foreground">For direct Clippy support, start with Windows access and your permissions. Communication is needed when receiving requests or sending replies.</p>
     {(loading || checking) && <p role="status">Checking saved setup and your permissions…</p>}
-    {Boolean(error) && <p role="alert" className="text-destructive">Could not load saved support setup: {String(error)}</p>}
+    {Boolean(error) && <p role="alert" className="text-destructive">Could not load saved support setup: {supportErrorMessage(error)}</p>}
     {lookupErrors.map(message => <p key={message} role="alert" className="text-destructive">{message}</p>)}
     <div className="grid gap-3 lg:grid-cols-3">
       <section className="space-y-2 rounded-md border border-border p-3"><h3 className="font-medium">1. Windows access</h3>

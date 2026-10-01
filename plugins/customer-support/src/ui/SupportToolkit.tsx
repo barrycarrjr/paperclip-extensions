@@ -1,6 +1,8 @@
 import { usePluginData } from "@paperclipai/plugin-sdk/ui";
+import { supportErrorMessage } from "./error-message.js";
 
 interface Toolkit {
+  configured?: boolean;
   diagnostics: { id: string; title: string; description: string }[];
   repairRecipes: { id: string; title: string; disruption: string }[];
   references: { id: string; title: string; topic: string; url: string }[];
@@ -17,8 +19,9 @@ export function SupportToolkit({ companyId }: { companyId: string }) {
     <p className="mt-3 text-sm text-muted-foreground">In Clippy, ask to investigate a computer, troubleshoot a printer, explain Group Policy, or look up an IT procedure. It uses the company's saved access and asks for repair confirmation in the conversation.</p>
     <button type="button" onClick={() => toolkit.refresh()} className="my-3 rounded-md border border-border px-3 py-1.5 text-sm">Refresh device and knowledge records</button>
     {toolkit.loading && <p className="text-sm text-muted-foreground">Loading support toolkit…</p>}
-    {toolkit.error && <p role="alert" className="text-sm text-destructive">Could not load support toolkit: {String(toolkit.error)}</p>}
+    {toolkit.error && <p role="alert" className="text-sm text-destructive">Could not load support toolkit: {supportErrorMessage(toolkit.error)}</p>}
     {!toolkit.loading && !toolkit.error && toolkit.data && <div className="space-y-4 text-sm">
+      {toolkit.data.configured === false && <p role="status" className="rounded-md border border-border bg-muted p-3">Support is not set up for this company yet. Choose a company with saved support settings, or configure this company's Windows access or communication route. The tools and references below are available to browse; no company device records have been loaded.</p>}
       <section><h3 className="font-semibold">Office health checks</h3><p className="text-muted-foreground">Ask Clippy to check the office for issues. It investigates permitted Windows devices in steps, preserving progress. Skipped devices and missing checks have not been assessed.</p>
         {!toolkit.data.fleet?.length && <p className="mt-2">No fleet checks yet.</p>}
         {toolkit.data.fleet?.map(item => <p key={item.id} className="mt-2"><strong>{item.status}</strong> · {item.assessed} snapshots · {item.attention} need investigation · {item.pending} pending · {item.unavailable} failed/interrupted · {item.skipped} skipped · {new Date(item.created_at).toLocaleString()}</p>)}
