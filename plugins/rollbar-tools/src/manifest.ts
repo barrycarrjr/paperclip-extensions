@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "rollbar-tools";
-const PLUGIN_VERSION = "0.2.27";
+const PLUGIN_VERSION = "0.2.28";
 
 const projectItemSchema = {
   type: "object",

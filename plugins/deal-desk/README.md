@@ -514,6 +514,8 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 
 ## Recent changes
 
+- **v0.1.2** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **0.1.1** (2026-09-26) The claimedBy value for the buyer is now `owner`
   instead of a personal name. Migration `002_owner_claimed_by.sql` converts
   any stored add-backs and swaps the check, so existing installs upgrade in

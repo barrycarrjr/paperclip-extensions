@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.19.1** - Add reviewed Support Desk vendor-email delivery with immutable exact-message consent, current-account checks and durable one-attempt receipts. Uncertain delivery requires inspection; no automatic vendor messages.
+
 - **v0.19.0** - Every message the plugin sends now leaves a copy in the
   mailbox's Sent folder, and a reply or forward marks the message it answered,
   so the replied and forwarded icons show in Outlook and other mail programs.

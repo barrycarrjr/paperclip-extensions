@@ -365,7 +365,7 @@ packages:
     os: [win32]
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-secpdZqNDW4BjOfOuFNUuSATEusJEwLGzuKlwq8lBth1C0WicA4LoIdOlWm8NUTxY5UYFj5fwwWjaZQjVaollg==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    resolution: {integrity: sha512-g+7M2nvIETGINhyUsOXMC128Gr4eHMoKUROVh/y9b44CQKCMZRmwdipgRJ+et3mIearwsZFwFZKHxo98mVj6kw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
     version: 1.0.0
     hasBin: true
     peerDependencies:
@@ -375,7 +375,7 @@ packages:
         optional: true
 
   '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
-    resolution: {integrity: sha512-keQIMiWGycodGMBBTMoAFlO2zf/LC2T3GA+4sKrTJTc/BMc3kzCoVMhtdHhpnv6/5V/FUqzUnxmf7Y3k55B1WA==, tarball: file:../../vendor/sdk/shared.tgz}
+    resolution: {integrity: sha512-ZrY3w1R+nWbwMg/3tY+l51wA3p+nGX49ce9TZVmRr8KsHgKckuHtbRxTEbMZQO4mxogD1uoBKEb8HsXrcfSISg==, tarball: file:../../vendor/sdk/shared.tgz}
     version: 0.3.1
 
   '@types/node@24.19.0':

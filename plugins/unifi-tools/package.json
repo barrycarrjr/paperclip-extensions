@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-unifi-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Company-scoped UniFi Network integration observations for Support Desk",
   "type": "module",
   "private": true,

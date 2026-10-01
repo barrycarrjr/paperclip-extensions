@@ -6,6 +6,8 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 
 ## Recent changes
 
+- **v0.1.12** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.11**: Fixes a blank Reviews page. The whole page failed to load in
   v0.1.10 and showed a dashed placeholder instead.
 

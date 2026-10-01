@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.6.12** - Add explicitly opted-in company-scoped Support Desk queue, extension and presence observations. This does not establish SBC, host, SIP or actual call health, and does not change PBX configuration.
+
 - Development: read-only Support Desk observation bridge (`plugin.customer-support.observation-requested` → `plugin.3cx-tools.support-observation-receipt`). Enable **Allow Support Desk observations** on an account and explicitly allow the company. Existing manual extension/queue/DID filters or native tenant scoping remain enforced. Bounded snapshots distinguish unavailable queue/extension/presence sections. Voicemail, routing correctness, desk-phone provisioning, SBC, hypervisor and AI phone assistant remain separately untested; the bridge does not mutate them or access recordings. Adds the `events.subscribe` grant.
 
 - **v0.6.11** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

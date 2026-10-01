@@ -18,7 +18,7 @@ import { storefrontTools } from "./storefront-support.js";
 const manifest: PaperclipPluginManifestV1 = {
   id: "customer-support",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Support Desk",
   description: "Company-scoped support cases for customer, employee, and operational requests.",
   author: "Paperclip Extensions contributors",

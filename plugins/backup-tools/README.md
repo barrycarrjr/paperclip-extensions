@@ -128,6 +128,8 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.30** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.29** — The Backups page is readable in dark mode, and the Overview card reports its
   cadence. Every colour on the page was a hardcoded light-mode hex, so the tab
   you were currently on was painted near-black against the dark theme's

@@ -3,7 +3,7 @@ import { intakeTools } from "./support-intake.js";
 import { reviewedSupportTools } from "./reviewed-support.js";
 
 const PLUGIN_ID = "help-scout";
-const PLUGIN_VERSION = "0.7.5";
+const PLUGIN_VERSION = "0.7.6";
 
 const accountItemSchema = {
   type: "object",

@@ -6,7 +6,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // they ever drift apart.
 
 const PLUGIN_ID = "deal-desk";
-const PLUGIN_VERSION = "0.1.1";
+const PLUGIN_VERSION = "0.1.2";
 
 const DEAL_STAGES = ["screen", "diligence", "offer", "closing", "closed", "passed"];
 const DEAL_STRUCTURES = ["asset", "stock", "undecided"];

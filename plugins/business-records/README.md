@@ -468,6 +468,8 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 
 ## Recent changes
 
+- **v0.2.1** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **0.2.0** (2026-09-26) Everything on the Corporate Operations page can now
   be changed there: add or edit a business, change a status, add (with a file
   upload), edit or remove a document, add or edit a filing and change its

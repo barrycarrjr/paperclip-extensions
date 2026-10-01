@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.7.6** - Add opt-in scoped Support Desk observations, reviewed human reply/tag/assignment actions, and encrypted acknowledged native mailbox intake with real local-API request deadlines. Legacy write tools retain their existing controls; automatic investigations and customer replies need separate authorization.
+
 - Development fix: native Help Scout intake now uses its explicit operator-configured fixed Paperclip API endpoint directly, with an actual 15-second/remaining-budget deadline and bounded acknowledgement. The host HTTP bridge intentionally blocks private/loopback addresses and does not carry AbortSignals, so it cannot perform this local intake transfer. Actual loopback-server tests verify the authenticated POST and stalled-response abort; immutable lost-acknowledgement deduplication remains unchanged. Standard host HTTP security policy is unchanged.
 
 

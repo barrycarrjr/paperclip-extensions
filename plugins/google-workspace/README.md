@@ -6,6 +6,8 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 
 ## Recent changes
 
+- **v0.3.28** - Add scoped Support Desk verification of worker-host Markdown copies against an exact Drive folder, bounded downloads and disposable restore/read-back/cleanup. Counts only; no upload or in-place restore.
+
 - Development: scoped Support Desk Markdown cloud backup verification. An exact company/account opt-in binds a local source root **on this Google worker host** and a Drive backup folder. Compares file metadata and actual downloaded contents, tests a temporary local restore, removes temporary files, and emits counts without file text, names, paths or hashes. Current configuration is rechecked throughout. No upload, in-place restore, execution or provider changes. The existing Google tools keep their prior behavior.
 
 
