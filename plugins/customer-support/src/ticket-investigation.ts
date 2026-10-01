@@ -196,7 +196,7 @@ export async function diagnoseTicket(ctx: PluginContext,getConfig: () => Promise
   let findings: Record<string,unknown>;
   try { findings = JSON.parse(redactSource(receipt.output)); if (!findings || Array.isArray(findings) || typeof findings !== "object") throw new Error(); }
   catch { throw new IntakeError(502, "Diagnostic returned invalid findings"); }
-  const result = { runId: receipt.runId,options,findings };
+  const result = { runId: receipt.runId,options,findings,...(input.check === 'ai_environment' ? {observedTarget:target,caseReviewVersion:ticket.supportCase.review_version} : {}) };
   await ctx.db.execute(`INSERT INTO ${ns(ctx)}.support_diagnostics(company_id,case_id,check_kind,result,user_id,ticket_message_id,ticket_target_address) VALUES($1,$2,$3,$4::jsonb,$5,$6,$7)`,
     [run.companyId,ticket.job.case_id,input.check,JSON.stringify(result),`agent:${run.agentId}`,ticket.job.latest_message_id,target]);
   const sections = findings.sections as Record<string,{ status?: string; data?: Record<string,unknown> }> | undefined;

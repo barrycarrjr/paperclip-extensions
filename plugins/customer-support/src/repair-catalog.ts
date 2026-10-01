@@ -4,6 +4,7 @@ import { ns, ownedCase, resolveInteractiveTarget } from "./interactive-support.j
 import { diagnosticScript } from "./diagnostic-catalog.js";
 import { buildRepairRehearsal } from "./repair-rehearsal.js";
 import { rememberRecovery } from "./repair-recovery.js";
+import { buildMachinePathRepair, validateMachinePathDirectory, type MachinePathSnapshot } from "./machine-path-repair.js";
 
 export const repairRecipes = [
   { id: "start_service", title: "Start an exact service", options: ["service"], disruption: "Starts the selected service and its required dependencies." },
@@ -14,6 +15,7 @@ export const repairRecipes = [
   { id: "restart_print_job", title: "Restart one print job", options: ["printer", "jobId", "submittedAtUtc"], disruption: "Can produce duplicate printed pages. Requires the exact queue, job ID and observed submission timestamp." },
   { id: "cancel_print_job", title: "Cancel one print job", options: ["printer", "jobId", "submittedAtUtc"], disruption: "Cancels that document irreversibly. It must be resubmitted from the originating application." },
   { id: "change_printer_port", title: "Reconnect a queue to an existing printer port", options: ["printer", "expectedPortName", "newPortName"], disruption: "Routes subsequent printing from this exact queue through the selected existing port. Requires a fresh queue diagnostic, an empty queue and its unchanged previous port. Cannot create a port, install a driver or delete jobs." },
+  { id: "add_machine_path", title: "Append an existing trusted tool directory to machine PATH", options: ["directory"], disruption: "Changes future machine environments for all users. Requires a fresh same-target/review ai_environment diagnostic and trusted machine ownership/write permissions on the directory and its parents. Existing sessions/services keep their current environment. No install, launch or automatic restart." },
   { id: "rehearse_remote_write", title: "Test remote write, verification and cleanup", options: [], disruption: "Creates one new uniquely named marker file in the support account's temporary directory. Verification reads and removes it. Existing files and staff settings are not changed. Interrupted work needs inspection and confirmed cleanup." },
 ] as const;
 
@@ -34,14 +36,19 @@ function validatedOptions(operation: string, input: unknown) {
       if (key === "service" && !/^[a-z0-9_.-]+$/i.test(value)) throw new IntakeError(422, "Use the exact service name without wildcards");
       if (key === "submittedAtUtc" && !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value)) throw new IntakeError(422, "Use the observed UTC ISO submission timestamp");
       values[key] = value.trim();
+      if (key === "directory") values[key] = validateMachinePathDirectory(value);
     }
   }
   return { recipe, values };
 }
 const serviceLookup = "$service = Get-Service | Where-Object { $_.Name -eq [string]$SupportOptions.service }\nif (-not $service) { throw 'Exact service was not found' }";
 const jobLookup = "$queue = Get-Printer | Where-Object { $_.Name -eq [string]$SupportOptions.printer }\nif (-not $queue) { throw 'Exact printer was not found' }\n$job = Get-PrintJob -PrinterName $queue.Name -ID ([int]$SupportOptions.jobId) -ErrorAction SilentlyContinue";
-export function buildRepairRecipe(operation: string, input: unknown) {
+export function buildRepairRecipe(operation: string, input: unknown, machinePathSnapshot?: MachinePathSnapshot) {
   const { recipe, values } = validatedOptions(operation, input);
+  if (operation === "add_machine_path") {
+    if (!machinePathSnapshot) throw new IntakeError(409,"Run a fresh ai_environment diagnostic before preparing this recipe");
+    return { recipe, ...buildMachinePathRepair(values.directory,machinePathSnapshot), disruption: recipe.disruption };
+  }
   if (operation === "rehearse_remote_write") {
     const rehearsal = buildRepairRehearsal();
     return { recipe, ...rehearsal, expectedEffect: recipe.title, disruption: recipe.disruption };
@@ -92,9 +99,22 @@ export async function prepareCaseRecipe(ctx: PluginContext,cfg: Config,actor: { 
   if (input.options !== undefined && (!input.options || typeof input.options !== "object" || Array.isArray(input.options))) throw new IntakeError(422, "Repair options must be an object");
   const options = { ...((input.options ?? {}) as Record<string, unknown>) };
   if (input.operation === "flush_dns") options.testTarget = resolveInteractiveTarget(cfg, actor.companyId, options.testTarget);
-  const prepared = buildRepairRecipe(input.operation as string, options);
+  let machinePathSnapshot: MachinePathSnapshot | undefined;
+  if (input.operation === "add_machine_path") {
+    const [diagnostic] = await ctx.db.query<{ result: { findings?: { machinePathSnapshot?: MachinePathSnapshot } } }>(
+      `SELECT result FROM ${ns(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 AND check_kind='ai_environment' AND result->>'observedTarget'=$3 AND result->>'caseReviewVersion'=$4 AND created_at>now()-interval '30 minutes' ORDER BY created_at DESC LIMIT 1`,
+      [actor.companyId,supportCase.id,supportCase.target_address,String(supportCase.review_version)]);
+    machinePathSnapshot=diagnostic?.result?.findings?.machinePathSnapshot;
+    if (!machinePathSnapshot) throw new IntakeError(409,"Run a fresh ai_environment diagnostic in this reviewed case for its current computer");
+  }
+  const prepared = buildRepairRecipe(input.operation as string, options, machinePathSnapshot);
   let recoveryRepair: Record<string, unknown> | undefined;
   let priorState: Record<string, unknown> | undefined;
+  if (input.operation === "add_machine_path" && "recoveryVerificationScript" in prepared) {
+    priorState=prepared.priorState;
+    recoveryRepair={caseId:supportCase.id,target:supportCase.target_address,expectedReviewVersion:supportCase.review_version,
+      script:prepared.recoveryScript,verificationScript:prepared.recoveryVerificationScript,recoveryNotes:prepared.recoveryNotes,expectedEffect:"Remove only the exact appended machine PATH entry when all prior entries and registry type still match"};
+  }
   if (input.operation === "change_printer_port") {
     const [diagnostic] = await ctx.db.query<{ result: { findings?: { printers?: { Name: string; PortName: string; DriverName: string; JobCount: number }[]; ports?: { Name: string; PrinterHostAddress?: string }[] } } }>(
       `SELECT result FROM ${ns(ctx)}.support_diagnostics WHERE company_id=$1 AND case_id=$2 AND check_kind='printers' AND created_at>now()-interval '30 minutes' ORDER BY created_at DESC LIMIT 1`, [actor.companyId, supportCase.id]);

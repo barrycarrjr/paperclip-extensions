@@ -16,4 +16,17 @@ foreach ($scope in @('Machine','User')) {
   $pathChecks += [pscustomobject]@{ scope=$scope; inspected=$entries.Count; missingDirectories=$missing; duplicateDirectories=$duplicates; limit=100 }
 }
 $modules=@(Get-Module -ListAvailable Microsoft.PowerShell.Management,ScheduledTasks | Select-Object -First 10 Name,Version)
-@{ observedAtUtc=[DateTime]::UtcNow.ToString('o'); accountContext='Remote support account, not necessarily the affected staff user'; tools=$tools; pathChecks=$pathChecks; modules=$modules; limitations='No environment secret values, executable paths, MCP configuration contents, prompts or skill documents are returned. Command metadata does not prove CLI authentication or an MCP handshake. Check saved specialist connections and explicit sync-check profiles; user-specific setup needs the correct user context. No installation or changes run.' } | ConvertTo-Json -Depth 6 -Compress
+$machinePathSnapshot=@{status='unavailable'}
+try {
+  $key=[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\CurrentControlSet\Control\Session Manager\Environment',$false)
+  if (-not $key) { throw 'Machine environment is unavailable' }
+  try {
+    $kind=[string]$key.GetValueKind('Path')
+    $raw=$key.GetValue('Path',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    if ($raw -isnot [string] -or $kind -notin @('String','ExpandString')) { throw 'Unsupported machine PATH type' }
+    $digest=[Security.Cryptography.SHA256]::Create()
+    try { $hash=([BitConverter]::ToString($digest.ComputeHash([Text.Encoding]::UTF8.GetBytes('support-machine-path-v1'+[char]10+$kind+[char]10+$raw)))).Replace('-','').ToLowerInvariant() } finally { $digest.Dispose() }
+    $machinePathSnapshot=@{status='available';sha256=$hash;registryKind=$kind}
+  } finally { $key.Dispose() }
+} catch { $machinePathSnapshot=@{status='unavailable'} }
+@{ observedAtUtc=[DateTime]::UtcNow.ToString('o'); accountContext='Remote support account, not necessarily the affected staff user'; tools=$tools; pathChecks=$pathChecks; machinePathSnapshot=$machinePathSnapshot; modules=$modules; limitations='No environment secret values, executable paths, MCP configuration contents, prompts or skill documents are returned. Machine PATH snapshot contains only a raw-value/type digest for reviewed repair guards. Command metadata does not prove CLI authentication or an MCP handshake. Check saved specialist connections and explicit sync-check profiles; user-specific setup needs the correct user context. No installation or changes run.' } | ConvertTo-Json -Depth 6 -Compress

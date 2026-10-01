@@ -139,7 +139,7 @@ export async function diagnoseInteractiveCase(ctx: PluginContext, cfg: Config, r
       if (!findings || typeof findings !== "object" || Array.isArray(findings)) throw new Error("Invalid diagnostic object");
     }
     catch { throw new IntakeError(502, "Diagnostic returned invalid findings"); }
-    result = { runId: receipt.runId, options, findings };
+    result = { runId: receipt.runId, options, findings, ...(check === 'ai_environment' ? { observedTarget: supportCase.target_address, caseReviewVersion: supportCase.review_version } : {}) };
     const sections = findings.sections as Record<string, { status?: string; data?: Record<string, unknown> }> | undefined;
     const inventory = check === "inventory" ? findings : check === "health" && sections?.inventory?.status === "available" ? sections.inventory.data : null;
     if (inventory && typeof inventory === "object" && !Array.isArray(inventory)) {
