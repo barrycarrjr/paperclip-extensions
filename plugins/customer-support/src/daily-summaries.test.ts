@@ -58,4 +58,3 @@ test("unknown delivery never replays and revoked policy prevents a first attempt
     assert.equal((await f.db.query<{ status: string }>("SELECT status FROM plugin_customer_support_0c69412611.support_daily_summaries")).rows[0]!.status, "unknown");
   } finally { await f.db.close(); }
 });
-

@@ -51,4 +51,3 @@ test("Windows skill comparison detects different/missing copies without exportin
     await rm(temp, { recursive: true, force: true });
   }
 });
-
