@@ -79,6 +79,7 @@ import { buildThread } from "./threading.js";
 import { testMailbox } from "./test-mailbox.js";
 import { getAccessToken, startAuth, handleCallback } from "./oauth.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
+import { consumeDelivery, deliveryEvent, selectSupportAccount } from "../../../lib/support-delivery.js";
 
 interface SmtpRuntime {
   key: string;
@@ -405,6 +406,23 @@ const plugin = definePlugin({
     const rawConfig = (await ctx.config.get()) as InstanceConfig;
     const allowSend = !!rawConfig.allowSend;
     const mailboxes = rawConfig.mailboxes ?? [];
+    // Subscribe only for configured company access. Recipient opt-in is checked
+    // again at delivery time, so enabling a recipient needs no password copy.
+    const supportCompanies = new Set(mailboxes.flatMap(m => m.allowedCompanies ?? []));
+    for (const companyId of supportCompanies) {
+      const handle = async (event: Parameters<typeof consumeDelivery>[2]) => consumeDelivery(ctx,"email-tools",event,async request => {
+        const config = (await ctx.config.get()) as InstanceConfig;
+        const cfg = selectSupportAccount("email-tools",!!config.allowSend,config.mailboxes ?? [],request);
+        const rt = await buildSmtpRuntime(ctx,cfg,request.account);
+        return async () => {
+          const info = await deliver(ctx,cfg,request.account,rt,{ from: rt.smtpFrom,to: request.destination.to!,subject: request.destination.subject!,body: request.body },undefined,Date.now());
+          if (info.rejected.length || !info.accepted.length || !info.messageId) throw new Error("SMTP receipt is incomplete");
+          return info.messageId;
+        };
+      });
+      if (companyId === "*") ctx.events.on(deliveryEvent,handle);
+      else ctx.events.on(deliveryEvent,{ companyId },handle);
+    }
 
     if (!allowSend) {
       ctx.logger.warn(

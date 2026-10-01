@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { PluginContext } from "@paperclipai/plugin-sdk";
+import { companySupportMailboxes, readHelpScoutObservation } from "./support-observations.js";
+import type { InstanceConfig } from "./helpScoutClient.js";
+import { observationHash, parseObservation, consumeObservation, observationEvent, type ObservationRequest } from "../../../lib/support-observations.js";
+const companyId = "11111111-1111-4111-8111-111111111111", otherCompanyId = "22222222-2222-4222-8222-222222222222";
+const cfg: InstanceConfig = { accounts: [{ key: "example", allowedCompanies: [companyId, otherCompanyId], supportReadEnabled: true, allowedMailboxes: ["10", "20"], supportMailboxes: [{ companyId, mailboxIds: ["10"] }, { companyId: otherCompanyId, mailboxIds: ["20"] }] }] };
+const value = { version: 1 as const, requestId: otherCompanyId, companyId, provider: "help-scout" as const, account: "example", operation: "conversation", resourceId: "100", expiresAt: new Date(Date.now() + 60000).toISOString() };
+const request: ObservationRequest = { ...value, requestSha256: observationHash(value) };
+test("trusted observation requests reject forged actors, scope, operations, hashes and expiry", async () => {
+  const event = { eventType: observationEvent, actorType: "plugin", actorId: "customer-support", companyId, payload: request };
+  assert.ok(parseObservation(event, "help-scout"));
+  for (const bad of [{ ...event, actorType: "user" }, { ...event, actorId: "other-plugin" }, { ...event, companyId: otherCompanyId }, { ...event, payload: { ...request, operation: "delete" } }, { ...event, payload: { ...request, resourceId: "20" } }]) assert.equal(parseObservation(bad, "help-scout"), null);
+  let receipts = 0;
+  await consumeObservation({ events: { emit: async (_name, _company, payload) => { receipts++; assert.equal((payload as { status: string }).status, "unavailable"); } } }, "help-scout", event, async () => { throw new Error("Synthetic provider failure"); });
+  assert.equal(receipts, 1);
+});
+test("Help Scout requires exact unambiguous company mailbox opt-in and verifies conversation membership", async () => {
+  assert.deepEqual(companySupportMailboxes(cfg, companyId, "example"), ["10"]);
+  assert.throws(() => companySupportMailboxes({ accounts: [{ ...cfg.accounts![0]!, supportMailboxes: [{ companyId, mailboxIds: ["10"] }, { companyId: otherCompanyId, mailboxIds: ["10"] }] }] }, companyId, "example"));
+  assert.throws(() => companySupportMailboxes({ accounts: [{ ...cfg.accounts![0]!, allowedCompanies: ["*"] }] }, companyId, "example"));
+  let mailboxId = 20;
+  const ctx = { config: { get: async () => cfg } } as unknown as PluginContext;
+  const api = (async () => ({ status: 200, body: { id: 100, mailboxId, subject: "Example", status: "active", privateCustomer: "Should be omitted" }, rateLimitRemaining: null, location: null })) as Parameters<typeof readHelpScoutObservation>[2];
+  const resolve = (async () => ({})) as unknown as Parameters<typeof readHelpScoutObservation>[3];
+  await assert.rejects(readHelpScoutObservation(ctx, request, api, resolve), /outside company/);
+  mailboxId = 10;
+  const result = await readHelpScoutObservation(ctx, request, api, resolve);
+  assert.doesNotMatch(JSON.stringify(result), /Should be omitted/);
+});

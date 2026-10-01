@@ -42,6 +42,7 @@ export interface ConfigMailbox {
    */
   sentFolder?: string;
   allowedCompanies?: string[];
+  supportRecipients?: string[];
   pollEnabled?: boolean;
   pollFolder?: string;
   pollSinceDays?: number;

@@ -34,6 +34,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerPbxObservations } from "./support-observations.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -542,6 +543,7 @@ let pluginCtx: PluginContext | null = null;
 
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
+    registerPbxObservations(ctx);
     pluginCtx = ctx;
     ctx.logger.info("3cx-tools plugin starting", { version: "0.4.1" });
 

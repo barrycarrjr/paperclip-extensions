@@ -1,7 +1,13 @@
+import type { IntakeRoute } from "./support-intake.js";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { assertCompanyAccess } from "./companyAccess.js";
 
 export interface ConfigAccount {
+  supportReadEnabled?: boolean;
+  supportIntakeRoutes?: IntakeRoute[];
+  supportActionsEnabled?: boolean;
+  supportBrands?: { companyId: string; mailboxId: string; name: string; replyEmail: string; signature?: string }[];
+  supportMailboxes?: { companyId: string; mailboxIds: string[] }[];
   key?: string;
   displayName?: string;
   clientIdRef?: string;
@@ -63,6 +69,8 @@ async function exchangeForAccessToken(
   try {
     res = await fetch(HELP_SCOUT_TOKEN_URL, {
       method: "POST",
+      redirect: "manual",
+      signal: AbortSignal.timeout(15000),
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",

@@ -7,6 +7,7 @@ import {
   type ToolResult,
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
+import { registerPhoneObservations } from "./support-observations.js";
 import { isCompanyAllowed } from "./companyAccess.js";
 import {
   clearEngineCache,
@@ -731,6 +732,7 @@ async function findIdempotentCall(
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     webhookCtx = ctx;
+    registerPhoneObservations(ctx);
     ctx.logger.info("phone-tools plugin setup");
 
     const rawConfig = (await ctx.config.get()) as InstanceConfig;

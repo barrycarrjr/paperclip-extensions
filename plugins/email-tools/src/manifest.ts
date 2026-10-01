@@ -29,6 +29,7 @@ const mailboxItemSchema = {
     "imapHost",
     // Access control
     "allowedCompanies",
+    "supportRecipients",
     // Receive setup
     "pollEnabled",
     "ingestCompanyId",
@@ -101,6 +102,8 @@ const mailboxItemSchema = {
       description:
         "Companies whose agents may CALL tools (search/fetch/send/reply) against this mailbox. Tick 'Portfolio-wide' to allow every company; otherwise tick the specific companies. Empty = unusable. This does NOT control inbound mail dispatch — see 'Ingest company' below.",
     },
+    supportRecipients: { type: "array",title: "Support Desk vendor recipients",items: { type: "string" },
+      description: "Optional exact vendor support email addresses that this mailbox may send confirmed Support Desk escalations to. Empty disables support delivery; Allow sending and allowed-company rules also apply." },
 
     // ---- Receive (only relevant when polling/IDLE is on) ----
     pollEnabled: {
@@ -352,6 +355,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
     "telemetry.track",
     "jobs.schedule",
     "events.emit",
+    "events.subscribe",
     "issues.create",
     "issues.wakeup",
     "plugin.state.read",

@@ -64,6 +64,8 @@ const workspaceItemSchema = {
       description:
         "Companies whose agents may call Slack tools against this workspace. Tick 'Portfolio-wide' to allow every company; otherwise tick the specific companies. Empty = unusable (fail-safe deny). Typically a Slack workspace belongs to one LLC's team, so use a single-company list rather than ['*'].",
     },
+    supportChannels: { type: "array",title: "Support Desk reply channels",items: { type: "string" },
+      description: "Optional exact channel IDs where confirmed Support Desk replies may be posted by the bot. Empty disables support delivery. Existing allowed-company rules still apply." },
   },
 } as const;
 
@@ -190,10 +192,16 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "secrets.read-ref",
     "http.outbound",
     "telemetry.track",
+    "events.subscribe",
+    "events.emit",
+    "database.namespace.migrate",
+    "database.namespace.read",
+    "database.namespace.write",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
   },
+  database: { namespaceSlug: "slack_tools",migrationsDir: "migrations" },
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,

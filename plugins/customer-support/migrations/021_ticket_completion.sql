@@ -1,0 +1,6 @@
+ALTER TABLE plugin_customer_support_0c69412611.support_actions ADD COLUMN ticket_proof jsonb;
+ALTER TABLE plugin_customer_support_0c69412611.support_actions ADD COLUMN proposal_key text;
+CREATE UNIQUE INDEX support_actions_ticket_proposal_key_idx ON plugin_customer_support_0c69412611.support_actions(company_id,case_id,proposal_key) WHERE proposal_key IS NOT NULL;
+ALTER TABLE plugin_customer_support_0c69412611.support_ticket_jobs ADD COLUMN proposal_action_id uuid;
+ALTER TABLE plugin_customer_support_0c69412611.support_diagnostics ADD COLUMN ticket_message_id uuid;
+ALTER TABLE plugin_customer_support_0c69412611.support_diagnostics ADD COLUMN ticket_target_address text;

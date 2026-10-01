@@ -132,6 +132,9 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- Development: company-scoped Support Desk Vapi assistant/number observations. Explicit owned UUID lists, account allow-list checks before Secrets, current-config rechecks, fixed public provider GET endpoints, real request deadlines and bounded JSON. Whitelisted model/voice/transcriber selections and owned number-to-assistant assignments only; no prompts, phone numbers, credentials, call history, transcripts or recordings. DIY saved-assistant enumeration is explicitly unavailable. No test calls, charges or changes.
+
+
 - **v0.7.14** — The phone pages say when the account behind them is shared.
 
   Every other page in Paperclip is company-bound: what you see inside a company
@@ -455,3 +458,9 @@ Run with `pnpm test` (uses `node --test --import tsx`).
 - Cost cap on direct `phone_call_make` invocations from agent runs (Assistants UI flows are gated; agent-tool flows aren't yet).
 - Operator-timezone cap reset (cap currently rolls over at UTC midnight).
 - Voice cloning, multi-language assistants, A/B prompt testing — out of scope until further notice.
+
+## Support Desk AI-phone checks
+
+Save an enabled account **Support Desk AI-phone observations** profile with an exact company and its owned Vapi assistant/phone-number UUIDs (up to 20 of each). The account must explicitly allow the company; `*` alone does not opt it in. Existing allowed-assistant/number restrictions still apply. Save a Support Desk company connection with plugin key `phone-tools`, that account key and area `phones`. In Clippy request `support_check_specialist` with `operation: assistant_routing` and `resourceId` equal to the saved profile key, then read its receipt.
+
+The result distinguishes actual metadata, unavailable resources, owned assistant assignment and different/unassigned/dynamic routing. It never claims end-to-end call health. No PSTN/SIP probe, voicemail delivery, model-provider authentication, 3CX change, SBC access or hypervisor inspection is performed. These are separate components with separate access and evidence requirements. Reads use fixed [Vapi assistant](https://docs.vapi.ai/api-reference/assistants/get) and [phone-number](https://docs.vapi.ai/api-reference/phone-numbers/get) endpoints, native fetch with refused redirects, 10-second requests and a 45-second overall budget, and a 128 KB JSON bound. No worker HTTP bridge or legacy unbounded assistant enumeration is used for these new checks.

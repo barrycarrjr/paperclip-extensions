@@ -6,6 +6,9 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 
 ## Recent changes
 
+- Development: scoped Support Desk Markdown cloud backup verification. An exact company/account opt-in binds a local source root **on this Google worker host** and a Drive backup folder. Compares file metadata and actual downloaded contents, tests a temporary local restore, removes temporary files, and emits counts without file text, names, paths or hashes. Current configuration is rechecked throughout. No upload, in-place restore, execution or provider changes. The existing Google tools keep their prior behavior.
+
+
 - **v0.3.27** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.3.26** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -316,3 +319,16 @@ When an agent in company A invokes a tool addressing an account that isn't allow
 ## Versioning
 
 - `0.1.0` — initial release: Calendar, Tasks, Sheets, Drive, Auth.
+
+## Support Desk backup verification
+
+1. Connect Google OAuth normally, allowing the exact company (portfolio-wide `*` alone does not enable this check).
+2. Under that account's **Support Desk backup verification**, save a profile key, exact company, exact Drive folder ID and absolute Markdown source folder **on this worker host**. Enable the profile. No workstation path or company path is included in this plugin's shipped defaults.
+3. In Support Desk's company directory, save a specialist connection with plugin key `google-workspace`, this Google account key, and area `automations`.
+4. In Clippy request `support_check_specialist` using that directory record, `operation: backup_verify`, `resourceId: <saved-profile-key>`. Read the returned receipt with `support_get_specialist_observation`.
+
+Only `matched_and_restore_tested` means every supported observed source file matched cloud metadata, downloaded bytes and the temporary restore. Empty, partial, missing, different, extra, ambiguous or unavailable trees return `needs_review`; access/configuration/source-change failures return an unavailable receipt. Bounds: 50 Markdown files, 1 MiB each, 8 MiB total source, five nested levels, 30 directories, 500 local entries and 200 cloud entries, 45-second overall budget and at most 10 seconds per provider read. Larger trees require separate bounded profiles; a paginated listing is explicitly incomplete. Shortcuts and Google-native documents are not ordinary Markdown backups.
+
+This is a present-time verification of worker-host files. It does not establish historical retention, an atomic Drive snapshot or an automatic sync schedule. It does not upload or restore to the live source. Configure a trusted worker OS account and private temporary directory; downloaded test files may contain sensitive company contents and stay internal until cleanup. Local filesystem administrators are trusted; this is not a sandbox against a malicious host administrator. A persistent restore/upload requires a separately reviewed write workflow.
+
+Provider reference: [Drive file metadata](https://developers.google.com/workspace/drive/api/reference/rest/v3/files) and [download blobs with files.get](https://developers.google.com/workspace/drive/api/guides/manage-downloads).

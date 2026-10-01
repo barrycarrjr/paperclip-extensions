@@ -140,15 +140,14 @@ function fakeClient(opts: {
   return { client: client as unknown as SentCopyClient, calls };
 }
 
-// The M3 Media mailbox's real layout on 2026-09-23 (Rackspace): a "Sent" with
-// 4 messages from 2024 beside the "Sent Items" every mail program uses, and an
-// archive subfolder whose name only resembles a Sent folder.
+// Synthetic Rackspace-style layout: a stale "Sent" beside the active
+// "Sent Items", and an archive subfolder whose name resembles a Sent folder.
 const RACKSPACE: FakeFolder[] = [
   { path: "INBOX", specialUse: "\\Inbox", specialUseSource: "name" },
   { path: "INBOX.Drafts" },
   { path: "INBOX.Sent", specialUse: "\\Sent", specialUseSource: "name", messages: 4 },
-  { path: "INBOX.Sent Items", messages: 2345 },
-  { path: "INBOX.Brooks Old Emails.Sent Emails", messages: 700 },
+  { path: "INBOX.Sent Items", messages: 25 },
+  { path: "INBOX.Archived Mail.Sent Emails", messages: 700 },
   { path: "INBOX.Trash" },
 ];
 
@@ -183,7 +182,7 @@ test("candidates include server labels and translated names, and skip look-alike
       { path: "[Gmail]/Sent Mail", specialUse: "\\Sent", specialUseSource: "extension" },
       { path: "Sent" },
       { path: "Gesendete Elemente" },
-      { path: "INBOX.Brooks Old Emails.Sent Emails" },
+      { path: "INBOX.Archived Mail.Sent Emails" },
       { path: "Projects" },
     ].map(listEntry),
   );
@@ -594,8 +593,8 @@ test("every send in the worker goes through deliver, which saves the copy", () =
   assert.equal(sendMails.length, 1, "only sendViaSmtp may call sendMail");
   assert.ok(sendMails[0] > sendViaSmtpAt && sendMails[0] < deliverAt);
 
-  // email_send, email_reply, email.send-reply and email.send-new.
-  assert.equal([...src.matchAll(/\bdeliver\(/g)].length, 5, "deliver's definition and its 4 callers");
+  // email_send, email_reply, email.send-reply, email.send-new and support delivery.
+  assert.equal([...src.matchAll(/\bdeliver\(/g)].length, 6, "deliver's definition and its 5 callers");
 
   // Inside deliver: the too-late check comes before the send, and the
   // follow-ups are waited for on the call's own clock. Without these a send

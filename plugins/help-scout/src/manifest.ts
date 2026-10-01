@@ -1,4 +1,6 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
+import { intakeTools } from "./support-intake.js";
+import { reviewedSupportTools } from "./reviewed-support.js";
 
 const PLUGIN_ID = "help-scout";
 const PLUGIN_VERSION = "0.7.5";
@@ -9,6 +11,11 @@ const accountItemSchema = {
   propertyOrder: [
     "key",
     "displayName",
+    "supportReadEnabled",
+    "supportActionsEnabled",
+    "supportBrands",
+    "supportIntakeRoutes",
+    "supportMailboxes",
     "clientIdRef",
     "clientSecretRef",
     "defaultMailbox",
@@ -20,6 +27,11 @@ const accountItemSchema = {
     "watchMailboxId",
   ],
   properties: {
+    supportIntakeRoutes: { type: "array", title: "Native Support Desk intake routes", description: "One explicit company/mailbox route. Configure the matching Support Desk helpscout connection and ingestion agent first; store that agent API key in Secrets. Published threads are imported, not replied to. Disabled by default.", items: { type: "object", additionalProperties: false, properties: { key: { type: "string", title: "Route key" }, companyId: { type: "string", format: "company-id" }, mailboxId: { type: "string" }, connectionId: { type: "string", title: "Support Desk connection ID" }, externalAccountId: { type: "string", title: "Same external account ID as that connection" }, paperclipBaseUrl: { type: "string", title: "Paperclip origin", description: "HTTPS for remote hosts; HTTP only for localhost/loopback. No path, credential or query." }, apiKeyRef: { type: "string", format: "secret-ref", title: "Authorized intake agent API key Secret" }, startAt: { type: "string", title: "Import from (ISO timestamp)", description: "Explicit historical start. Cursors stay put when storage/provider/intake fails. Backlogs over the bounded scan need operator review." }, enabled: { type: "boolean", default: false, title: "Enable native mailbox intake" } }, required: ["key", "companyId", "mailboxId", "connectionId", "externalAccountId", "paperclipBaseUrl", "apiKeyRef", "startAt", "enabled"] } },
+    supportActionsEnabled: { type: "boolean", default: false, title: "Allow reviewed human support actions", description: "Separate opt-in for inline-confirmed replies, tag additions and owner assignment. Requires exact company/mailbox mappings, host permission and the global mutation switch. Unknown receipts block repetition." },
+    supportBrands: { type: "array", title: "Brand reply identities", description: "One company/mailbox identity matching its actual Help Scout mailbox email. Signatures are appended to the displayed reply before confirmation. No credential or DNS changes.", items: { type: "object", additionalProperties: false, properties: { companyId: { type: "string", format: "company-id" }, mailboxId: { type: "string" }, name: { type: "string" }, replyEmail: { type: "string" }, signature: { type: "string" } }, required: ["companyId", "mailboxId", "name", "replyEmail"] } },
+    supportReadEnabled: { type: "boolean", title: "Allow Support Desk observations", default: false, description: "Read-only mailbox/conversation metadata through the trusted Support Desk plugin. Requires exact company/mailbox mappings below. Does not authorize intake or replies." },
+    supportMailboxes: { type: "array", title: "Support Desk company mailboxes", description: "Each mailbox belongs to one company; shared ambiguous mappings are refused. The company must also appear explicitly in Allowed companies.", items: { type: "object", additionalProperties: false, properties: { companyId: { type: "string", format: "company-id" }, mailboxIds: { type: "array", items: { type: "string" }, title: "Mailbox IDs" } }, required: ["companyId", "mailboxIds"] } },
     key: {
       type: "string",
       title: "Identifier",
@@ -197,15 +209,19 @@ const manifest: PaperclipPluginManifestV1 & {
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Help Scout",
-  setupInstructions: SETUP_INSTRUCTIONS,
+  setupInstructions: SETUP_INSTRUCTIONS + "\n\n## Native Support Desk intake\n\nSave a matching Support Desk helpscout connection and exact company/mailbox route with an authorized intake agent. Store its agent API key in company Secrets. Enable the account observation/company mailbox mapping, then fill Native Support Desk intake routes below with those same IDs, the Paperclip HTTPS origin (HTTP only for loopback), API key Secret and explicit initial timestamp. Enable the route. Run helpscout_poll_support_intake in Clippy, then inspect helpscout_support_intake_status. The scheduler rotates enabled routes; incomplete intake does not advance its cursor. This does not enable automatic repairs or change provider tickets.\n\n## Reviewed human actions\n\nEnable the separate reviewed-action option and global mutation switch after a live read pilot. Save a brand/mailbox identity matching the actual reply address and signature. In Clippy prepare a support reply or tag/owner change, show its full plan and effects, confirm inline, run once and inspect its receipt. Unknown outcomes need provider inspection and explicit acknowledgement before releasing the interlock. Existing legacy agent tools retain their existing controls.",
   description:
     "Customer-support operations on Help Scout — find / create / reply / note conversations, look up customers, change status, assign, tag, and pull day/week/custom reports. Multi-account, per-account allowedCompanies, mutations gated.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
+    "events.subscribe",
+    "activity.log.write",
+    "events.emit",
     "agent.tools.register",
     "instance.settings.register",
     "secrets.read-ref",
+    "secrets.store",
     "http.outbound",
     "telemetry.track",
     "plugin.state.read",
@@ -220,7 +236,7 @@ const manifest: PaperclipPluginManifestV1 & {
     namespaceSlug: "help_scout",
     migrationsDir: "migrations",
   },
-  jobs: [
+  jobs: [{ jobKey: "support-intake", displayName: "Native Help Scout support intake", description: "Opt-in exact mailbox routes; encrypted snapshots, acknowledged revision IDs and durable pending queues. Imports three conversations per batch without sending customer messages or authorizing repairs.", schedule: "* * * * *" },
     {
       jobKey: "watch-new-mail",
       displayName: "Watch for new Help Scout mail",
@@ -284,7 +300,7 @@ const manifest: PaperclipPluginManifestV1 & {
       },
     },
   },
-  tools: [
+  tools: [...reviewedSupportTools, ...intakeTools,
     {
       name: "helpscout_list_rules",
       displayName: "List Help Scout Triage Rules",

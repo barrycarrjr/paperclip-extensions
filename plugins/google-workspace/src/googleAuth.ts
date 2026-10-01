@@ -2,6 +2,9 @@ import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { OAuth2Client } from "google-auth-library";
 import { assertCompanyAccess } from "./companyAccess.js";
 
+export interface BackupVerificationProfile {
+  key: string; companyId: string; driveFolderId: string; sourceRoot: string; enabled: boolean;
+}
 export interface ConfigAccount {
   key?: string;
   displayName?: string;
@@ -11,6 +14,7 @@ export interface ConfigAccount {
   refreshTokenRef?: string;
   scopes?: string[];
   allowedCompanies?: string[];
+  backupVerificationProfiles?: BackupVerificationProfile[];
 }
 
 export interface InstanceConfig {

@@ -402,3 +402,8 @@ a sent message into an error, since the mail has already gone.
 ## Authors
 
 Barry Carr · Tony Allard
+### Support Desk vendor escalations
+
+Support Desk can deliver a reviewed, person-confirmed vendor email through a configured mailbox. Enable sending, assign the company to that mailbox, and add exact vendor addresses under **Support Desk vendor recipients** (`supportRecipients`). Set the mailbox key as the software route's outbound account in Support Desk. An empty recipient list disables this integration. Credentials stay in Email Tools. Restart this plugin after changing the mailbox company list to refresh event subscriptions; every delivery also rechecks the current company ACL and recipient opt-in.
+
+This integration sends one plain-text email with no CC, BCC or attachments. Host-authenticated events and immutable fingerprints bind the reviewed destination/content. A durable metadata ledger prevents replaying a delivery ID. A response lost after SMTP started is unknown, never an invitation to resend. A sent receipt means SMTP acceptance, not recipient delivery/read confirmation. Source email replies and automatic Jira form intake are not part of this adapter.
