@@ -77,13 +77,11 @@ function SectionHeader({
     <>
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         style={buttonStyle}
         className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] font-medium hover:bg-accent/30"
       >
-        <span style={chevronStyle(open)} aria-hidden>
-          ▸
-        </span>
         <span>{title}</span>
       </button>
       {open ? <div style={{ paddingLeft: 12 }}>{children}</div> : null}
@@ -107,13 +105,11 @@ function Subsection({
     <>
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         style={subsectionButtonStyle}
         className="flex items-center gap-2 rounded-md px-2 py-1 text-[12px] font-medium text-muted-foreground hover:bg-accent/20"
       >
-        <span style={chevronStyle(open)} aria-hidden>
-          ▸
-        </span>
         <span>{title}</span>
       </button>
       {open ? <div style={{ paddingLeft: 14 }}>{children}</div> : null}
@@ -175,12 +171,3 @@ const linkStyle: CSSProperties = {
   color: "inherit",
   textDecoration: "none",
 };
-
-function chevronStyle(open: boolean): CSSProperties {
-  return {
-    display: "inline-block",
-    width: 8,
-    transition: "transform 120ms ease",
-    transform: open ? "rotate(90deg)" : "rotate(0deg)",
-  };
-}

@@ -62,11 +62,11 @@ function SectionHeader({
     <div className="flex flex-col gap-0.5">
       <button
         type="button"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
         style={buttonStyle}
         className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] font-medium hover:bg-accent/30"
       >
-        <span style={chevronStyle(open)} aria-hidden>▸</span>
         <span>{title}</span>
       </button>
       {open ? <div style={{ paddingLeft: 12 }}>{children}</div> : null}
@@ -119,11 +119,3 @@ const buttonStyle: CSSProperties = {
   width: "100%",
 };
 const linkStyle: CSSProperties = { color: "inherit", textDecoration: "none" };
-function chevronStyle(open: boolean): CSSProperties {
-  return {
-    display: "inline-block",
-    width: 8,
-    transition: "transform 120ms ease",
-    transform: open ? "rotate(90deg)" : "rotate(0deg)",
-  };
-}
