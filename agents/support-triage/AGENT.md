@@ -5,7 +5,7 @@ agentName: support-triage
 role: support
 title: Support Triage
 icon: mail
-adapterType: claude-local
+adapterType: claude_local
 capabilities: |
   - Read inbound support email / Help Scout conversations
   - Apply labels and assign to the right queue

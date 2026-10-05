@@ -5,7 +5,7 @@ agentName: phone-assistant
 role: operator
 title: Phone Assistant
 icon: phone
-adapterType: claude-local
+adapterType: claude_local
 capabilities: |
   - Answer incoming calls via 3CX / VAPI
   - Place outbound calls for qualification, no-show recovery, confirmation, follow-up
