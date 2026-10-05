@@ -1,11 +1,11 @@
 ---
 name: reviews-reply
-description: Handle Google Business Profile review issues created by the gbp-reviews plugin — refine the drafted reply, then apply a risk-tiered autonomy policy: auto-post warm thank-yous to plain 5-star reviews, hold everything with written content (and every review of 3 stars or fewer) for board approval. Never auto-replies to a negative or substantive review. Designed to run on a schedule (see the reviews-sweep routine) so the review queue stays clear without the operator hand-writing every reply. Requires the gbp-reviews plugin and its `allowReplies` setting to post.
+description: Handle Google Business Profile review issues created by the review-tools plugin — refine the drafted reply, then apply a risk-tiered autonomy policy: auto-post warm thank-yous to plain 5-star reviews, hold everything with written content (and every review of 3 stars or fewer) for board approval. Never auto-replies to a negative or substantive review. Designed to run on a schedule (see the reviews-sweep routine) so the review queue stays clear without the operator hand-writing every reply. Requires the review-tools plugin and its `allowReplies` setting to post.
 ---
 
 # Reviews Reply
 
-The `gbp-reviews` plugin polls for new Google reviews and creates a Paperclip
+The `review-tools` plugin polls for new Google reviews and creates a Paperclip
 issue per review with an AI-drafted reply attached. This skill is what an agent
 follows to **process that issue**: refine the draft, decide whether it's safe to
 send automatically, and either post it or hold it for the board.
@@ -18,7 +18,7 @@ anything negative — always should.
 
 - The `reviews-sweep` routine fires and hands you the company's unreplied
   reviews.
-- A review issue created by `gbp-reviews` is assigned to you (or delegated by
+- A review issue created by `review-tools` is assigned to you (or delegated by
   the CEO as part of a portfolio directive like "reply to all Google reviews").
 - The operator asks you to clear the review queue.
 
@@ -54,7 +54,7 @@ never toward an unreviewed public reply.
 
 ## Requirements & guardrails
 
-- **Plugin**: `gbp-reviews` must be installed and configured for the company,
+- **Plugin**: `review-tools` must be installed and configured for the company,
   with `allowReplies` **on** for any reply to actually post. With it off, even
   Auto-tier replies stay as drafts — which is the correct, safe way to start.
 - **Trust ramp**: run Hold/Never only (allowReplies off) until the operator

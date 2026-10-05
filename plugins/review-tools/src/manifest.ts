@@ -1,6 +1,6 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
-const PLUGIN_ID = "gbp-reviews";
+const PLUGIN_ID = "review-tools";
 const PLUGIN_VERSION = "0.1.12";
 
 const SETUP_INSTRUCTIONS = `# Setup: Google Business Profile Reviews
@@ -77,7 +77,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
-  displayName: "GBP Reviews",
+  displayName: "Review Tools",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Google Business Profile review management. Detects incoming review emails, creates Paperclip issues with suggested replies, posts replies via the GBP API from an agent or the Reviews page, and surfaces a review dashboard.",
@@ -267,7 +267,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       {
         type: "dashboardWidget",
         id: "review-summary-widget",
-        displayName: "GBP Reviews",
+        displayName: "Review Tools",
         exportName: "ReviewSummaryWidget",
       },
       {
@@ -275,7 +275,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         id: "review-dashboard",
         displayName: "GBP Review Dashboard",
         exportName: "ReviewDashboardPage",
-        routePath: "gbp-reviews",
+        routePath: "reviews",
       },
     ],
   },

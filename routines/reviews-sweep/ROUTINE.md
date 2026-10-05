@@ -19,21 +19,21 @@ triggers:
 requiresSkills:
   - reviews-reply
 requiresPlugins:
-  - gbp-reviews
+  - review-tools
 ---
 
 # Clear the Google reviews queue
 
-The `gbp-reviews` plugin already creates an issue per new review with a drafted
+The `review-tools` plugin already creates an issue per new review with a drafted
 reply. This routine is the daily backstop that makes sure the queue actually
 gets worked — nothing sits unreplied — and applies the auto-vs-hold policy in
 one pass.
 
-Pairs the `gbp-reviews` plugin with the `reviews-reply` skill.
+Pairs the `review-tools` plugin with the `reviews-reply` skill.
 
 ## After importing
 
-1. Confirm the `gbp-reviews` plugin is installed and configured for this
+1. Confirm the `review-tools` plugin is installed and configured for this
    company (accounts + locations, with this company as the `targetCompanyId`).
 2. Attach the `reviews-reply` skill to the assignee (the CEO by default, or a
    marketing/support agent if you have one).

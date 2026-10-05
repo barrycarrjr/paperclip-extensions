@@ -182,7 +182,7 @@ export async function reconcileAgainstLive(
   const liveText = live.reviewReply?.comment ?? null;
   if (liveText !== null && liveText === row.replyText) {
     await deps.store.finishPost(row.idempotencyKey, "posted", live.reviewReply!.updateTime);
-    deps.logger.info("gbp-reviews: reconciled an unconfirmed reply as posted", { idempotencyKey: row.idempotencyKey });
+    deps.logger.info("review-tools: reconciled an unconfirmed reply as posted", { idempotencyKey: row.idempotencyKey });
     return;
   }
   if (liveText === null) {
@@ -268,7 +268,7 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
     // Google is settled against Google below.
     if (own.status === "posting" && ageMs(deps, own.updatedAt) > STALE_IN_FLIGHT_MS) {
       await deps.store.finishPost(own.idempotencyKey, "unknown", ABANDONED_ATTEMPT_MESSAGE);
-      deps.logger.warn("gbp-reviews: an attempt was left in flight and is being settled", {
+      deps.logger.warn("review-tools: an attempt was left in flight and is being settled", {
         idempotencyKey: own.idempotencyKey,
         reviewName,
       });
@@ -305,7 +305,7 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
       // unknown now is what frees the one-in-flight slot for this attempt;
       // what actually happened is settled against Google a few lines below.
       await deps.store.finishPost(inFlight.idempotencyKey, "unknown", ABANDONED_ATTEMPT_MESSAGE);
-      deps.logger.warn("gbp-reviews: an attempt was left in flight and is being settled", {
+      deps.logger.warn("review-tools: an attempt was left in flight and is being settled", {
         idempotencyKey: inFlight.idempotencyKey,
         reviewName,
       });
@@ -368,7 +368,7 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
     if (own && own.status === "unknown" && liveReply && liveReply.comment === replyText) {
       await deps.store.finishPost(input.idempotencyKey, "posted", liveReply.updateTime);
       settled = true;
-      deps.logger.info("gbp-reviews: reconciled an unconfirmed reply as posted", { idempotencyKey: input.idempotencyKey });
+      deps.logger.info("review-tools: reconciled an unconfirmed reply as posted", { idempotencyKey: input.idempotencyKey });
       const settledRow = await deps.store.findPost(input.idempotencyKey);
       return storedReceipt(
         deps,
@@ -419,14 +419,14 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
         // Either way the reply is not on Google.
         await deps.store.finishPost(input.idempotencyKey, "failed", message);
         settled = true;
-        deps.logger.error("gbp-reviews: Google refused the reply", { idempotencyKey: input.idempotencyKey, reviewName, error: message });
+        deps.logger.error("review-tools: Google refused the reply", { idempotencyKey: input.idempotencyKey, reviewName, error: message });
         throw err;
       }
       // Anything else is the connection: the request may or may not have
       // arrived. Say so, and let the retry reconcile against Google.
       await deps.store.finishPost(input.idempotencyKey, "unknown", message);
       settled = true;
-      deps.logger.error("gbp-reviews: lost the connection while posting a reply", { idempotencyKey: input.idempotencyKey, reviewName, error: message });
+      deps.logger.error("review-tools: lost the connection while posting a reply", { idempotencyKey: input.idempotencyKey, reviewName, error: message });
       refuse(
         "EPOST_UNCONFIRMED",
         "The connection dropped while posting, so it is not known whether the reply reached Google. Try again; the retry checks Google first and will not post twice.",
@@ -442,7 +442,7 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
       await deps.store.finishPost(input.idempotencyKey, "posted", result.updateTime);
     } catch (err) {
       recordedLocally = false;
-      deps.logger.error("gbp-reviews: posted to Google but could not record the attempt", {
+      deps.logger.error("review-tools: posted to Google but could not record the attempt", {
         idempotencyKey: input.idempotencyKey,
         reviewName,
         error: err instanceof Error ? err.message : String(err),
@@ -458,7 +458,7 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
       );
     } catch (err) {
       recordedLocally = false;
-      deps.logger.error("gbp-reviews: posted to Google but could not record locally", {
+      deps.logger.error("review-tools: posted to Google but could not record locally", {
         idempotencyKey: input.idempotencyKey,
         reviewName,
         error: err instanceof Error ? err.message : String(err),
@@ -484,7 +484,7 @@ export async function postReplyGuarded(deps: ReplyGuardDeps, input: PostReplyInp
       try {
         await deps.store.finishPost(input.idempotencyKey, "failed", message);
       } catch (releaseErr) {
-        deps.logger.error("gbp-reviews: could not release the slot this attempt was holding", {
+        deps.logger.error("review-tools: could not release the slot this attempt was holding", {
           idempotencyKey: input.idempotencyKey,
           reviewName,
           error: releaseErr instanceof Error ? releaseErr.message : String(releaseErr),

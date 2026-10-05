@@ -116,7 +116,7 @@ async function readLastSyncedAt(ctx: PluginCtx, locationKey: string): Promise<st
     const value = await ctx.state.get(lastSyncStateKey(locationKey));
     return typeof value === "string" && value.length > 0 ? value : null;
   } catch (err) {
-    ctx.logger.warn("gbp-reviews: could not read the last sync time", {
+    ctx.logger.warn("review-tools: could not read the last sync time", {
       locationKey,
       error: (err as Error).message,
     });
@@ -157,7 +157,7 @@ async function replySourceForSyncedReply(
     const source = rows[0]?.source;
     if (source === "human" || source === "agent") return source;
   } catch (err) {
-    ctx.logger.warn("gbp-reviews: could not check who posted this reply", {
+    ctx.logger.warn("review-tools: could not check who posted this reply", {
       reviewName,
       error: (err as Error).message,
     });
@@ -189,7 +189,7 @@ async function createReviewIssue(
       title,
       description: body,
       priority: reviewPriority(starRating),
-      originKind: "plugin:gbp-reviews",
+      originKind: "plugin:review-tools",
       originId: reviewName,
       ...(location.targetProjectId ? { projectId: location.targetProjectId } : {}),
     });
@@ -305,7 +305,7 @@ async function syncLocationReviews(
   try {
     await ctx.state.set(lastSyncStateKey(location.key), syncedAt);
   } catch (err) {
-    ctx.logger.warn("gbp-reviews: could not record the sync time", {
+    ctx.logger.warn("review-tools: could not record the sync time", {
       locationKey: location.key,
       error: (err as Error).message,
     });
@@ -338,7 +338,7 @@ async function isPortfolioRootCompany(
     // both directions.
     return (company as unknown as { isPortfolioRoot?: boolean } | null)?.isPortfolioRoot === true;
   } catch (err) {
-    ctx.logger.warn("gbp-reviews: could not resolve company for scoping", {
+    ctx.logger.warn("review-tools: could not resolve company for scoping", {
       companyId,
       err: (err as Error).message,
     });
@@ -843,7 +843,7 @@ const plugin = definePlugin({
         liveChecked = true;
       } catch (err) {
         liveError = wrapGbpError(err);
-        ctx.logger.warn("gbp-reviews: could not read the review from Google", {
+        ctx.logger.warn("review-tools: could not read the review from Google", {
           reviewName: review.reviewName,
           error: liveError,
         });
@@ -865,7 +865,7 @@ const plugin = definePlugin({
             liveReview,
           );
         } catch (err) {
-          ctx.logger.warn("gbp-reviews: could not settle an earlier attempt on this review", {
+          ctx.logger.warn("review-tools: could not settle an earlier attempt on this review", {
             reviewName: review.reviewName,
             error: err instanceof Error ? err.message : String(err),
           });

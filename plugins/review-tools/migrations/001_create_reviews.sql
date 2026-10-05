@@ -1,6 +1,6 @@
 -- Review records synced from GBP API.
 -- review_name is the full GBP resource name and serves as the stable PK.
-CREATE TABLE IF NOT EXISTS plugin_gbp_reviews_6e35570847.reviews (
+CREATE TABLE IF NOT EXISTS plugin_review_tools_5de9bb9335.reviews (
   review_name text PRIMARY KEY,
   location_key text NOT NULL,
   company_id text NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS plugin_gbp_reviews_6e35570847.reviews (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_reviews_location ON plugin_gbp_reviews_6e35570847.reviews(location_key);
-CREATE INDEX IF NOT EXISTS idx_reviews_company ON plugin_gbp_reviews_6e35570847.reviews(company_id);
-CREATE INDEX IF NOT EXISTS idx_reviews_time ON plugin_gbp_reviews_6e35570847.reviews(review_time);
-CREATE INDEX IF NOT EXISTS idx_reviews_unreplied ON plugin_gbp_reviews_6e35570847.reviews(location_key) WHERE reply_text IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reviews_location ON plugin_review_tools_5de9bb9335.reviews(location_key);
+CREATE INDEX IF NOT EXISTS idx_reviews_company ON plugin_review_tools_5de9bb9335.reviews(company_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_time ON plugin_review_tools_5de9bb9335.reviews(review_time);
+CREATE INDEX IF NOT EXISTS idx_reviews_unreplied ON plugin_review_tools_5de9bb9335.reviews(location_key) WHERE reply_text IS NULL;

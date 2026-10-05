@@ -324,7 +324,7 @@ export interface DraftStorage {
 }
 
 export function draftStorageKey(companyId: string, reviewName: string): string {
-  return `gbp-reviews:draft:${companyId}:${reviewName}`;
+  return `review-tools:draft:${companyId}:${reviewName}`;
 }
 
 /**

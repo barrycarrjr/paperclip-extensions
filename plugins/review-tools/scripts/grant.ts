@@ -5,7 +5,7 @@
  * Run once per Google account; store the printed token as a Paperclip secret.
  *
  * Usage:
- *   pnpm --filter paperclip-plugin-gbp-reviews grant
+ *   pnpm --filter paperclip-plugin-review-tools grant
  *   # or directly:
  *   pnpm tsx scripts/grant.ts
  *

@@ -41,7 +41,7 @@ const SPECIAL_NOTES = {
     "  Separately, `dashboard.health` never selected the `cadence` column the\n" +
     "  Overview card renders, so the card always printed a bare \"Cadence:\" with\n" +
     "  nothing after it. The column is now in the query.",
-  "gbp-reviews":
+  "review-tools":
     "Location names are visible in dark mode. The location cards painted a fixed\n" +
     "  near-white background while the name inherited the theme's text colour, so\n" +
     "  under the dark theme the name was near-white on near-white. The cards now use\n" +

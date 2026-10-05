@@ -360,7 +360,7 @@ test("a double click while posting changes nothing", () => {
 // ---------------------------------------------------------------------------
 
 test("drafts are keyed per company and review, and storage failures are swallowed", () => {
-  assert.equal(draftStorageKey("company-a", "accounts/1/locations/2/reviews/r1"), "gbp-reviews:draft:company-a:accounts/1/locations/2/reviews/r1");
+  assert.equal(draftStorageKey("company-a", "accounts/1/locations/2/reviews/r1"), "review-tools:draft:company-a:accounts/1/locations/2/reviews/r1");
 
   const store = new Map<string, string>();
   const storage = {

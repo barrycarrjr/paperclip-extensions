@@ -1,4 +1,4 @@
-# gbp-reviews plugin
+# review-tools plugin
 
 Google Business Profile review management for a portfolio. Detects incoming review notification emails, creates Paperclip issues with suggested replies, posts approved replies back via the GBP API (from an agent tool or from the Reviews page), and surfaces a per-location review dashboard. Multi-account, per-company isolation, OAuth-driven.
 
@@ -162,9 +162,9 @@ Google Business Profile review management for a portfolio. Detects incoming revi
 ### UI
 
 - `ReviewSummaryWidget`: dashboard widget showing per-location unreplied / avg / total.
-- `ReviewDashboardPage`: full page at route `gbp-reviews`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
+- `ReviewDashboardPage`: full page at route `reviews`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
 
-The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `gbp-reviews:draft:<companyId>:<reviewName>`).
+The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `review-tools:draft:<companyId>:<reviewName>`).
 
 ## Setup
 
@@ -189,7 +189,7 @@ Scopes requested:
 From the `paperclip-extensions` repo:
 
 ```bash
-cd plugins/gbp-reviews
+cd plugins/review-tools
 GBP_CLIENT_ID="…" GBP_CLIENT_SECRET="…" pnpm grant
 ```
 

@@ -32,7 +32,7 @@ const SKIP_REASON =
   "GBP_REVIEWS_TEST_DATABASE_URL is not set, so the real Postgres rules were not run. Set it to a Postgres connection string to run them.";
 
 /** The schema name the migration files are written against. */
-const MIGRATION_SCHEMA = "plugin_gbp_reviews_6e35570847";
+const MIGRATION_SCHEMA = "plugin_review_tools_5de9bb9335";
 
 const REVIEW_ONE = "accounts/111/locations/222/reviews/one";
 const REVIEW_TWO = "accounts/111/locations/222/reviews/two";
