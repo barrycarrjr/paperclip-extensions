@@ -341,16 +341,17 @@ const TEMPLATE_KINDS = [
 ];
 
 function splitFrontmatter(raw, sourcePath) {
-  if (!raw.startsWith("---\n")) {
+  const norm = raw.replace(/\r\n/g, "\n");
+  if (!norm.startsWith("---\n")) {
     throw new Error(`${sourcePath}: missing frontmatter (must start with '---\\n')`);
   }
-  const end = raw.indexOf("\n---\n", 4);
+  const end = norm.indexOf("\n---\n", 4);
   if (end === -1) {
     throw new Error(`${sourcePath}: unterminated frontmatter (missing closing '---')`);
   }
   return {
-    frontmatterBlock: raw.slice(4, end),
-    body: raw.slice(end + 5).replace(/^\s+/, ""),
+    frontmatterBlock: norm.slice(4, end),
+    body: norm.slice(end + 5).replace(/^\s+/, ""),
   };
 }
 

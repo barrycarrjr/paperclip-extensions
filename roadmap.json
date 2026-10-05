@@ -54,8 +54,9 @@
       "type": "skill",
       "title": "Portfolio Health Check",
       "description": "Monday-morning cross-company rollup of key metrics, flagged agent issues, budget consumption, and pending approvals — delivered as a single Chairman briefing.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Shipped via Chairman Portfolio Brief rollup and automated health calculations."
     },
     {
       "id": "skill-churn-risk-alerter",
@@ -264,8 +265,9 @@
       "type": "routine",
       "title": "Portfolio CEO briefing (Monday 7am)",
       "description": "Cross-company rollup for the Chairman: all company health metrics, agent flags, and pending approvals.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Available as a bundled routine template in the Templates Library."
     },
     {
       "id": "routine-monthly-personal-finance-review",
@@ -336,8 +338,9 @@
       "type": "feature",
       "title": "Chairman / cross-company dashboard",
       "description": "Single screen showing all portfolio companies side-by-side: key metrics, agent statuses, flagged issues, budget consumption. The command center for the Chairman role.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Shipped via Chairman Portfolio Brief (`/portfolio/brief`), Portfolio Directives (`/portfolio/directives`), and Portfolio Costs (`/portfolio/costs`)."
     },
     {
       "id": "feature-approval-bundling",
@@ -384,24 +387,27 @@
       "type": "feature",
       "title": "Email-to-issue bridge",
       "description": "Forward an email to a special address to auto-create a Paperclip issue routed to the right agent.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Shipped via native Email integration with auto-triage rules and one-click 'Convert to issue' agent handoff."
     },
     {
       "id": "feature-agent-performance-dashboard",
       "type": "feature",
       "title": "Agent performance dashboard",
       "description": "Per-agent visibility: heartbeat counts, task completion rate, average resolution time, budget burn. Helps identify which agents are overloaded or underperforming.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Shipped via Portfolio Brief Health view, Active Agents live run cards, and Heartbeat status monitors."
     },
     {
       "id": "feature-routine-cadence-calendar",
       "type": "feature",
       "title": "Routine cadence calendar",
       "description": "Visual calendar of all scheduled routines across all companies so the operator can see what's automated and when.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Shipped natively in Paperclip UI (`/calendar`) with scheduled routine occurrence tracking, month grid, and multi-source filtering."
     },
     {
       "id": "feature-budget-consumption-alerts",
@@ -464,8 +470,9 @@
       "type": "feature",
       "title": "Shared skills library (portfolio-level install)",
       "description": "Install a skill once at the portfolio level and make it available to all company agents without per-company reinstallation.",
-      "status": "idea",
-      "addedAt": "2026-05-11"
+      "status": "shipped",
+      "addedAt": "2026-05-11",
+      "notes": "Shipped via Instance Settings -> Templates with remote library sync and 1-click install across portfolio."
     },
     {
       "id": "feature-board-simulation-approval-flow",
