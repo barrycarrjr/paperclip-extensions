@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-review-tools",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Customer review management: parse notification emails, suggest replies, post via review APIs (Google Business Profile, etc.) from an agent or the Reviews page, and surface a review dashboard.",
   "type": "module",
   "private": true,

@@ -1,6 +1,6 @@
 # review-tools plugin
 
-Google Business Profile review management for a portfolio. Detects incoming review notification emails, creates Paperclip issues with suggested replies, posts approved replies back via the GBP API (from an agent tool or from the Reviews page), and surfaces a per-location review dashboard. Multi-account, per-company isolation, OAuth-driven.
+Multi-platform customer review management and response suite for a portfolio. Supports Google Business Profile (with expansion architecture for additional review APIs such as Trustpilot, Yelp, Facebook, and App Store). Detects incoming review notifications, creates Paperclip issues with suggested replies, posts approved replies back via review provider APIs, and surfaces a unified review dashboard. Multi-account, per-company isolation, OAuth-driven.
 
 > **Setup walkthrough** also lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab. This README is an overview of capabilities and a reference for tool/job/error shapes.
 

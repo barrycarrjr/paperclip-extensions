@@ -34,13 +34,13 @@ export function ReviewSummaryWidget(_props: PluginWidgetProps) {
     companyId: host.companyId,
   });
 
-  if (loading) return <div style={{ padding: "12px", color: "#888" }}>Loading GBP review data…</div>;
+  if (loading) return <div style={{ padding: "12px", color: "#888" }}>Loading review data…</div>;
   // The same mapper the page uses, so the widget never prints a bracketed
   // code such as [ESCOPE] at a person.
   if (error) {
     return (
       <div style={{ padding: "12px", display: "grid", gap: 8 }}>
-        <strong>GBP Reviews</strong>
+        <strong>Customer Reviews</strong>
         <ErrorNote>{describeReplyError(error)}</ErrorNote>
       </div>
     );
@@ -48,7 +48,7 @@ export function ReviewSummaryWidget(_props: PluginWidgetProps) {
   if (!data || data.locations.length === 0) {
     return (
       <div style={{ padding: "12px" }}>
-        <strong>GBP Reviews</strong>
+        <strong>Customer Reviews</strong>
         <p style={{ color: "#888", marginTop: 4 }}>No locations configured.</p>
       </div>
     );
@@ -59,7 +59,7 @@ export function ReviewSummaryWidget(_props: PluginWidgetProps) {
   return (
     <div style={{ padding: "12px", display: "grid", gap: "8px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <strong>GBP Reviews</strong>
+        <strong>Customer Reviews</strong>
         {totalUnreplied > 0 && (
           <span style={{
             background: totalUnreplied >= 3 ? "#ef4444" : "#f59e0b",
@@ -168,7 +168,7 @@ export function ReviewDashboardPage(_props: PluginPageProps) {
       {!view.locationKey && (
         <>
           <div>
-            <h1 style={{ margin: "0 0 4px", fontSize: 22 }}>GBP Review Dashboard</h1>
+            <h1 style={{ margin: "0 0 4px", fontSize: 22 }}>Review Dashboard</h1>
             <p style={{ ...mutedText, margin: 0 }}>
               {data?.isRollup
                 ? "Every location across the portfolio, because you are viewing from HQ. Open a location to read its reviews; replies are posted from the location's own company."
@@ -206,7 +206,7 @@ export function ReviewDashboardPage(_props: PluginPageProps) {
 
           {data?.locations.length === 0 && (
             <div style={{ textAlign: "center", padding: "40px", color: css.muted }}>
-              <p>No GBP locations configured yet.</p>
+              <p>No review locations configured yet.</p>
               <p style={{ fontSize: "13px" }}>
                 Add locations in the plugin settings page to start tracking reviews.
               </p>

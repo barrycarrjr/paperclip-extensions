@@ -1,20 +1,23 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "review-tools";
-const PLUGIN_VERSION = "0.1.12";
+const PLUGIN_VERSION = "0.1.13";
 
-const SETUP_INSTRUCTIONS = `# Setup: Google Business Profile Reviews
+const SETUP_INSTRUCTIONS = `# Setup: Review Tools
 
-This plugin monitors GBP reviews for your portfolio companies and lets agents and people reply directly from Paperclip.
+Review Tools coordinates customer review workflows across multiple review platforms for your portfolio companies, allowing agents and team members to track reviews, draft suggested responses, and post replies directly from Paperclip.
+
+Currently supports **Google Business Profile (GBP)**, with architecture for connecting additional review platforms (Trustpilot, Facebook, Yelp, App Store, etc.).
 
 ## What it does
-- **Phase 1**: Polls Gmail for GBP review notification emails and creates Paperclip issues with suggested replies
-- **Phase 2**: Posts approved replies back to GBP via the My Business API, from an agent tool or from the Reviews page
-- **Phase 3**: Daily/weekly review digest, sentiment tracking, and dashboard
+- **Multi-platform support**: Unified review tracking and responses across connected review APIs
+- **Phase 1**: Polls Gmail for review notification emails and creates Paperclip issues with suggested replies
+- **Phase 2**: Posts approved replies back via review provider APIs, from an agent tool or the Reviews dashboard
+- **Phase 3**: Daily/weekly review digest, sentiment tracking, and cross-channel dashboard
 
 ---
 
-## Setup steps
+## Google Business Profile (GBP) Setup
 
 ### 1. Create a GCP project and OAuth credentials
 
@@ -28,7 +31,7 @@ Go to [https://console.cloud.google.com](https://console.cloud.google.com):
 
 From the \`paperclip-extensions\` repo:
 \`\`\`bash
-pnpm --filter paperclip-plugin-google-workspace grant <account-key>
+pnpm --filter paperclip-plugin-review-tools grant <account-key>
 \`\`\`
 Use a Google account that has **Owner or Manager** access to the GBP location(s).
 
@@ -38,14 +41,14 @@ Required scopes:
 
 ### 3. Create Paperclip secrets
 
-For each GBP account, create three secrets in Paperclip:
+For each Google account, create three secrets in Paperclip:
 - \`GBP_CLIENT_ID\` → the OAuth client ID
 - \`GBP_CLIENT_SECRET\` → the OAuth client secret
 - \`GBP_REFRESH_TOKEN\` → the refresh token from step 2
 
 ### 4. Configure the plugin (Configuration tab)
 
-Under **GBP accounts**, add an entry:
+Under **Google / GBP OAuth accounts**, add an entry:
 | Field | Value |
 |---|---|
 | **Key** | e.g. \`primary-gbp\` |
@@ -55,7 +58,7 @@ Under **GBP accounts**, add an entry:
 | **Refresh token** | UUID of the refresh token secret |
 | **Allowed companies** | Companies that may use this account |
 
-Under **GBP locations**, add each location:
+Under **Monitored review locations**, add each location:
 | Field | Value |
 |---|---|
 | **Key** | e.g. \`main-st-store\` |
@@ -67,10 +70,15 @@ Under **GBP locations**, add each location:
 
 ---
 
+## Additional Review Providers
+Support for additional review platforms (Trustpilot, Facebook, Yelp) uses the same unified review database schema and response pipeline. Contact your administrator or check upcoming extension releases for provider connectors.
+
+---
+
 ## Troubleshooting
 - **\`invalid_grant\`**: re-run the grant script and update the refresh token secret.
 - **Missing Gmail permissions**: make sure the refresh token was obtained with the \`gmail.readonly\` scope.
-- **Reviews not appearing**: confirm the GBP account has Owner/Manager access to the location.
+- **Reviews not appearing**: confirm the Google account has Owner/Manager access to the location.
 `;
 
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
@@ -80,7 +88,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "Review Tools",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Google Business Profile review management. Detects incoming review emails, creates Paperclip issues with suggested replies, posts replies via the GBP API from an agent or the Reviews page, and surfaces a review dashboard.",
+    "Multi-platform customer review management and automation suite. Supports Google Business Profile (with expansion architecture for additional review APIs). Detects incoming review notifications, drafts suggested replies, synchronizes reviews via APIs, posts approved replies, and surfaces a unified review dashboard.",
   author: "Barry Carr",
   categories: ["automation", "connector"],
   capabilities: [
@@ -117,20 +125,20 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   jobs: [
     {
       jobKey: "poll-review-emails",
-      displayName: "Poll Gmail for new GBP review emails",
-      description: "Scans the configured Gmail inbox for GBP review notification emails and creates Paperclip issues with suggested replies.",
+      displayName: "Poll review notification emails (Gmail/GBP)",
+      description: "Scans the configured Gmail inbox for review notification emails and creates Paperclip issues with suggested replies.",
       schedule: "*/15 * * * *",
     },
     {
       jobKey: "sync-all-reviews",
-      displayName: "Sync all GBP reviews",
-      description: "Pulls all reviews from all configured GBP locations via the My Business API and updates the local database.",
+      displayName: "Sync all reviews (Google Business Profile)",
+      description: "Pulls all reviews from configured GBP locations via provider API and updates the local database.",
       schedule: "0 6 * * *",
     },
     {
       jobKey: "send-weekly-digest",
       displayName: "Send weekly review digest",
-      description: "Creates a weekly digest issue (or briefing comment) summarising new reviews, response time, and unreplied reviews.",
+      description: "Creates a weekly digest issue summarising new reviews, response times, and unreplied reviews across channels.",
       schedule: "0 8 * * 1",
     },
   ],
@@ -140,19 +148,19 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     properties: {
       allowReplies: {
         type: "boolean",
-        title: "Allow posting replies to GBP",
-        description: "Master switch. When off, nobody can post a reply from Paperclip, not agents and not people using the Reviews page; drafts are still shown. Default: off.",
+        title: "Allow posting review replies (Google GBP)",
+        description: "Master switch. When enabled, allows agents and operators to post replies directly to review platforms. When off, replies remain drafts. Default: off.",
         default: false,
       },
       gmailAccountKey: {
         type: "string",
-        title: "Gmail account key",
-        description: "Key of the account to use for Gmail polling (must include gmail.readonly scope). Leave blank to skip Phase 1 email polling.",
+        title: "Gmail notification polling account",
+        description: "Key of the Google account to use for review notification email polling (must include gmail.readonly scope).",
       },
       accounts: {
         type: "array",
-        title: "GBP OAuth accounts",
-        description: "One entry per Google account with GBP + Gmail access.",
+        title: "Google / GBP OAuth accounts",
+        description: "Connected Google accounts with GBP and Gmail access. Additional provider accounts will be configured here as more review APIs are connected.",
         items: {
           type: "object",
           required: ["key", "clientIdRef", "clientSecretRef", "refreshTokenRef", "allowedCompanies"],
@@ -189,8 +197,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       },
       locations: {
         type: "array",
-        title: "GBP locations",
-        description: "One entry per GBP location to monitor.",
+        title: "Monitored review locations (Google GBP)",
+        description: "Configured business locations to monitor across review platforms.",
         items: {
           type: "object",
           required: ["key", "displayName", "googleAccountId", "locationId", "accountKey", "targetCompanyId"],
@@ -211,8 +219,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   tools: [
     {
       name: "gbp_list_reviews",
-      displayName: "List GBP Reviews",
-      description: "List all reviews for a GBP location. Returns reviewer name, star rating, review text, and reply status.",
+      displayName: "List Reviews (Google GBP)",
+      description: "List reviews for a configured location (Google Business Profile). Returns reviewer name, star rating, review text, and reply status.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -224,8 +232,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     },
     {
       name: "gbp_get_review",
-      displayName: "Get GBP Review",
-      description: "Get a single GBP review by its resource name.",
+      displayName: "Get Review (Google GBP)",
+      description: "Get a single review by its resource name (Google Business Profile).",
       parametersSchema: {
         type: "object",
         properties: {
@@ -237,8 +245,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     },
     {
       name: "gbp_reply_to_review",
-      displayName: "Reply to GBP Review",
-      description: "Post a reply to a GBP review. Requires allowReplies to be enabled in plugin settings.",
+      displayName: "Reply to Review (Google GBP)",
+      description: "Post a reply to a review (Google Business Profile). Requires reply posting to be enabled in plugin settings.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -251,8 +259,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     },
     {
       name: "gbp_sync_location",
-      displayName: "Sync GBP Location Reviews",
-      description: "Manually trigger a sync of all reviews for a specific location.",
+      displayName: "Sync Reviews (Google GBP)",
+      description: "Manually trigger a sync of all reviews for a specific location via provider API.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -273,7 +281,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       {
         type: "page",
         id: "review-dashboard",
-        displayName: "GBP Review Dashboard",
+        displayName: "Review Dashboard",
         exportName: "ReviewDashboardPage",
         routePath: "reviews",
       },
