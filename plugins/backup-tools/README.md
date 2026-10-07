@@ -128,6 +128,16 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.31** - Restore works. Preview and apply both hung until the 30 s RPC
+  timeout (`RPC call "handleApiRequest" timed out`) because `skipBytes` looped
+  over the archive stream twice: leaving the first `for await` early destroyed
+  the stream, so the second loop threw `AbortError` and decryption waited
+  forever. It now reads the stream through one iterator and fails fast on a
+  stream error. Also pins `packageManager` to `pnpm@10.28.0`: pnpm 11+ ignores
+  the `pnpm.overrides` block, so builds silently bundled the npm SDK instead of
+  the vendored one and backups failed with
+  `Cannot read properties of undefined (reading 'createSnapshot')`.
+
 - **v0.1.30** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.29** — The Backups page is readable in dark mode, and the Overview card reports its

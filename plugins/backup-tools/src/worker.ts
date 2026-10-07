@@ -1095,34 +1095,41 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
 }
 
 async function skipBytes(stream: NodeJS.ReadableStream, bytes: number): Promise<NodeJS.ReadableStream> {
-  // Read+discard `bytes` from the stream, then return the same stream
-  // for further consumption.
+  // Read+discard `bytes` from the stream, then pass the rest through.
+  // One iterator for the whole stream: leaving a `for await` early destroys a
+  // Node Readable, so a second loop over the same stream threw AbortError
+  // inside read(), the wrapper never ended, and every restore hung until the
+  // RPC timeout.
+  const iterator = (stream as unknown as AsyncIterable<Uint8Array>)[Symbol.asyncIterator]();
   let remaining = bytes;
   return new Readable({
     async read() {
-      if (remaining > 0) {
-        // Drain `remaining` bytes from upstream first.
-        const reader = stream as unknown as AsyncIterable<Uint8Array>;
-        for await (const chunk of reader) {
-          if (chunk.byteLength <= remaining) {
-            remaining -= chunk.byteLength;
-            if (remaining === 0) break;
-            continue;
+      try {
+        for (;;) {
+          const { value, done } = await iterator.next();
+          if (done) {
+            this.push(null);
+            return;
           }
-          const tail = chunk.subarray(remaining);
-          remaining = 0;
-          this.push(Buffer.from(tail));
-          break;
+          let chunk = Buffer.from(value);
+          if (remaining > 0) {
+            if (chunk.byteLength <= remaining) {
+              remaining -= chunk.byteLength;
+              continue;
+            }
+            chunk = chunk.subarray(remaining);
+            remaining = 0;
+          }
+          this.push(chunk);
+          return;
         }
+      } catch (err) {
+        this.destroy(err as Error);
       }
-      // Now pipe the rest through.
-      const reader = stream as unknown as AsyncIterable<Uint8Array>;
-      for await (const chunk of reader) {
-        if (!this.push(Buffer.from(chunk))) {
-          break;
-        }
-      }
-      this.push(null);
+    },
+    destroy(err, callback) {
+      void iterator.return?.();
+      callback(err);
     },
   });
 }
