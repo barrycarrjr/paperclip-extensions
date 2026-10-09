@@ -360,15 +360,21 @@ export class Page {
 
   /** Click the element marked `data-pcip="<mark>"` with real mouse events. */
   async clickMark(mark: string): Promise<boolean> {
-    const box = await this.evaluate<{ x: number; y: number } | null>((m: string) => {
+    const box = await this.evaluate<{ x: number; y: number; covered: boolean } | null>((m: string) => {
       const el = document.querySelector(`[data-pcip="${m}"]`) as HTMLElement | null;
       if (!el) return null;
-      el.scrollIntoView({ block: "center", inline: "center" });
+      // "nearest" sideways: centring sideways shifts the whole page left.
+      el.scrollIntoView({ block: "center", inline: "nearest" });
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) return null;
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      // Something floating on top (a chat button, a banner) would take the click.
+      const top = document.elementFromPoint(x, y);
+      const covered = !top || !(top === el || el.contains(top) || top.contains(el));
+      return { x, y, covered };
     }, mark);
-    if (!box) {
+    if (!box || box.covered) {
       return this.evaluate<boolean>((m: string) => {
         const el = document.querySelector(`[data-pcip="${m}"]`) as HTMLElement | null;
         if (!el) return false;
@@ -417,6 +423,12 @@ export class Page {
       mark,
       text,
     );
+  }
+
+  async pressEscape(): Promise<void> {
+    const k = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 };
+    await this.send("Input.dispatchKeyEvent", { type: "keyDown", ...k });
+    await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...k });
   }
 
   async pressEnter(): Promise<void> {

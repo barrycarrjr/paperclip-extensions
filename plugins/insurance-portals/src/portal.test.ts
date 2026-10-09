@@ -731,3 +731,166 @@ test("per-policy buttons gone after Back: falls back to the general policy picke
     server.close();
   }
 });
+
+test("Back is broken: reaches every policy through the header Policies menu, never a bill", { skip: !chrome, timeout: 240_000 }, async () => {
+  const hits: string[] = [];
+  const pols = [
+    { n: "1234567", addr: "12 Oak St" },
+    { n: "7654321", addr: "900 Elm Ave" },
+    { n: "5555555", addr: "3 Pine Rd" },
+  ];
+  const app = `<header><nav><button>Homepage</button>
+      <button id="pm" onclick="document.getElementById('menu').style.display='block'">Policies <span>expand_more</span> Select policy from dropdown</button>
+      <div id="menu" style="display:none">${pols.map((p) => `<button onclick="go('/policy/details?p=${p.n}')">${p.addr} Specialty Dwelling policy #100-${p.n}</button>`).join("")}</div>
+      <button>Payments</button><button>Sign out</button></nav></header>
+    <main id="main"></main>
+    <button style="position:fixed;right:10px;bottom:10px;width:160px;height:50px;z-index:9">Chat Support</button>
+    <script>
+      function go(p){document.getElementById('menu').style.display='none';history.pushState({},'',p);render()}
+      // Back lands on a blank page here, unlike a well-behaved site.
+      window.onpopstate=()=>{document.getElementById('main').innerHTML=''};
+      function render(){
+        const u=new URL(location.href), n=u.searchParams.get('p'), m=document.getElementById('main');
+        if(u.pathname==='/app/home'){m.innerHTML=${JSON.stringify(
+          pols
+            .map(
+              (p) => `<section><h3>${p.addr}</h3><a href="#" onclick="return false">#100 - ${p.n}</a>
+                <button aria-label="view bill for policy ${p.n}" onclick="fetch('/bill?p=${p.n}')">View bill</button>
+                <button aria-label="policy documents for policy ${p.n}" onclick="go('/policy/documents?p=${p.n}')">Policy documents</button></section>`,
+            )
+            .join("") + pols.map((p) => `<a href="#" onclick="return false">#100 - ${p.n} Managed policies ${p.addr} policy number ${p.n}</a>`).join(""),
+        )};return}
+        const tabs='<div><button role=tab onclick="go(\\'/policy/details?p='+n+'\\')">DETAILS</button><button role=tab onclick="go(\\'/policy/documents?p='+n+'\\')">DOCUMENTS</button></div>';
+        if(u.pathname==='/policy/details'){m.innerHTML=tabs+'<h1>Policy details</h1>';return}
+        m.innerHTML=tabs+'<h1>Policy documents</h1>'+['06/29/2026','06/27/2025'].map((d,i)=>
+          '<button onclick="window.open(\\'/docs/'+n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> RENEWAL '+d+'</button>').join('');
+      }
+      render();
+    </script>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(url.pathname + url.search);
+    if (url.pathname === "/login") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(`<form action="/app/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`));
+    }
+    if (url.pathname === "/app/home" || url.pathname.startsWith("/policy/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(app));
+    }
+    const doc = /^\/docs\/(\d+)-(\d)\.pdf$/.exec(url.pathname);
+    if (doc) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`${doc[1]}-${doc[2]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+    );
+    const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
+    assert.deepEqual(tags, ["% 1234567-0", "% 1234567-1", "% 5555555-0", "% 5555555-1", "% 7654321-0", "% 7654321-1"], `hits: ${hits.join(", ")}`);
+    assert.ok(!hits.some((h) => h.startsWith("/bill")), "never opened a bill");
+    assert.deepEqual([...new Set(result.documents.map((d) => d.policy))].sort(), ["12 Oak St - Policy 1234567", "3 Pine Rd - Policy 5555555", "900 Elm Ave - Policy 7654321"]);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("declines a 'Go paperless?' pop-up after sign-in, never enrolls", { skip: !chrome, timeout: 120_000 }, async () => {
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(`${req.method} ${url.pathname}`);
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") return html(`<form action="/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/home") {
+      return html(`<nav><a href="/a">Home</a><a href="/b">Billing</a><a href="/c">Claims</a><a href="/logout">Log out</a></nav>
+        <main><h1>Your policies</h1><a href="/docs/dec.pdf">Declarations page</a></main>
+        <div role="dialog" aria-modal="true" id="pp" style="position:fixed;inset:0;background:white">
+          <h2>Go paperless?</h2><p>Get your documents by email.</p>
+          <button onclick="fetch('/enroll',{method:'POST'})">Enroll now</button>
+          <button onclick="document.getElementById('pp').remove()">No thanks</button></div>`);
+    }
+    if (url.pathname === "/docs/dec.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("dec"));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.ok(!hits.includes("POST /enroll"), "never enrolled");
+    assert.equal(result.documents.length, 1);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("Liberty-style: a 'Log out' button on the sign-in pages does not end sign-in early", { skip: !chrome, timeout: 120_000 }, async () => {
+  let codeAsked = false;
+  let verified = false;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") {
+      return html(`<button type="button">Log out</button><form action="/u/mfa" method="get"><input name="username" placeholder="Email or username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/u/mfa") {
+      // A few seconds with no boxes at all, as Auth0 pages do while loading.
+      return html(`<button type="button">Log out</button><div id="x"></div><script>setTimeout(()=>{document.getElementById('x').innerHTML='<p>Verify your identity. Enter the code we emailed.</p><form action="/done"><input name="code" autocomplete="one-time-code"><button type="submit">Continue</button></form>'},4000)</script>`);
+    }
+    if (url.pathname === "/done") {
+      verified = url.searchParams.get("code") === "112233";
+      return html(`<nav><a href="/x">Home</a><a href="/y">Policies</a><a href="/z">Billing</a><button>Log out</button></nav><main><p>Welcome</p></main>`);
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    await runCarrier(
+      browser,
+      { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      {
+        username: "u",
+        password: "p",
+        getCode: async () => {
+          codeAsked = true;
+          return "112233";
+        },
+        deadline: Date.now() + 110_000,
+        maxDocuments: 5,
+        debugDir: null,
+        log: () => undefined,
+      },
+    );
+    assert.equal(codeAsked, true, "waited for the code step");
+    assert.equal(verified, true);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

@@ -244,7 +244,10 @@ export function scanLogin(): LoginScan {
       emailChoice =
         clickables.find((c) => {
           const t = label(c).toLowerCase();
-          if (!/e-?mail/.test(t) || /(text|sms|call|phone|voice)/.test(t)) return false;
+          if (!/e-?mail/.test(t) || /(text|sms|call|phone|voice|user ?name|forgot|sign ?in|log ?in)/.test(t)) return false;
+          // The label of a typing box ("Username/email") is not a choice.
+          const ctl = (c as HTMLLabelElement).control as HTMLInputElement | null | undefined;
+          if (c.tagName === "LABEL" && ctl && !["radio", "checkbox"].includes(ctl.type)) return false;
           if (c.tagName === "INPUT" && (c as HTMLInputElement).checked) return false;
           return t.length < 80;
         }) ??
@@ -319,6 +322,51 @@ export function scanLogin(): LoginScan {
     trustButton: trustEl ? mark(trustEl) : null,
     signedInHint,
   };
+}
+
+/**
+ * A safe "no" on a pop-up or interstitial shown after sign-in ("Go
+ * paperless?", "Set up autopay?", "Confirm your phone", a cookie banner).
+ * Returns the mark of a decline button, or null. Only plain declines count:
+ * never a button that enrolls, accepts, confirms or saves anything.
+ */
+export function findDecline(): string | null {
+  let n = Number((window as any).__pcipN || 0);
+  const vis = (el: Element) => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const st = getComputedStyle(el as HTMLElement);
+    return st.visibility !== "hidden" && st.display !== "none";
+  };
+  const say = (el: Element) =>
+    [(el as HTMLElement).innerText, (el as HTMLInputElement).value, el.getAttribute("aria-label")]
+      .filter((x) => typeof x === "string" && x.trim())
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const decline =
+    /^(not now|skip|skip for now|skip this step|remind me later|maybe later|ask me later|no,? thanks|no thank you|close|dismiss|reject|reject all|decline|decline all|necessary only|continue to (?:my )?account|go to (?:my )?account|continue to (?:my )?dashboard|i'?ll do this later|later|x|×)$/i;
+  const onetrust = document.querySelector("#onetrust-reject-all-handler");
+  if (onetrust && vis(onetrust)) {
+    let m = onetrust.getAttribute("data-pcip");
+    if (!m) onetrust.setAttribute("data-pcip", (m = `m${++n}`));
+    (window as any).__pcipN = n;
+    return m;
+  }
+  // Only inside something that looks like a pop-up or an interstitial page.
+  const layers = [...document.querySelectorAll('[role=dialog], [role=alertdialog], [aria-modal=true], [class*=modal], [class*=Modal], [class*=interstitial], [class*=overlay], [id*=modal]')].filter(vis);
+  for (const layer of layers) {
+    const text = (layer as HTMLElement).innerText.toLowerCase();
+    if (!/(paperless|autopay|auto-pay|automatic payment|verify your|confirm your|update your|survey|feedback|cookies|notifications|text alerts|new feature|what'?s new|tour|welcome)/.test(text)) continue;
+    const btn = [...layer.querySelectorAll("button, a, [role=button], input[type=button]")].find((b) => vis(b) && decline.test(say(b)));
+    if (btn) {
+      let m = btn.getAttribute("data-pcip");
+      if (!m) btn.setAttribute("data-pcip", (m = `m${++n}`));
+      (window as any).__pcipN = n;
+      return m;
+    }
+  }
+  return null;
 }
 
 interface LinkInfo {
@@ -470,6 +518,11 @@ async function runCarrierInner(
   const runStart = Date.now();
   const logCapture = (event: string, meta: Record<string, unknown> = {}) => {
     if (opts.debugDir && captureLog.length < 500) captureLog.push({ s: Math.round((Date.now() - runStart) / 100) / 10, event, ...meta });
+  };
+  // Debug only: each navigation decision, to see why a policy was or was not reached.
+  const navEvents: Array<Record<string, unknown>> = [];
+  const navLog = (event: string, meta: Record<string, unknown> = {}) => {
+    if (opts.debugDir && navEvents.length < 300) navEvents.push({ s: Math.round((Date.now() - runStart) / 100) / 10, event, ...meta });
   };
   const pathOf = (u?: string) => {
     try {
@@ -635,11 +688,28 @@ async function runCarrierInner(
       opts.log("waiting-for-email-code");
       const code = await opts.getCode(since);
       const boxes = s.codeInputs;
-      if (boxes.length === 1 || code.length % boxes.length !== 0) {
+      if (boxes.length === 1) {
         await page.typeIntoMark(boxes[0], code);
       } else {
-        const per = code.length / boxes.length;
-        for (let i = 0; i < boxes.length; i++) await page.typeIntoMark(boxes[i], code.slice(i * per, (i + 1) * per));
+        // Several boxes (Selective shows four): fill each with as many
+        // characters as it accepts (its maxlength), else split evenly.
+        const sizes = await page
+          .evaluate<number[]>((ms: string[]) => ms.map((m) => (document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null)?.maxLength ?? -1), boxes)
+          .catch(() => boxes.map(() => -1));
+        const total = sizes.reduce((a, b) => a + (b > 0 ? b : 0), 0);
+        let parts: string[];
+        if (sizes.every((n) => n > 0) && total === code.length) {
+          let at = 0;
+          parts = sizes.map((n) => code.slice(at, (at += n)));
+        } else if (code.length % boxes.length === 0) {
+          const per = code.length / boxes.length;
+          parts = boxes.map((_, i) => code.slice(i * per, (i + 1) * per));
+        } else if (sizes.every((n) => n === 1) || total >= code.length) {
+          parts = boxes.map((_, i) => code[i] ?? "");
+        } else {
+          parts = [code, ...boxes.slice(1).map(() => "")];
+        }
+        for (let i = 0; i < boxes.length; i++) if (parts[i]) await page.typeIntoMark(boxes[i], parts[i]);
       }
       const again = await page.evaluate<LoginScan>(scanLogin).catch(() => s);
       if (again.submit) await page.clickMark(again.submit);
@@ -720,7 +790,18 @@ async function runCarrierInner(
     }
 
     const host = s.host.toLowerCase();
-    const onPortal = carrier.siteDomains.some((d) => host === d || host.endsWith(`.${d}`)) && !/^login\./.test(host);
+    const curPath = await page.url().then((u) => {
+      try {
+        return new URL(u).pathname;
+      } catch {
+        return "";
+      }
+    });
+    // Still on a sign-in site or step (Liberty Mutual's sign-in page even has
+    // a "Log out" button): a sign-out control there proves nothing.
+    const onLoginSite = /^(login|auth|sso|signin|identity|id)\./.test(host) || /log-?in|sign-?in|\/auth|mfa|verify|otp/i.test(curPath);
+    const signedInHint = s.signedInHint && !onLoginSite;
+    const onPortal = carrier.siteDomains.some((d) => host === d || host.endsWith(`.${d}`)) && !onLoginSite;
     if (passwordSubmittedAt) {
       // No sign-in boxes left. Only call it signed in once any loading
       // spinner has cleared and there is a real page (a sign-out control, or
@@ -737,7 +818,7 @@ async function runCarrierInner(
       }
       busySince = 0;
       const links = await page.evaluate<number>(contentLinkCount).catch(() => 0);
-      if (s.signedInHint || (onPortal && links >= 4 && Date.now() - passwordSubmittedAt > 8_000)) {
+      if (signedInHint || (onPortal && links >= 4 && Date.now() - passwordSubmittedAt > 8_000)) {
         signedIn = true;
         break;
       }
@@ -750,7 +831,7 @@ async function runCarrierInner(
       const links = busy ? 0 : await page.evaluate<number>(contentLinkCount).catch(() => 0);
       if (
         !busy &&
-        (s.signedInHint || (onPortal && links >= 4 && !/log-?in|sign-?in|auth|mfa|verify/i.test(path) && Date.now() - loginStartedAt > 8_000))
+        (signedInHint || (onPortal && links >= 4 && !/log-?in|sign-?in|auth|mfa|verify/i.test(path) && Date.now() - loginStartedAt > 8_000))
       ) {
         opts.log("already-signed-in");
         notes.push(`Already signed in to ${carrier.name} from an earlier run; no password or code was needed.`);
@@ -835,6 +916,14 @@ async function runCarrierInner(
   const settle = async (ms = 30_000) => {
     const until = Date.now() + ms;
     while (Date.now() < until && (await page.evaluate<boolean>(pageBusy).catch(() => false))) await sleep(1000);
+    // Decline any "go paperless / set up autopay / confirm your phone" pop-up.
+    for (let i = 0; i < 3; i++) {
+      const no = await page.evaluate<string | null>(findDecline).catch(() => null);
+      if (!no) break;
+      navLog("declined-popup");
+      await page.clickMark(no);
+      await sleep(1200);
+    }
     // A page whose main area is still empty is usually still rendering:
     // wait for some text, then for it to stop changing.
     const mainUntil = Date.now() + 15_000;
@@ -983,6 +1072,89 @@ async function runCarrierInner(
       .then((ls) => ls.find((l) => !l.footer && l.text.includes(n) && /\bdocuments?\b/i.test(l.text) && !isDangerous(l.text))?.mark ?? null)
       .catch(() => null);
 
+  /** Wait up to `ms` for `find` to return a mark. */
+  const waitMark = async (find: () => Promise<string | null>, ms: number): Promise<string | null> => {
+    const until = Date.now() + ms;
+    for (;;) {
+      const m = await find();
+      if (m || Date.now() >= until) return m;
+      await sleep(700);
+    }
+  };
+  const visibleLinks = () => page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
+  /** Never a bill, payment, autopay or claim entry, even though they name the policy too. */
+  const notMoney = (t: string) => !isDangerous(t) && !/(bill|invoice|payment|statement|autopay|claim)/i.test(t);
+  /** An entry naming policy `n`: a documents one first, then any safe one. */
+  const markPolicyItem = async (n: string, exclude = new Set<string>()) => {
+    const ls = (await visibleLinks()).filter((l) => !l.footer && l.text.includes(n) && notMoney(l.text) && !exclude.has(l.mark));
+    return (ls.find((l) => /\bdocuments?\b/i.test(l.text)) ?? ls.find((l) => /polic/i.test(l.text)) ?? ls[0])?.mark ?? null;
+  };
+  const hasPdfList = async () => (await visibleLinks()).some((l) => l.pdfHint && isDocumentLink(l.text, l.href, l.pdfHint));
+
+  /**
+   * Get to policy `n`'s documents from wherever the run is, without relying
+   * on the browser's Back. Tries, in order: the policy's own documents button
+   * on this page; the "Policies" menu in the page header; the home page's
+   * button after reloading home; the general "documents" picker.
+   */
+  const openPolicyDocs = async (n: string, home: string): Promise<boolean> => {
+    const tag = n.slice(-4); // only the last digits go in the debug log
+    const arrived = async (how: string, from: string) => {
+      await settle(15_000);
+      const now = keyOf(await page.url());
+      const ok = now !== from || (await hasPdfList());
+      navLog("open-policy", { policy: `...${tag}`, how, ok, path: pathOf(now) });
+      return ok;
+    };
+    // 1. Its own button, here.
+    let from = keyOf(await page.url());
+    let m = await waitMark(() => markByPolicyDocs(n), from === keyOf(home) ? 20_000 : 2_000);
+    if (m) {
+      await page.clickMark(m);
+      if (await arrived("own-button", from)) return true;
+    }
+    // 2. The Policies menu in the header (present on every Foremost page).
+    from = keyOf(await page.url());
+    const menu = (await visibleLinks()).find((l) => !l.footer && /^polic(?:y|ies)\b/i.test(l.text));
+    if (menu) {
+      await page.clickMark(menu.mark);
+      await sleep(1500);
+      const item = await waitMark(() => markPolicyItem(n, new Set([menu.mark])), 4_000);
+      if (item) {
+        await page.clickMark(item);
+        if (await arrived("header-menu", from)) return true;
+      } else {
+        navLog("open-policy", { policy: `...${tag}`, how: "header-menu", ok: false, why: "no item" });
+        await page.pressEscape().catch(() => undefined);
+      }
+    }
+    // 3. Home again, and its button there.
+    if (keyOf(await page.url()) !== keyOf(home)) {
+      await page.goto(home).catch(() => undefined);
+      await settle(20_000);
+    }
+    from = keyOf(await page.url());
+    m = await waitMark(() => markByPolicyDocs(n), 20_000);
+    if (m) {
+      await page.clickMark(m);
+      if (await arrived("home-button", from)) return true;
+    }
+    // 4. A general documents picker ("View policy documents").
+    const general = (await visibleLinks()).find((l) => !l.footer && /\bdocuments?\b/i.test(l.text) && !policyNumberIn(l.text) && notMoney(l.text));
+    if (general) {
+      await page.clickMark(general.mark);
+      await sleep(1500);
+      const item = await waitMark(() => markPolicyItem(n, new Set([general.mark])), 5_000);
+      if (item) {
+        await page.clickMark(item);
+        if (await arrived("picker", from)) return true;
+      }
+    }
+    navLog("policy-unreachable", { policy: `...${tag}` });
+    await snap(page, `unreachable-${tag}`, { seen: (await visibleLinks()).map((l) => l.text) });
+    return false;
+  };
+
   /**
    * Read one page: save its documents, then follow its navigation buttons.
    * A button that lands on another page is read there and then (depth
@@ -1019,8 +1191,30 @@ async function runCarrierInner(
     } else if (depth > 0) {
       return;
     }
+    // One documents button per policy (Foremost's home page): visit each
+    // policy in turn with openPolicyDocs, which does not depend on Back.
+    const perPolicyNumbers = [...new Set(docNavs.map((l) => policyNumberIn(l.text)).filter((x): x is string => !!x))];
+    if (depth === 0 && perPolicyNumbers.length) {
+      navLog("policies-found", { count: perPolicyNumbers.length });
+      for (const n of perPolicyNumbers) {
+        if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
+        if (policiesRead.has(n)) continue;
+        if (await openPolicyDocs(n, here)) {
+          const k = keyOf(await page.url());
+          visited.add(k);
+          pagesVisited++;
+          await readPage(contextFor(`policy ${n}`), 1);
+          policiesRead.add(n);
+        }
+      }
+      return;
+    }
     const missed = new Set<string>();
-    for (const nb of navs.slice(0, 14)) {
+    const toFollow = navs.slice(0, 14);
+    for (const [idx, nb] of toFollow.entries()) {
+      // On a policy's own pages, the last button followed needs no way back:
+      // the next policy is opened from wherever the run ends up.
+      const needBack = depth === 0 || idx < toFollow.length - 1;
       if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
       tried.add(`nav|${pageKey}|${nb.text}`);
       const n = policyNumberIn(nb.text);
@@ -1049,13 +1243,13 @@ async function runCarrierInner(
       const now = await page.url();
       const navCtx = contextFor(nb.text, ctx);
       if (keyOf(now) !== pageKey) {
-        // It moved to another page: read it now, then step back.
+        // It moved to another page: read it now, then step back if needed.
         if (!visited.has(keyOf(now))) {
           visited.add(keyOf(now));
           pagesVisited++;
           await readPage(navCtx, depth + 1);
         }
-        await goBack(here);
+        if (needBack) await goBack(here);
         continue;
       }
       // Same page: it opened a menu or a tab. Save documents it revealed,
@@ -1122,6 +1316,7 @@ async function runCarrierInner(
   }
   if (opts.debugDir) {
     await writeFile(join(opts.debugDir, "pdf-capture-log.json"), JSON.stringify(captureLog, null, 2)).catch(() => undefined);
+    await writeFile(join(opts.debugDir, "nav-log.json"), JSON.stringify(navEvents, null, 2)).catch(() => undefined);
   }
   return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, notes };
 }
