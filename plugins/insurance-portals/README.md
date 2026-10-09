@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.2.3**: After the password, sign-in is only treated as finished once any loading spinner or dimmed "please wait" screen has cleared and the page has real content (a sign-out control, or several links outside the footer). Fixes Foremost, where the run declared itself signed in under the loading screen and found no documents. Each page also waits (up to 45 seconds) for its loading screen before links are read. A loading screen still up 90 seconds after the password stops the run with `ELOGIN_STUCK`. Site matching now ignores port numbers.
 - **v0.2.2**: Sign-in now waits (up to 20 seconds after the user name, 30 after the password) for the page to actually change before deciding what to do next. Fixes Foremost, where the password box appears a few seconds after Continue on the same page and the run gave up with `ELOGIN_REJECTED ... kept asking for the user name`. A failed run now always saves `99-failed.png` and a note of which boxes were on screen (never their contents), and the error names the screenshot folder when Debug screenshots is on.
 - **v0.2.1**: Operator lane for running without an agent: `start-fetch` (params `carrier`, `destination`; company from the request) starts a run in the background and returns a `jobId`; `fetch-status` (`jobId`) returns its state and result. Needed because plugin actions are cut off after 30 seconds. Board-only and gated by Allowed companies like the tool. The result now includes `debugDir` when Debug screenshots is on.
 - **v0.2.0**: New **Save to** setting (`auto` / `local` / `google-drive`) and **Local folder**. `auto` (the default) saves into a folder on this computer whenever the three Google fields are empty; with **Local folder** blank it finds the Google Drive for desktop "My Drive" folder by itself (only when exactly one account is signed in), so files sync to Drive with no Google keys. Same rules as Drive: folders created as needed, identical files skipped, nothing overwritten or deleted, and nothing written outside the folder (links that point outside are refused). Author changed to Bryon Stout.
@@ -87,6 +88,7 @@ Operator actions `start-fetch` / `fetch-status` run the same fetch without an ag
 | `ECODE_TIMEOUT` / `ECODE_REJECTED` / `EMAIL_AUTH_FAILED` | No code email within about 2 minutes, the portal refused the code, or the mailbox sign-in failed. |
 | `ECAPTCHA` | The portal showed a robot check. |
 | `ELOGIN_TIMEOUT` | Sign-in did not finish in time. |
+| `ELOGIN_STUCK` | The portal's loading screen was still up 90 seconds after the password was sent. |
 
 ## Limits
 

@@ -89,6 +89,45 @@ export interface RunResult {
 // self-contained: no closures over Node variables.
 // ---------------------------------------------------------------------------
 
+/** True while a loading spinner or a page-covering overlay is on screen. */
+export function pageBusy(): boolean {
+  const vis = (el: Element) => {
+    const r = (el as HTMLElement).getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return false;
+    const st = getComputedStyle(el as HTMLElement);
+    return st.visibility !== "hidden" && st.display !== "none" && Number(st.opacity) > 0.05;
+  };
+  const spinner = [
+    ...document.querySelectorAll(
+      '[role=progressbar], [aria-busy=true], [class*=spinner], [class*=Spinner], [class*=loader], [class*=Loader], [class*=loading], [class*=Loading], [class*=busy]',
+    ),
+  ].some(vis);
+  // A stray "loading" class on a finished page is common (lazy images), so a
+  // spinner only counts while the page has little else on it.
+  const links = [...document.querySelectorAll("a, button, [role=button], [role=link]")].filter(
+    (el) => !el.closest("footer, [role=contentinfo], [class*=footer], [id*=footer]") && vis(el),
+  ).length;
+  if (spinner && links < 6) return true;
+  // A fixed layer over most of the window (a dimmed "please wait" screen).
+  return [...document.querySelectorAll("body *")].some((el) => {
+    const st = getComputedStyle(el as HTMLElement);
+    if (st.position !== "fixed" || st.pointerEvents === "none" || !vis(el)) return false;
+    const r = (el as HTMLElement).getBoundingClientRect();
+    if (r.width < innerWidth * 0.9 || r.height < innerHeight * 0.9) return false;
+    const bg = st.backgroundColor;
+    return /rgba\([^)]*,\s*0?\.\d+\)/.test(bg) && !/,\s*0\)$/.test(bg);
+  });
+}
+
+/** Visible links and buttons outside the page footer: a rough "is there a page here" count. */
+export function contentLinkCount(): number {
+  return [...document.querySelectorAll("a, button, [role=button], [role=link]")].filter((el) => {
+    if (el.closest("footer, [role=contentinfo], [class*=footer], [id*=footer]")) return false;
+    const r = (el as HTMLElement).getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
+  }).length;
+}
+
 interface LoginScan {
   host: string;
   username: string | null;
@@ -212,7 +251,7 @@ export function scanLogin(): LoginScan {
   const signedInHint = clickables.some((c) => /^(log ?out|sign ?out|log off)$/i.test(label(c)));
 
   return {
-    host: location.host,
+    host: location.hostname,
     username: username ? mark(username) : null,
     usernameFilled: !!username && username.value.trim().length > 0,
     password: password ? mark(password) : null,
@@ -423,6 +462,7 @@ async function runCarrierInner(
   let emailChosen = false;
   let cookiesHandled = false;
   let signedIn = false;
+  let busySince = 0;
   const loginDeadline = Math.min(opts.deadline - 60_000, Date.now() + 200_000);
 
   while (Date.now() < loginDeadline) {
@@ -531,9 +571,26 @@ async function runCarrierInner(
 
     const host = s.host.toLowerCase();
     const onPortal = carrier.siteDomains.some((d) => host === d || host.endsWith(`.${d}`)) && !/^login\./.test(host);
-    if (passwordSubmittedAt && (s.signedInHint || (onPortal && Date.now() - passwordSubmittedAt > 8_000))) {
-      signedIn = true;
-      break;
+    if (passwordSubmittedAt) {
+      // No sign-in boxes left. Only call it signed in once any loading
+      // spinner has cleared and there is a real page (a sign-out control, or
+      // a handful of links outside the footer).
+      const busy = await page.evaluate<boolean>(pageBusy).catch(() => true);
+      if (busy) {
+        busySince ||= Date.now();
+        if (Date.now() - busySince > 90_000) {
+          await snap(page, "stuck-loading");
+          throw new Error(`[ELOGIN_STUCK] ${carrier.name} was still showing its loading screen 90 seconds after sign-in.`);
+        }
+        await sleep(1500);
+        continue;
+      }
+      busySince = 0;
+      const links = await page.evaluate<number>(contentLinkCount).catch(() => 0);
+      if (s.signedInHint || (onPortal && links >= 4 && Date.now() - passwordSubmittedAt > 8_000)) {
+        signedIn = true;
+        break;
+      }
     }
     await sleep(1500);
   }
@@ -588,6 +645,8 @@ async function runCarrierInner(
     // Single-page portals swap content in place; let a few safe in-page
     // navigation clicks happen on each page before moving on.
     for (let round = 0; round < 4 && Date.now() < workDeadline; round++) {
+      const settleUntil = Date.now() + 45_000;
+      while (Date.now() < settleUntil && (await page.evaluate<boolean>(pageBusy).catch(() => false))) await sleep(1000);
       const links = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
       await snap(page, `page-${pagesVisited}-${round}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "" })));
 

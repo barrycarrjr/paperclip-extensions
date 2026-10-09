@@ -303,3 +303,43 @@ test("slow password step on the same page (Foremost-style) is waited for, not re
     server.close();
   }
 });
+
+test("waits out a loading screen after sign-in before looking for documents", { skip: !chrome, timeout: 120_000 }, async () => {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") {
+      return html(`<form action="/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/home") {
+      return html(`<header><a href="/">Logo</a></header>
+        <div id="wait" style="position:fixed;inset:0;background:rgba(0,0,0,0.5)"><div class="spinner" style="width:80px;height:80px;margin:300px auto;border:6px solid red;border-radius:50%"></div></div>
+        <main id="main"></main><footer><a href="/terms">Terms of use</a><a href="/privacy">Privacy policy</a></footer>
+        <script>setTimeout(()=>{document.getElementById('wait').remove();document.getElementById('main').innerHTML=
+          '<nav><a href="/home">Home</a> <a href="/bill">Billing</a> <a href="/claims">Claims</a> <a href="/logout">Log out</a></nav>'+
+          '<section><h2>Landlord policy</h2><a href="/docs/dec.pdf">View declarations page</a></section>'},25000)</script>`);
+    }
+    if (url.pathname === "/docs/dec.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("late-dec"));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: (s) => process.env.PC_TRACE && console.log(Date.now() % 100000, "step", s) },
+    );
+    assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% late-dec"]);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
