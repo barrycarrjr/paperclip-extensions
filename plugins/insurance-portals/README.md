@@ -39,7 +39,7 @@ Files are named `<Carrier> - <document label> - <YYYY-MM-DD>.pdf`. A file alread
 Liberty Mutual and Selective email a one-time code. Where the portal offers a choice (Selective's pop-up), the plugin picks **email**. It then reads the code from the configured mailbox over IMAP:
 
 - The folder is opened with `EXAMINE` (read-only). Nothing is marked read, moved or deleted.
-- It searches only for mail **from** that carrier's domains (Foremost: foremost.com, myforemostaccount.com; Liberty Mutual: libertymutual.com; Selective: selective.com, selectiveinsurance.com) and checks the sender's domain again on the envelope, so look-alikes such as `libertymutual.com.example.net` are ignored.
+- It searches only for mail **from** that carrier's domains (Foremost: foremost.com, e.g. policy.foremost.com; Liberty Mutual: libertymutual.com, e.g. DoNotReply@libertymutual.com; Selective: selective.com, e.g. AccountVerification@underwritingalerts.selective.com). It checks the sender's domain again on the envelope: the domain must be exactly the carrier's domain or end in `.` plus it, so look-alikes such as `underwritingalerts.selective.com.example.net` or `notselective.com` are ignored.
 - It downloads the body of exactly **one** message: the newest from that carrier that arrived after the code was requested. Older codes are never used.
 - The code goes straight into the portal. It is not logged and not returned to the agent.
 

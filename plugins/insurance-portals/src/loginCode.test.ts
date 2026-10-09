@@ -159,7 +159,7 @@ test("no new code from the carrier: times out without reading anything else", { 
     await assert.rejects(
       waitForLoginCode(
         { user: "me@example.com", password: "app-pass", host: "127.0.0.1", port: (server.address() as AddressInfo).port, folder: "INBOX", secure: false },
-        ["selective.com", "selectiveinsurance.com"],
+        ["selective.com"],
         requestedAt,
         4_000,
       ),
@@ -185,6 +185,32 @@ test("wrong app password reports a clear error", { timeout: 30_000 }, async () =
       ),
       /EMAIL_AUTH_FAILED/,
     );
+  } finally {
+    server.close();
+  }
+});
+
+test("Selective: accepts AccountVerification@underwritingalerts.selective.com, ignores a look-alike", { timeout: 30_000 }, async () => {
+  const requestedAt = new Date();
+  const at = (s: number) => new Date(requestedAt.getTime() + s * 1000);
+  const messages: Msg[] = [
+    { uid: 1, from: "AccountVerification@underwritingalerts.selective.com", date: at(10), subject: "Your Selective verification code", body: "Your verification code is 4821." },
+    { uid: 2, from: "AccountVerification@underwritingalerts.selective.com.evil.io", date: at(30), subject: "Your Selective verification code", body: "Your verification code is 9999." },
+  ];
+  const log: string[] = [];
+  const server = fakeImap(messages, log);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const code = await waitForLoginCode(
+      { user: "me@example.com", password: "app-pass", host: "127.0.0.1", port: (server.address() as AddressInfo).port, folder: "INBOX", secure: false },
+      ["selective.com"],
+      requestedAt,
+      8_000,
+    );
+    assert.equal(code, "4821");
+    const bodies = log.filter((l) => /BODY(\.PEEK)?\[\]/.test(l));
+    assert.equal(bodies.length, 1);
+    assert.match(bodies[0], /UID FETCH 1 /, "only the real Selective message was opened");
   } finally {
     server.close();
   }

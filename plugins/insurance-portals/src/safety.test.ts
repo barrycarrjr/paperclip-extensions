@@ -117,3 +117,29 @@ test("navigation URLs stay on the carrier's site and off write paths", () => {
   assert.equal(isSafeNavigationUrl("http://customer.selective.com/apps/policy", d), false);
   assert.equal(isSafeNavigationUrl("https://customer.selective.com/logout", d), false);
 });
+
+test("real carrier senders pass; look-alikes of them fail", () => {
+  const foremost = ["foremost.com"];
+  const liberty = ["libertymutual.com"];
+  const selective = ["selective.com"];
+  assert.equal(senderAllowed("AccountVerification@underwritingalerts.selective.com", selective), true);
+  assert.equal(senderAllowed("Selective <AccountVerification@underwritingalerts.selective.com>", selective), true);
+  assert.equal(senderAllowed("DoNotReply@libertymutual.com", liberty), true);
+  assert.equal(senderAllowed("x@policy.foremost.com", foremost), true);
+  assert.equal(senderAllowed("x@payments.foremost.com", foremost), true);
+  for (const fake of [
+    "AccountVerification@underwritingalerts.selective.com.evil.io",
+    "AccountVerification@underwritingalerts-selective.com",
+    "AccountVerification@notselective.com",
+    "AccountVerification@selective.com-alerts.net",
+    "AccountVerification@underwritingalerts.selective.co",
+    "x@selectivecom.net",
+  ]) {
+    assert.equal(senderAllowed(fake, selective), false, fake);
+  }
+  assert.equal(senderAllowed("DoNotReply@libertymutual.co", liberty), false);
+  assert.equal(senderAllowed("x@policy.foremost.com.attacker.org", foremost), false);
+  assert.equal(senderAllowed("x@myforemost.com", foremost), false);
+  // A carrier's domain is never accepted for another carrier.
+  assert.equal(senderAllowed("AccountVerification@underwritingalerts.selective.com", liberty), false);
+});

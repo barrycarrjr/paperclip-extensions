@@ -39,13 +39,15 @@ export const CARRIERS: Record<CarrierKey, CarrierProfile> = {
     name: "Foremost",
     loginUrl: "https://www.myforemostaccount.com/fmcss/login",
     siteDomains: ["myforemostaccount.com", "foremost.com"],
-    senderDomains: ["foremost.com", "myforemostaccount.com"],
+    // Real senders: policy.foremost.com, payments.foremost.com.
+    senderDomains: ["foremost.com"],
   },
   liberty_mutual: {
     key: "liberty_mutual",
     name: "Liberty Mutual",
     loginUrl: "https://eservice.libertymutual.com/account/auth",
     siteDomains: ["libertymutual.com"],
+    // Real sender: DoNotReply@libertymutual.com.
     senderDomains: ["libertymutual.com"],
   },
   selective: {
@@ -53,7 +55,8 @@ export const CARRIERS: Record<CarrierKey, CarrierProfile> = {
     name: "Selective",
     loginUrl: "https://customer.selective.com/apps/SelectiveWeb/",
     siteDomains: ["selective.com", "selectiveinsurance.com"],
-    senderDomains: ["selective.com", "selectiveinsurance.com"],
+    // Real sender: AccountVerification@underwritingalerts.selective.com.
+    senderDomains: ["selective.com"],
   },
 };
 

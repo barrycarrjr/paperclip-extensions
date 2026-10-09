@@ -34,7 +34,7 @@ Liberty Mutual and Selective email a one-time code at sign-in. The plugin reads 
 
 **Gmail:** turn on 2-Step Verification for the Google account, then create an app password at **myaccount.google.com/apppasswords** and save it as a secret (e.g. \`GMAIL_APP_PASSWORD\`). If the Email Tools plugin already uses an app password for this mailbox, you can pick that same secret instead.
 
-What the plugin reads, and nothing else: it opens the folder read-only, looks only at mail **from** the carrier that is signing in (Foremost: foremost.com; Liberty Mutual: libertymutual.com; Selective: selective.com, selectiveinsurance.com), and downloads only the **newest** such message that arrived after it asked for the code. Nothing is marked read, moved or deleted.
+What the plugin reads, and nothing else: it opens the folder read-only, looks only at mail **from** the carrier that is signing in (Foremost: foremost.com and its subdomains such as policy.foremost.com; Liberty Mutual: libertymutual.com; Selective: selective.com and its subdomains such as underwritingalerts.selective.com), and downloads only the **newest** such message that arrived after it asked for the code. Nothing is marked read, moved or deleted.
 
 ## 3. Google Drive access
 
