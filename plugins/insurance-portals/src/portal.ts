@@ -288,7 +288,49 @@ const isPdf = (b: Buffer) => b.length > 100 && b.subarray(0, 5).toString("latin1
 // The run
 // ---------------------------------------------------------------------------
 
+/** What the sign-in step can see, for the debug notes. Never includes typed values. */
+function describeScan(s: LoginScan) {
+  return {
+    host: s.host,
+    username: !!s.username,
+    usernameFilled: s.usernameFilled,
+    password: !!s.password,
+    codeBoxes: s.codeInputs.length,
+    emailChoice: !!s.emailChoice,
+    submit: !!s.submit,
+    error: s.error,
+    captcha: s.captcha,
+  };
+}
+
+/** A fingerprint of the sign-in state; a change means the page reacted. */
+const scanKey = (s: LoginScan) =>
+  JSON.stringify([s.host, !!s.username, !!s.password, s.codeInputs.length, !!s.emailChoice, s.error, s.signedInHint]);
+
 export async function runCarrier(
+  browser: Browser,
+  carrier: CarrierProfile,
+  opts: RunOptions,
+): Promise<RunResult> {
+  try {
+    return await runCarrierInner(browser, carrier, opts);
+  } catch (err) {
+    if (opts.debugDir) {
+      for (const p of browser.pages.values()) {
+        const s = await p.evaluate<LoginScan>(scanLogin).catch(() => null);
+        await p.screenshot(join(opts.debugDir, "99-failed.png")).catch(() => undefined);
+        await writeFile(
+          join(opts.debugDir, "99-failed.json"),
+          JSON.stringify({ error: err instanceof Error ? err.message : String(err), url: (await p.url()).split("?")[0], seen: s ? describeScan(s) : null }, null, 2),
+        ).catch(() => undefined);
+        break;
+      }
+    }
+    throw err;
+  }
+}
+
+async function runCarrierInner(
   browser: Browser,
   carrier: CarrierProfile,
   opts: RunOptions,
@@ -357,6 +399,18 @@ export async function runCarrier(
   });
 
   const page = await browser.firstPage();
+
+  /** After a submit, wait until the sign-in state visibly changes (or `ms` passes). */
+  const waitForChange = async (before: LoginScan, ms: number) => {
+    const key = scanKey(before);
+    const until = Date.now() + ms;
+    await sleep(1000);
+    while (Date.now() < until) {
+      const now = await page.evaluate<LoginScan>(scanLogin).catch(() => null);
+      if (now && scanKey(now) !== key) return;
+      await sleep(700);
+    }
+  };
 
   // ---------------- sign in ----------------
   await page.goto(carrier.loginUrl);
@@ -453,17 +507,25 @@ export async function runCarrier(
       if (s.submit) await page.clickMark(s.submit);
       else await page.pressEnter();
       passwordSubmittedAt = Date.now();
-      await page.waitForLoad(30_000);
+      await waitForChange(s, 30_000);
+      await snap(page, "after-password");
       continue;
     }
 
     if (s.username && !passwordSubmittedAt) {
-      if (usernameSubmits >= 2) throw new Error(`[ELOGIN_REJECTED] ${carrier.name} kept asking for the user name.`);
+      if (usernameSubmits >= 2) {
+        await snap(page, "username-again", describeScan(s));
+        throw new Error(
+          `[ELOGIN_REJECTED] ${carrier.name} kept asking for the user name` + (s.error ? `: "${s.error}"` : ".") ,
+        );
+      }
       usernameSubmits++;
-      await page.typeIntoMark(s.username, opts.username);
+      if (!s.usernameFilled || usernameSubmits === 1) await page.typeIntoMark(s.username, opts.username);
+      await snap(page, `username-entered-${usernameSubmits}`, describeScan(s));
       if (s.submit) await page.clickMark(s.submit);
       else await page.pressEnter();
-      await page.waitForLoad(20_000);
+      await waitForChange(s, 20_000);
+      await snap(page, `after-username-${usernameSubmits}`);
       continue;
     }
 

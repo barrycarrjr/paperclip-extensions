@@ -159,6 +159,9 @@ export async function fetchDocuments(
       debugDir,
       log: (step, meta) => ctx.logger.info(`insurance-portals: ${carrierKey} ${step}`, meta ?? {}),
     });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(debugDir ? `${message} (debug screenshots: ${debugDir})` : message);
   } finally {
     await browser.close();
   }

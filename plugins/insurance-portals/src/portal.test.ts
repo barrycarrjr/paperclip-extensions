@@ -258,3 +258,48 @@ test("radio-style code choice: picks Email, sends, enters a 6-digit code", { ski
     server.close();
   }
 });
+
+test("slow password step on the same page (Foremost-style) is waited for, not re-submitted", { skip: !chrome, timeout: 90_000 }, async () => {
+  let usernameClicks = 0;
+  let signedIn = false;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    if (url.pathname === "/fmcss/login") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(`<div id="ot"><button id="onetrust-reject-all-handler" onclick="document.getElementById('ot').remove()">Reject</button><button>Accept</button></div>
+        <h1>Log in</h1><form onsubmit="event.preventDefault()">
+        <input type="email" id="usernameInputField" placeholder="Username/email*">
+        <label><input type="checkbox" checked> Save username</label>
+        <div id="pw"></div>
+        <button type="submit" id="go" onclick="fetch('/u',{method:'POST'});setTimeout(()=>{document.getElementById('pw').innerHTML='<input type=password id=pass placeholder=Password>';document.getElementById('go').textContent='Log in';document.getElementById('go').onclick=()=>{fetch('/p?v='+encodeURIComponent(document.getElementById('pass').value),{method:'POST'}).then(()=>location.href='/home')}},4000)">Continue</button></form>`));
+    }
+    if (url.pathname === "/u") {
+      usernameClicks++;
+      return res.writeHead(200).end();
+    }
+    if (url.pathname === "/p") {
+      signedIn = url.searchParams.get("v") === "pw";
+      return res.writeHead(200).end();
+    }
+    if (url.pathname === "/home") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(signedIn ? `<a href="/logout">Log out</a>` : `no`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/fmcss/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "me@example.com", password: "pw", getCode: async () => "0000", deadline: Date.now() + 80_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.equal(signedIn, true);
+    assert.equal(usernameClicks, 1, "Continue clicked once, then waited");
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
