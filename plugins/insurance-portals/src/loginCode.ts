@@ -25,6 +25,13 @@ export interface MailboxSettings {
   secure?: boolean;
 }
 
+/** After a code arrives, wait this long for a newer one before using it. */
+export let SETTLE_MS = 10_000;
+/** Tests shorten the settle wait. */
+export function setSettleMs(ms: number): void {
+  SETTLE_MS = ms;
+}
+
 /** Allow this much clock drift between the mail server and this machine. */
 const CLOCK_SKEW_MS = 60_000;
 
@@ -67,7 +74,8 @@ async function newestCode(
       if (!senderAllowed(from, senderDomains)) continue;
       const at = new Date(msg.internalDate ?? 0).getTime();
       if (at < requestedAt.getTime() - CLOCK_SKEW_MS) continue;
-      if (!best || at > best.at) best = { uid: msg.uid, at };
+      // Same second: the one the mailbox received later (higher UID) is newer.
+      if (!best || at > best.at || (at === best.at && msg.uid > best.uid)) best = { uid: msg.uid, at };
     }
     if (!best) return null;
 
@@ -120,7 +128,14 @@ export async function waitForLoginCode(
   while (Date.now() < deadline) {
     try {
       const code = await newestCode(mb, senderDomains, requestedAt);
-      if (code) return code;
+      if (code) {
+        // Some portals send two codes a moment apart, and only the last one
+        // works (Selective). Give a second email a few seconds to land, then
+        // take whatever is newest; still only one message body is read each time.
+        await sleep(Math.min(SETTLE_MS, Math.max(0, deadline - Date.now())));
+        const again = await newestCode(mb, senderDomains, requestedAt).catch(() => null);
+        return again ?? code;
+      }
     } catch (err) {
       lastError = err;
       const e = err as { message?: string; authenticationFailed?: boolean; responseText?: string };

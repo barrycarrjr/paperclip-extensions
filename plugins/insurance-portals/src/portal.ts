@@ -169,6 +169,12 @@ interface LoginScan {
   rememberBox: string | null;
   /** A "trust this browser" / "remember this device" button. */
   trustButton: string | null;
+  /** The page says the code entered was wrong or expired. */
+  codeInvalid: boolean;
+  /** A "Close"/"OK" button on that message. */
+  closeButton: string | null;
+  /** "Send another code" and similar. */
+  resendCode: string | null;
   /** The code page says the code went by text or phone, not email. */
   codeSentByText: boolean;
   /** "Try another method" and similar, to switch the code to email. */
@@ -374,6 +380,10 @@ export function scanLogin(): LoginScan {
         /^(try another (?:method|way)|choose another (?:method|way)|use another (?:method|way)|use a different (?:method|way)|other (?:verification )?(?:options|methods)|more options|send (?:the |a )?code (?:by|via|to) e-?mail|e-?mail me (?:a|the) code(?: instead)?|use e-?mail(?: instead)?|get (?:a|the) code by e-?mail)$/i.test(label(c)),
       ) ?? null
     : null;
+  const codeInvalid = /(code is invalid|invalid (?:verification |one.?time )?code|incorrect code|code (?:is )?(?:incorrect|expired|not valid)|wrong code|enter a different code)/i.test(bodyText);
+  const closeEl = codeInvalid ? clickables.find((c) => /^(close|ok|okay|try again|dismiss)$/i.test(label(c))) ?? null : null;
+  const resendEl =
+    clickables.find((c) => /^(send another code\.?|send a new code|resend(?: code)?|request a new code|get a new code)$/i.test(label(c))) ?? null;
   const captcha = !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="captcha"], .g-recaptcha, #px-captcha');
   const signedInHint = clickables.some((c) => /^(log ?out|sign ?out|log off)$/i.test(label(c)));
 
@@ -391,6 +401,9 @@ export function scanLogin(): LoginScan {
     captcha,
     rememberBox: rememberEl ? mark(rememberEl) : null,
     codeSentByText,
+    codeInvalid,
+    closeButton: closeEl ? mark(closeEl) : null,
+    resendCode: resendEl ? mark(resendEl) : null,
     otherMethod: otherMethodEl ? mark(otherMethodEl) : null,
     trustButton: trustEl ? mark(trustEl) : null,
     signedInHint,
@@ -702,6 +715,7 @@ async function runCarrierInner(
   let codeEnteredAt = 0;
   let emailChosen = false;
   let switchedMethod = false;
+  let resends = 0;
   let sendClicked = false;
   let emailChosenAt = 0;
   let cookiesHandled = false;
@@ -778,7 +792,24 @@ async function runCarrierInner(
     }
     if (s.codeInputs.length > 0) {
       if (codeEnteredAt) {
-        if (Date.now() - codeEnteredAt > 20_000) {
+        if ((s.codeInvalid || Date.now() - codeEnteredAt > 20_000) && resends < 1 && s.resendCode) {
+          // Refused: close the message, ask for one new code, and use the
+          // newest code that arrives. Only once per run.
+          resends++;
+          await snap(page, "code-refused-requesting-new");
+          opts.log("code-refused-requesting-a-new-one");
+          if (s.closeButton) {
+            await page.clickMark(s.closeButton);
+            await sleep(800);
+          }
+          const fresh = await page.evaluate<LoginScan>(scanLogin).catch(() => s);
+          if (fresh.resendCode) await page.clickMark(fresh.resendCode);
+          codeRequestedAt = Date.now();
+          codeEnteredAt = 0;
+          await sleep(1500);
+          continue;
+        }
+        if (s.codeInvalid || Date.now() - codeEnteredAt > 20_000) {
           await snap(page, "code-not-accepted");
           throw new Error(`[ECODE_REJECTED] ${carrier.name} did not accept the emailed login code.`);
         }
@@ -786,7 +817,8 @@ async function runCarrierInner(
         continue;
       }
       await snap(page, "code-requested");
-      const since = new Date((codeRequestedAt || passwordSubmittedAt || Date.now()) - 15_000);
+      // After a resend, only mail from after the resend counts: never the refused code.
+      const since = new Date((codeRequestedAt || passwordSubmittedAt || Date.now()) - (resends > 0 ? 2_000 : 15_000));
       opts.log("waiting-for-email-code");
       const code = await opts.getCode(since);
       const boxes = s.codeInputs;

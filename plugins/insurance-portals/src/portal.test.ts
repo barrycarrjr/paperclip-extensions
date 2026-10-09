@@ -1155,3 +1155,67 @@ test(`Liberty Mutual code screen (${style}): 6-digit code entered, Continue pres
     server.close();
   }
 });
+
+test("Selective 'This code is invalid': closes it, asks for one new code, uses it", { skip: !chrome, timeout: 120_000 }, async () => {
+  let sends = 0;
+  let ok = false;
+  const codes = ["1111", "2222"];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") {
+      return html(`<form action="/code" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/code") {
+      sends++;
+      return html(`<p>Please enter the 4-digit code you received below.</p>
+        ${[1, 2, 3, 4].map((i) => `<input id="c${i}" maxlength="1">`).join("")}
+        <a href="#" onclick="fetch('/resend').then(()=>{});return false">Send another code.</a>
+        <input type="button" value="Next" title="Next" onclick="const c=[1,2,3,4].map(i=>document.getElementById('c'+i).value).join('');fetch('/check?c='+c).then(r=>r.text()).then(t=>{if(t==='ok'){location.href='/home'}else{document.getElementById('bad').style.display='block'}})">
+        <div id="bad" role="dialog" style="display:none"><p>This code is invalid. Please enter a different code or request a new one.</p>
+          <button onclick="document.getElementById('bad').style.display='none'">Close</button></div>`);
+    }
+    if (url.pathname === "/resend") {
+      sends++;
+      res.writeHead(200);
+      return res.end("sent");
+    }
+    if (url.pathname === "/check") {
+      // Only the code from the latest send is valid.
+      ok = url.searchParams.get("c") === codes[sends - 1];
+      res.writeHead(200);
+      return res.end(ok ? "ok" : "bad");
+    }
+    if (url.pathname === "/home") return html(`<nav><a href="/a">Home</a><a href="/b">Policies</a><a href="/c">Billing</a><a href="/logout">Log out</a></nav>`);
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  let asked = 0;
+  try {
+    await runCarrier(
+      browser,
+      { key: "selective", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      {
+        username: "u",
+        password: "p",
+        // The first answer is the stale code; after the resend, the new one.
+        getCode: async () => (asked++ === 0 ? "9999" : codes[sends - 1]),
+        deadline: Date.now() + 110_000,
+        maxDocuments: 5,
+        debugDir: null,
+        log: () => undefined,
+      },
+    );
+    assert.equal(ok, true);
+    assert.equal(sends, 2, "exactly one new code requested");
+    assert.equal(asked, 2);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

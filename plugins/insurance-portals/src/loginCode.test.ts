@@ -8,7 +8,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Socket } from "node:net";
 import type { AddressInfo } from "node:net";
-import { emailBodyText, waitForLoginCode } from "./loginCode.js";
+import { emailBodyText, setSettleMs, waitForLoginCode } from "./loginCode.js";
+
+setSettleMs(300);
 
 interface Msg {
   uid: number;
@@ -147,8 +149,8 @@ test("reads only the newest carrier code, read-only", { timeout: 30_000 }, async
     assert.ok(!log.some((l) => l.startsWith("SELECT")), "never SELECT (read-write)");
     assert.ok(!log.some((l) => /STORE|EXPUNGE|COPY|MOVE|APPEND|DELETE/.test(l)), "no write commands");
     const bodyFetches = log.filter((l) => /BODY(\.PEEK)?\[\]/.test(l));
-    assert.equal(bodyFetches.length, 1, `exactly one body download: ${bodyFetches.join(" | ")}`);
-    assert.match(bodyFetches[0], /UID FETCH 3 /, "the body downloaded is message 3");
+    assert.ok(bodyFetches.length >= 1, "a body was read");
+    assert.ok(bodyFetches.every((l) => / 3 /.test(l.replace("UID FETCH", ""))), `only message 3, the newest, was ever read: ${bodyFetches.join(" | ")}`);
     assert.ok(!bodyFetches[0].includes("BODY[]") || bodyFetches[0].includes("PEEK"), "body read with PEEK");
     const searchedFrom = log.filter((l) => l.startsWith("UID SEARCH"));
     assert.ok(searchedFrom.every((l) => /FROM "?LIBERTYMUTUAL\.COM"?/.test(l)), "search limited to the carrier");
@@ -220,8 +222,7 @@ test("Selective: accepts AccountVerification@underwritingalerts.selective.com, i
     );
     assert.equal(code, "4821");
     const bodies = log.filter((l) => /BODY(\.PEEK)?\[\]/.test(l));
-    assert.equal(bodies.length, 1);
-    assert.match(bodies[0], /UID FETCH 1 /, "only the real Selective message was opened");
+    assert.ok(bodies.length >= 1 && bodies.every((l) => /UID FETCH 1 /.test(l)), "only the real Selective message was opened");
   } finally {
     server.close();
   }
@@ -286,4 +287,31 @@ test("emailBodyText uses the HTML when the plain part is blank, and decodes char
   const t = emailBodyText("\n", "<style>.a{font-size:0px}</style><p>Code&#8201;</p><td>5678</td>");
   assert.ok(!t.includes("8201") && !t.includes("font-size"), t);
   assert.ok(t.includes("5678"));
+});
+
+test("two codes a moment apart: waits and uses the later one (Selective)", { timeout: 30_000 }, async () => {
+  const requestedAt = new Date();
+  const messages: Msg[] = [
+    { uid: 20, from: "AccountVerification@underwritingalerts.selective.com", date: new Date(requestedAt.getTime() + 2000), subject: "Code", body: "Here is the One-Time Code. 1111" },
+  ];
+  const log: string[] = [];
+  const server = fakeImap(messages, log);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  // The second email lands just after the first has been seen, in the same second.
+  setTimeout(() => {
+    messages.push({ uid: 21, from: "AccountVerification@underwritingalerts.selective.com", date: new Date(requestedAt.getTime() + 2000), subject: "Code", body: "Here is the One-Time Code. 2222" });
+  }, 1300);
+  setSettleMs(1500);
+  try {
+    const code = await waitForLoginCode(
+      { user: "me@example.com", password: "app-pass", host: "127.0.0.1", port: (server.address() as AddressInfo).port, folder: "INBOX", secure: false },
+      ["selective.com"],
+      requestedAt,
+      8_000,
+    );
+    assert.equal(code, "2222");
+  } finally {
+    setSettleMs(300);
+    server.close();
+  }
 });
