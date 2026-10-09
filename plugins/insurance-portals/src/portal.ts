@@ -772,6 +772,30 @@ async function runCarrierInner(
   const guard = async (p: Page) => {
     p.on("Fetch.requestPaused", (e) => {
       const req = e.request as { method: string; url: string };
+      // Response stage (only for page loads): take a PDF's bytes here, before
+      // Chrome's PDF viewer replaces them, so it never has to be fetched twice.
+      if (e.responseStatusCode !== undefined) {
+        const headers = (e.responseHeaders as Array<{ name: string; value: string }> | undefined) ?? [];
+        const type = headers.find((h) => h.name.toLowerCase() === "content-type")?.value ?? "";
+        const disp = headers.find((h) => h.name.toLowerCase() === "content-disposition")?.value ?? "";
+        if (/application\/pdf/i.test(type) || /\.pdf\b/i.test(disp)) {
+          void p
+            .send("Fetch.getResponseBody", { requestId: e.requestId })
+            .then((b) => {
+              const body = b as { body: string; base64Encoded: boolean };
+              const bytes = Buffer.from(body.body, body.base64Encoded ? "base64" : "latin1");
+              if (isPdf(bytes)) {
+                captured.push({ at: Date.now(), bytes });
+                logCapture("body-captured-early", { bytes: bytes.length });
+              }
+            })
+            .catch(() => logCapture("early-body-unavailable"))
+            .finally(() => void p.send("Fetch.continueResponse", { requestId: e.requestId }).catch(() => undefined));
+        } else {
+          void p.send("Fetch.continueResponse", { requestId: e.requestId }).catch(() => undefined);
+        }
+        return;
+      }
       if (shouldBlockRequest(req.method, req.url)) {
         blockedRequests++;
         try {
@@ -786,7 +810,12 @@ async function runCarrierInner(
         void p.send("Fetch.continueRequest", { requestId: e.requestId }).catch(() => undefined);
       }
     });
-    await p.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+    await p.send("Fetch.enable", {
+      patterns: [
+        { urlPattern: "*", requestStage: "Request" },
+        { urlPattern: "*", resourceType: "Document", requestStage: "Response" },
+      ],
+    });
   };
   await browser.addHook(guard);
   collecting = true;
@@ -947,6 +976,12 @@ async function runCarrierInner(
     await settle(15_000);
   };
   const policiesRead = new Set<string>();
+  /** A visible "documents" control for policy `n`, whatever its exact wording. */
+  const markByPolicyDocs = (n: string) =>
+    page
+      .evaluate<LinkInfo[]>(scanLinks)
+      .then((ls) => ls.find((l) => !l.footer && l.text.includes(n) && /\bdocuments?\b/i.test(l.text) && !isDangerous(l.text))?.mark ?? null)
+      .catch(() => null);
 
   /**
    * Read one page: save its documents, then follow its navigation buttons.
@@ -975,26 +1010,38 @@ async function runCarrierInner(
     // page has one per policy), follow only those and skip the general one.
     let navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`));
     const docNavs = navs.filter((l) => /\bdocuments?\b/i.test(l.text));
+    // General "documents" buttons (no policy named), kept as a fallback for
+    // policies whose own button cannot be found again.
+    const generalDocNavs = docNavs.filter((l) => !policyNumberIn(l.text));
     if (docNavs.length) {
       const perPolicy = docNavs.filter((l) => policyNumberIn(l.text));
-      navs = perPolicy.length ? perPolicy : docNavs;
+      navs = perPolicy.length ? [...perPolicy, ...generalDocNavs] : docNavs;
     } else if (depth > 0) {
       return;
     }
-    for (const nb of navs.slice(0, 12)) {
+    const missed = new Set<string>();
+    for (const nb of navs.slice(0, 14)) {
       if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
       tried.add(`nav|${pageKey}|${nb.text}`);
       const n = policyNumberIn(nb.text);
       if (n && policiesRead.has(n)) continue;
+      // The general picker only matters if a policy's own button went missing.
+      if (!n && docNavs.some((l) => policyNumberIn(l.text)) && missed.size === 0) continue;
       let m = await markByText(nb.text, 20_000);
+      if (!m && n) m = await markByPolicyDocs(n);
       if (!m) {
         // Back did not bring the page's content back: load it again.
         opts.log("button-missing-after-back-reloading");
         await page.goto(here).catch(() => undefined);
         await settle(20_000);
-        m = await markByText(nb.text, 20_000);
+        m = (await markByText(nb.text, 20_000)) ?? (n ? await markByPolicyDocs(n) : null);
       }
-      if (!m) opts.log("button-not-found", { policy: policyNumberIn(nb.text) ? "yes" : "no" });
+      if (!m) {
+        opts.log("button-not-found");
+        if (n) missed.add(n);
+        const now = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
+        await snap(page, `button-missing-${pagesVisited}`, { wanted: nb.text, url: (await page.url()).split("?")[0], seen: now.map((l) => l.text) });
+      }
       if (!m) continue;
       const shownBefore = new Set((await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).map((l) => l.text));
       await page.clickMark(m);

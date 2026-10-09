@@ -671,3 +671,63 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
     server.close();
   }
 });
+
+test("per-policy buttons gone after Back: falls back to the general policy picker", { skip: !chrome, timeout: 240_000 }, async () => {
+  const hits: string[] = [];
+  const pols = ["1234567", "7654321"];
+  const app = `<header><nav><button>Homepage</button><button>Payments</button><button>Sign out</button></nav></header><main id="main"></main>
+    <div id="modal" style="display:none"><button onclick="document.getElementById('modal').style.display='none'">Close</button>${pols
+      .map((n) => `<button aria-label="view documents for policy number ${n}" onclick="go('/policy/documents?p=${n}')">Select policy</button>`)
+      .join("")}</div>
+    <script>
+      let visits = 0;
+      function go(p){document.getElementById('modal').style.display='none';history.pushState({},'',p);render()}
+      function home(first){
+        const m=document.getElementById('main');
+        m.innerHTML = (first ? ${JSON.stringify(
+          pols.map((n) => `<section>Policy ${n} <button aria-label="policy documents for policy ${n}" onclick="go('/policy/documents?p=${n}')">Policy documents</button></section>`).join(""),
+        )} : '<p>Your policies</p>') +
+          '<button onclick="document.getElementById(\\'modal\\').style.display=\\'block\\'">View policy documents</button>';
+      }
+      function render(){
+        const n=new URLSearchParams(location.search).get('p'); const m=document.getElementById('main');
+        if(!n){home(visits++===0);return}
+        m.innerHTML='<h1>Policy documents</h1>'+[['RENEWAL','06/29/2026'],['RENEWAL','06/27/2025']].map((d,i)=>
+          '<button onclick="window.open(\\'/docs/'+n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> '+d[0]+' '+d[1]+'</button>').join('');
+      }
+      window.onpopstate=render; render();
+    </script>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(url.pathname + url.search);
+    if (url.pathname === "/login") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(`<form action="/app/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`));
+    }
+    if (url.pathname === "/app/home" || url.pathname.startsWith("/policy/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(app));
+    }
+    const doc = /^\/docs\/(\d+)-(\d)\.pdf$/.exec(url.pathname);
+    if (doc) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`${doc[1]}-${doc[2]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+    );
+    const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
+    assert.deepEqual(tags, ["% 1234567-0", "% 1234567-1", "% 7654321-0", "% 7654321-1"], `hits: ${hits.join(", ")}`);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
