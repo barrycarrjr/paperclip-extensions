@@ -159,18 +159,18 @@ test("Foremost's policy menu counts as navigation; icon words are ignored", () =
 });
 
 test("PDF-marked list entries are documents; current term is kept", () => {
-  assert.equal(isDocumentLink("RENEWAL 06/29/2026", "", true), true);
-  assert.equal(isDocumentLink("RENEWAL 06/29/2026", "", false), false);
+  assert.equal(isDocumentLink("RENEWAL 05/14/2026", "", true), true);
+  assert.equal(isDocumentLink("RENEWAL 05/14/2026", "", false), false);
   assert.equal(isDocumentLink("Pay bill", "", true), false);
   assert.equal(isDocumentLink("View policy documents", "", true), false);
   const docs = [
-    { text: "RENEWAL 06/29/2026" },
-    { text: "RENEWAL 06/27/2025" },
-    { text: "NEW BUSINESS 09/05/2024" },
+    { text: "RENEWAL 05/14/2026" },
+    { text: "RENEWAL 05/12/2025" },
+    { text: "NEW BUSINESS 07/20/2024" },
     { text: "ENDORSEMENT 08/01/2026" },
     { text: "ENDORSEMENT 01/10/2026" },
   ];
-  assert.deepEqual(currentTerm(docs).map((d) => d.text), ["RENEWAL 06/29/2026", "ENDORSEMENT 08/01/2026"]);
+  assert.deepEqual(currentTerm(docs).map((d) => d.text), ["RENEWAL 05/14/2026", "ENDORSEMENT 08/01/2026"]);
   assert.deepEqual(currentTerm([{ text: "NOTICE 01/02/2026" }, { text: "NOTICE 03/04/2026" }]).map((d) => d.text), ["NOTICE 03/04/2026"]);
   assert.equal(findDate("posted 6/9/2026"), "2026-06-09");
 });
@@ -189,10 +189,10 @@ test("policy numbers are matched to the address shown with them", () => {
 test("policy numbers with letters and dashes; phones and dates are not policy numbers", () => {
   assert.equal(policyNumberIn("View policy documents for H37-291-123456-40"), "H37-291-123456-40");
   assert.equal(policyNumberIn("Auto policy AOS2911234564 details"), "AOS2911234564");
-  assert.equal(policyNumberIn("#381 - 4012345678 Specialty Dwelling"), "4012345678");
-  assert.equal(policyNumberIn("Call us at 610-898-3810"), null);
+  assert.equal(policyNumberIn("#100 - 4012345678 Rental Dwelling"), "4012345678");
+  assert.equal(policyNumberIn("Call us at 555-010-0199"), null);
   assert.equal(policyNumberIn("Call 1-800-555-1212 today"), null);
-  assert.equal(policyNumberIn("Posted 2026-06-29"), null);
+  assert.equal(policyNumberIn("Posted 2026-05-14"), null);
   assert.equal(policyNumberIn("Card ending •••• 0000"), null);
   assert.deepEqual(policyAddresses(["Homeowners policy H37-291-123456-40 at 12 Oak St"]), { "H37-291-123456-40": "12 Oak St" });
 });

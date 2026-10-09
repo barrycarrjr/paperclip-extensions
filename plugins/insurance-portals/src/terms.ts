@@ -49,7 +49,7 @@ export function findTerm(text: string): Term | null {
   };
   const patterns = [
     // Foremost and similar forms: the two dates printed side by side, then
-    // the time the term starts ("09/05/26 09/05/27 12:01 A.M. STANDARD TIME"),
+    // the time the term starts ("07/20/26 07/20/27 12:01 A.M. STANDARD TIME"),
     // well after the "POLICY PERIOD" label.
     new RegExp(String.raw`${DATE}\s+${DATE}\s+12:01\s*A\.?\s?M\.?`, "i"),
     new RegExp(String.raw`policy\s*period.{0,300}?${DATE}\s+(?:to\s+)?${DATE}`, "i"),

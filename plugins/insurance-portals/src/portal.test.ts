@@ -591,7 +591,7 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
       function showHome(delay){const mm=document.getElementById('main'); mm.innerHTML=''; setTimeout(()=>{mm.innerHTML=${JSON.stringify(
         policies
           .map(
-            (p) => `<section><h3>#100 - ${p.n} Specialty Dwelling</h3>
+            (p) => `<section><h3>#100 - ${p.n} Rental Dwelling</h3>
               <button aria-label="pay bill for policy ${p.n}" onclick="fetch('/pay',{method:'POST'})">Pay bill</button>
               <button aria-label="set up autopay for policy ${p.n}">Set up autopay</button>
               <button aria-label="policy documents for policy ${p.n}" onclick="history.pushState({},'','/policy/documents?p=${p.n}');render()">Policy documents</button></section>`,
@@ -608,7 +608,7 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
         const n=new URLSearchParams(location.search).get('p');
         const m=document.getElementById('main'); m.innerHTML='';
         setTimeout(()=>{m.innerHTML='<div role=tablist><button role=tab>DETAILS</button><button role=tab>DOCUMENTS</button></div><h1>Policy documents</h1><table>'+
-          [['RENEWAL','06/29/2026'],['RENEWAL','06/27/2025'],['NEW BUSINESS','09/05/2024']].map((d,i)=>
+          [['RENEWAL','05/14/2026'],['RENEWAL','05/12/2025'],['NEW BUSINESS','07/20/2024']].map((d,i)=>
             '<tr><td><button aria-label="'+d[0]+' for document '+(i+1)+' posted date '+d[1]+'; opens in a new tab" onclick="window.open(\\'/docs/'+n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> '+d[0]+'</button></td><td>'+d[1]+'</td></tr>').join('')+'</table>'},1500);
       }
       if (location.pathname.startsWith('/policy')) render();
@@ -648,8 +648,8 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
         log: () => undefined,
         // One document is already saved from an earlier run.
         alreadyHave: (d) =>
-          d.policy === "12 Oak St - Policy 1234567" && d.title === "RENEWAL" && d.posted === "2025-06-27"
-            ? "Foremost - 12 Oak St - Policy 1234567 - Term 2025-07-01 to 2026-07-01 - RENEWAL (posted 2025-06-27).pdf"
+          d.policy === "12 Oak St - Policy 1234567" && d.title === "RENEWAL" && d.posted === "2025-05-12"
+            ? "Foremost - 12 Oak St - Policy 1234567 - Term 2025-07-01 to 2026-07-01 - RENEWAL (posted 2025-05-12).pdf"
             : null,
       },
     );
@@ -659,11 +659,11 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
     assert.equal(result.skipped.length, 1);
     const meta = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted}`).sort();
     assert.deepEqual(meta, [
-      "12 Oak St - Policy 1234567 | NEW BUSINESS | 2024-09-05",
-      "12 Oak St - Policy 1234567 | RENEWAL | 2026-06-29",
-      "900 Elm Ave - Policy 7654321 | NEW BUSINESS | 2024-09-05",
-      "900 Elm Ave - Policy 7654321 | RENEWAL | 2025-06-27",
-      "900 Elm Ave - Policy 7654321 | RENEWAL | 2026-06-29",
+      "12 Oak St - Policy 1234567 | NEW BUSINESS | 2024-07-20",
+      "12 Oak St - Policy 1234567 | RENEWAL | 2026-05-14",
+      "900 Elm Ave - Policy 7654321 | NEW BUSINESS | 2024-07-20",
+      "900 Elm Ave - Policy 7654321 | RENEWAL | 2025-05-12",
+      "900 Elm Ave - Policy 7654321 | RENEWAL | 2026-05-14",
     ]);
     assert.ok(!hits.some((h) => h.startsWith("POST /pay")), "never paid");
   } finally {
@@ -692,7 +692,7 @@ test("per-policy buttons gone after Back: falls back to the general policy picke
       function render(){
         const n=new URLSearchParams(location.search).get('p'); const m=document.getElementById('main');
         if(!n){home(visits++===0);return}
-        m.innerHTML='<h1>Policy documents</h1>'+[['RENEWAL','06/29/2026'],['RENEWAL','06/27/2025']].map((d,i)=>
+        m.innerHTML='<h1>Policy documents</h1>'+[['RENEWAL','05/14/2026'],['RENEWAL','05/12/2025']].map((d,i)=>
           '<button onclick="window.open(\\'/docs/'+n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> '+d[0]+' '+d[1]+'</button>').join('');
       }
       window.onpopstate=render; render();
@@ -741,7 +741,7 @@ test("Back is broken: reaches every policy through the header Policies menu, nev
   ];
   const app = `<header><nav><button>Homepage</button>
       <button id="pm" onclick="document.getElementById('menu').style.display='block'">Policies <span>expand_more</span> Select policy from dropdown</button>
-      <div id="menu" style="display:none">${pols.map((p) => `<button onclick="go('/policy/details?p=${p.n}')">${p.addr} Specialty Dwelling policy #100-${p.n}</button>`).join("")}</div>
+      <div id="menu" style="display:none">${pols.map((p) => `<button onclick="go('/policy/details?p=${p.n}')">${p.addr} Rental Dwelling policy #100-${p.n}</button>`).join("")}</div>
       <button>Payments</button><button>Sign out</button></nav></header>
     <main id="main"></main>
     <button style="position:fixed;right:10px;bottom:10px;width:160px;height:50px;z-index:9">Chat Support</button>
@@ -762,7 +762,7 @@ test("Back is broken: reaches every policy through the header Policies menu, nev
         )};return}
         const tabs='<div><button role=tab onclick="go(\\'/policy/details?p='+n+'\\')">DETAILS</button><button role=tab onclick="go(\\'/policy/documents?p='+n+'\\')">DOCUMENTS</button></div>';
         if(u.pathname==='/policy/details'){m.innerHTML=tabs+'<h1>Policy details</h1>';return}
-        m.innerHTML=tabs+'<h1>Policy documents</h1>'+['06/29/2026','06/27/2025'].map((d,i)=>
+        m.innerHTML=tabs+'<h1>Policy documents</h1>'+['05/14/2026','05/12/2025'].map((d,i)=>
           '<button onclick="window.open(\\'/docs/'+n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> RENEWAL '+d+'</button>').join('');
       }
       render();
@@ -905,7 +905,7 @@ test(`every policy's documents at the same address (policy kept out of the URL)$
   ];
   const app = `<header><nav><button>Homepage</button>
       <button onclick="document.getElementById('menu').style.display='block'">Policies <span>expand_more</span> Select policy from dropdown</button>
-      <div id="menu" style="display:none">${pols.map((p) => `<button onclick="pick('${p.n}','details')">${p.addr} Specialty Dwelling policy #100-${p.n}</button>`).join("")}</div>
+      <div id="menu" style="display:none">${pols.map((p) => `<button onclick="pick('${p.n}','details')">${p.addr} Rental Dwelling policy #100-${p.n}</button>`).join("")}</div>
       <button>Sign out</button></nav></header><main id="main"></main>
     <script>
       const P=${JSON.stringify(pols)}; let cur=null, tab='details', homeVisits=0; const ONCE=${buttonsOnce};
@@ -915,9 +915,9 @@ test(`every policy's documents at the same address (policy kept out of the URL)$
         const m=document.getElementById('main');
         if(location.pathname==='/app/home'){const showButtons=!ONCE||homeVisits++===0; m.innerHTML=P.map(p=>'<section><h3>'+p.addr+'</h3><button aria-label="view bill for policy '+p.n+'">View bill</button>'+(showButtons?'<button aria-label="policy documents for policy '+p.n+'" onclick="pick(\\''+p.n+'\\',\\'documents\\')">Policy documents</button>':'')+'</section>').join('')+P.map(p=>'<a href="#" onclick="return false">#100 - '+p.n+' Managed policies '+p.addr+' policy number '+p.n+'</a>').join('');return}
         if(!cur){m.innerHTML='<p>Select a policy.</p>';return}
-        const tabs='<div><button role=tab onclick="tab=\\'details\\';render()">DETAILS</button><button role=tab onclick="tab=\\'documents\\';render()">DOCUMENTS</button></div><h1>'+cur.addr+' Specialty Dwelling policy '+(tab==='documents'?'documents':'details')+'</h1>';
+        const tabs='<div><button role=tab onclick="tab=\\'details\\';render()">DETAILS</button><button role=tab onclick="tab=\\'documents\\';render()">DOCUMENTS</button></div><h1>'+cur.addr+' Rental Dwelling policy '+(tab==='documents'?'documents':'details')+'</h1>';
         if(tab==='details'){m.innerHTML=tabs+'<p>Coverage summary</p>';return}
-        m.innerHTML=tabs+['06/29/2026','06/27/2025'].map((d,i)=>'<button onclick="window.open(\\'/docs/'+cur.n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> RENEWAL '+d+'</button>').join('');
+        m.innerHTML=tabs+['05/14/2026','05/12/2025'].map((d,i)=>'<button onclick="window.open(\\'/docs/'+cur.n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> RENEWAL '+d+'</button>').join('');
       }
       render();
     </script>`;

@@ -61,7 +61,7 @@ Ask an agent to call \`insurance_fetch_documents\` with \`carrier: "liberty_mutu
 
 ## Which terms are fetched
 
-By default every term the portal shows is saved, current and prior. Each file is named with its term dates, read from the document itself: \`Foremost - <address> - Policy <number> - Term 2026-08-01 to 2027-08-01 - RENEWAL (posted 2026-06-29)\`. The tool's result marks each file current or prior, so an agent can file them (for example prior terms into \`_Superseded\`). For regular runs, set **Terms to fetch by default** to \`current\`, or have the agent pass \`terms: "current"\`.
+By default every term the portal shows is saved, current and prior. Each file is named with its term dates, read from the document itself: \`Foremost - <address> - Policy <number> - Term 2026-08-01 to 2027-08-01 - RENEWAL (posted 2026-05-14)\`. The tool's result marks each file current or prior, so an agent can file them (for example prior terms into \`_Superseded\`). For regular runs, set **Terms to fetch by default** to \`current\`, or have the agent pass \`terms: "current"\`.
 
 ## Remembering sign-in
 

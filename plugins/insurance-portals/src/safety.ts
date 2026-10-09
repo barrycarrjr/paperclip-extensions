@@ -32,7 +32,7 @@ export function isDangerous(label: string): boolean {
 /**
  * True for a link/button worth saving as a document. `pdfHint` means the
  * page marks the link as a PDF (a PDF icon, "PDF" in its label), as
- * Foremost's document list does for entries named only "RENEWAL 06/29/2026".
+ * Foremost's document list does for entries named only "RENEWAL 05/14/2026".
  */
 export function isDocumentLink(label: string, href = "", pdfHint = false): boolean {
   const text = label.trim();
