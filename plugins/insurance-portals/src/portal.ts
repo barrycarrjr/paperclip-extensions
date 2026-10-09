@@ -878,43 +878,79 @@ async function runCarrierInner(
     }
   };
 
-  /** Read one page: save its documents, then follow its navigation buttons. */
-  const readPage = async (ctx: string) => {
+  /** Go back to `here` the cheap way (browser Back), reloading only if that fails. */
+  const goBack = async (here: string) => {
+    await page.evaluate(() => history.back()).catch(() => undefined);
+    const until = Date.now() + 8_000;
+    while (Date.now() < until && keyOf(await page.url()) !== keyOf(here)) await sleep(300);
+    if (keyOf(await page.url()) !== keyOf(here)) await page.goto(here).catch(() => undefined);
+    await settle(15_000);
+  };
+  const policiesRead = new Set<string>();
+
+  /**
+   * Read one page: save its documents, then follow its navigation buttons.
+   * A button that lands on another page is read there and then (depth
+   * first) and the run steps back, so each page loads once. `depth` 0 is a
+   * starting page; deeper pages only follow "documents" tabs.
+   */
+  const readPage = async (ctx: string, depth = 0): Promise<void> => {
     await settle();
     const here = await page.url();
     const pageKey = keyOf(here);
     const links = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
     Object.assign(addresses, policyAddresses(links.map((l) => l.text)), addresses);
     await snap(page, `page-${pagesVisited}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "", pdf: l.pdfHint })));
+    const ownPolicy = policyNumberIn(ctx);
+    if (ownPolicy) policiesRead.add(ownPolicy);
 
     for (const l of links) {
       if (l.href && !l.footer && isNavigationLink(l.text)) enqueue(l.href, contextFor(l.text, ctx));
     }
     await takeDocs(links, ctx);
+    if (depth >= 2) return;
 
     // Navigation buttons with no address. When a page offers "documents"
-    // buttons (one per policy on Foremost's home page), follow only those.
-    const navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`));
+    // buttons, follow only those; when some name a policy (Foremost's home
+    // page has one per policy), follow only those and skip the general one.
+    let navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`));
     const docNavs = navs.filter((l) => /\bdocuments?\b/i.test(l.text));
-    for (const nb of (docNavs.length ? docNavs : navs).slice(0, 12)) {
+    if (docNavs.length) {
+      const perPolicy = docNavs.filter((l) => policyNumberIn(l.text));
+      navs = perPolicy.length ? perPolicy : docNavs;
+    } else if (depth > 0) {
+      return;
+    }
+    for (const nb of navs.slice(0, 12)) {
       if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
       tried.add(`nav|${pageKey}|${nb.text}`);
-      const shownBefore = new Set((await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).map((l) => l.text));
-      const m = await markByText(nb.text);
+      const n = policyNumberIn(nb.text);
+      if (n && policiesRead.has(n)) continue;
+      let m = await markByText(nb.text);
+      if (!m) {
+        // Back did not bring the page's content back: load it again.
+        await page.goto(here).catch(() => undefined);
+        await settle(20_000);
+        m = await markByText(nb.text);
+      }
       if (!m) continue;
+      const shownBefore = new Set((await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).map((l) => l.text));
       await page.clickMark(m);
       await settle(15_000);
       const now = await page.url();
       const navCtx = contextFor(nb.text, ctx);
       if (keyOf(now) !== pageKey) {
-        // It moved to another page: read that one later, come back here.
-        enqueue(now, navCtx);
-        await page.goto(here).catch(() => undefined);
-        await settle(20_000);
+        // It moved to another page: read it now, then step back.
+        if (!visited.has(keyOf(now))) {
+          visited.add(keyOf(now));
+          pagesVisited++;
+          await readPage(navCtx, depth + 1);
+        }
+        await goBack(here);
         continue;
       }
       // Same page: it opened a menu or a tab. Save documents it revealed,
-      // then visit the safe items it showed (Foremost's "Policies" menu).
+      // then visit the safe items it showed, skipping policies already read.
       const shown = (await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).filter(
         (l) => !shownBefore.has(l.text) && !l.footer && l.text.length <= 100 && !isDangerous(l.text),
       );
@@ -923,6 +959,9 @@ async function runCarrierInner(
       await takeDocs(shown, navCtx);
       for (const item of shown.filter((l) => !isDocumentLink(l.text, l.href, l.pdfHint)).slice(0, 10)) {
         if (Date.now() > workDeadline) break;
+        const itemPolicy = policyNumberIn(item.text);
+        if (itemPolicy && policiesRead.has(itemPolicy)) continue;
+        if (/^(close|cancel|dismiss|back)\b/i.test(item.text)) continue;
         if (tried.has(`item|${pageKey}|${item.text}`)) continue;
         tried.add(`item|${pageKey}|${item.text}`);
         let im = await markByText(item.text);
@@ -937,9 +976,12 @@ async function runCarrierInner(
         await settle(20_000);
         const went = await page.url();
         if (keyOf(went) !== pageKey) {
-          enqueue(went, contextFor(item.text, navCtx));
-          await page.goto(here).catch(() => undefined);
-          await settle(20_000);
+          if (!visited.has(keyOf(went))) {
+            visited.add(keyOf(went));
+            pagesVisited++;
+            await readPage(contextFor(item.text, navCtx), depth + 1);
+          }
+          await goBack(here);
         }
       }
     }

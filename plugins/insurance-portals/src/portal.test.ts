@@ -588,7 +588,7 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
   const home = `<header><nav><button>Homepage</button><button>Policies <span>chevron_right</span> Select policy from dropdown</button><button>Payments</button><button>Sign out</button></nav></header>
     <main id="main"></main><footer><a href="#">Policies</a></footer>
     <script>
-      setTimeout(()=>{document.getElementById('main').innerHTML=${JSON.stringify(
+      function showHome(){const mm=document.getElementById('main'); mm.innerHTML=''; setTimeout(()=>{mm.innerHTML=${JSON.stringify(
         policies
           .map(
             (p) => `<section><h3>#100 - ${p.n} Specialty Dwelling</h3>
@@ -600,7 +600,9 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
           `<button>Paperless settings</button><ul>` +
           policies.map((p) => `<li><a href="#" onclick="return false">#100 - ${p.n} Managed policies ${p.addr} policy number ${p.n}</a></li>`).join("") +
           `</ul>`,
-      )};},1500);
+      )};},1500);}
+      window.onpopstate=()=>{ if (location.pathname.startsWith('/policy')) render(); else showHome(); };
+      if (!location.pathname.startsWith('/policy')) showHome();
       function render(){
         const n=new URLSearchParams(location.search).get('p');
         const m=document.getElementById('main'); m.innerHTML='';
