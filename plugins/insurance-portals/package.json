@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-insurance-portals",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Paperclip plugin that signs in to insurance carrier portals (Foremost, Liberty Mutual, Selective) read-only and saves current policy and declarations-page PDFs to Google Drive.",
   "type": "module",
   "private": true,
@@ -37,6 +37,6 @@
     "typescript": "^5.7.3"
   },
   "license": "MIT",
-  "author": "Barry Carr & Tony Allard",
+  "author": "Bryon Stout",
   "packageManager": "pnpm@10.28.0"
 }

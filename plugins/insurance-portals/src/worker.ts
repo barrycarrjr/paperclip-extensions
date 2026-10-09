@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertCompanyAccess } from "./companyAccess.js";
 import { Browser, findChrome } from "./cdp.js";
-import { Drive } from "./drive.js";
+import { Drive, type SavedFile } from "./drive.js";
+import { LocalFolder } from "./localFolder.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { safeFileName, splitDrivePath } from "./safety.js";
@@ -29,6 +30,8 @@ interface InstanceConfig {
   googleClientId?: string;
   googleClientSecret?: string;
   googleRefreshToken?: string;
+  saveTo?: "auto" | "local" | "google-drive";
+  localFolder?: string;
   chromePath?: string;
   showBrowser?: boolean;
   debugScreenshots?: boolean;
@@ -88,6 +91,23 @@ async function driveFor(ctx: PluginContext, cfg: InstanceConfig, companyId?: str
   });
 }
 
+interface Saver {
+  ensureFolder(path: string): Promise<string>;
+  savePdf(folder: string, name: string, bytes: Buffer): Promise<SavedFile>;
+}
+
+/** Google Drive API when chosen (or when "auto" and all three Google keys are set); otherwise the local folder. */
+function usesLocal(cfg: InstanceConfig): boolean {
+  const mode = cfg.saveTo ?? "auto";
+  if (mode === "local") return true;
+  if (mode === "google-drive") return false;
+  return !(cfg.googleClientId && cfg.googleClientSecret && cfg.googleRefreshToken);
+}
+
+async function saverFor(ctx: PluginContext, cfg: InstanceConfig, companyId?: string): Promise<Saver> {
+  return usesLocal(cfg) ? LocalFolder.open(cfg.localFolder) : driveFor(ctx, cfg, companyId);
+}
+
 export async function fetchDocuments(
   ctx: PluginContext,
   cfg: InstanceConfig,
@@ -111,8 +131,8 @@ export async function fetchDocuments(
   const [userField, passField] = CREDENTIAL_FIELDS[carrierKey];
   const username = await need(ctx, cfg[userField] as string | undefined, `${carrier.name} user name`, companyId);
   const password = await need(ctx, cfg[passField] as string | undefined, `${carrier.name} password`, companyId);
-  // Connect to Drive before signing in, so a Drive problem doesn't cost a login.
-  const drive = await driveFor(ctx, cfg, companyId);
+  // Open the save location before signing in, so a problem there doesn't cost a login.
+  const drive = await saverFor(ctx, cfg, companyId);
   const folderId = await drive.ensureFolder(destination);
 
   let mailbox: MailboxSettings | null = null;
@@ -253,9 +273,13 @@ const plugin = definePlugin({
         await testMailbox(await mailboxSettings(ctx, cfg));
         return "signed in and opened the folder read-only";
       });
-      await check("Google Drive", async () => {
+      await check("Save to", async () => {
+        if (usesLocal(cfg)) {
+          const local = await LocalFolder.open(cfg.localFolder);
+          return `local folder ${local.root}`;
+        }
         await driveFor(ctx, cfg);
-        return "signed in";
+        return "Google Drive (signed in)";
       });
       return { ok: checks.every((c) => c.passed), checks };
     });

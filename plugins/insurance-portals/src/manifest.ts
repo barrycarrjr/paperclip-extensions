@@ -1,11 +1,11 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
-Lets agents fetch the current policy and declarations-page PDFs from **Foremost**, **Liberty Mutual** and **Selective** and save them to a Google Drive folder. Reckon on **about 15 minutes**.
+Lets agents fetch the current policy and declarations-page PDFs from **Foremost**, **Liberty Mutual** and **Selective** and save them to Google Drive (or any folder on this computer). Reckon on **about 15 minutes**.
 
 The plugin is **read-only**: it only signs in and opens documents. It never pays, changes a policy or submits anything, and once signed in it blocks any request that looks like a payment, change or submission.
 
@@ -36,16 +36,21 @@ Liberty Mutual and Selective email a one-time code at sign-in. The plugin reads 
 
 What the plugin reads, and nothing else: it opens the folder read-only, looks only at mail **from** the carrier that is signing in (Foremost: foremost.com and its subdomains such as policy.foremost.com; Liberty Mutual: libertymutual.com; Selective: selective.com and its subdomains such as underwritingalerts.selective.com), and downloads only the **newest** such message that arrived after it asked for the code. Nothing is marked read, moved or deleted.
 
-## 3. Google Drive access
+## 3. Where files are saved
 
-The plugin saves PDFs with the Drive API. Reuse the **Google OAuth client ID**, **client secret** and **refresh token** secrets the Google Workspace plugin already uses (its token carries Drive access). Pick those same three secrets in the Configuration tab.
+Two ways, picked by **Save to** (default \`auto\`):
+
+- **Local folder (no Google keys needed).** If Google Drive for desktop is installed and signed in, the plugin finds its **My Drive** folder by itself and saves there, so the files sync to Drive. To use another folder, set **Local folder**. This is what \`auto\` uses when the Google fields are empty.
+- **Google Drive API.** Pick the **Google OAuth client ID**, **client secret** and **refresh token** secrets the Google Workspace plugin uses (its token carries Drive access). \`auto\` uses this when all three are set.
+
+Either way, missing folders are created and nothing is overwritten or deleted.
 
 ## 4. Configure the plugin (this page, **Configuration** tab)
 
 - **Allowed companies**: tick the company whose agents may call the tool. Empty = nobody can.
 - Pick each secret from step 1 in the six carrier fields.
 - **Code mailbox address**: the email address the codes go to. **Code mailbox app password**: the secret from step 2.
-- The three **Google** fields: the secrets from step 3.
+- **Save to** / **Local folder**, or the three **Google** fields, per step 3.
 - Click **Save**.
 
 ## 5. Try it
@@ -82,8 +87,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "Insurance Portals",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Read-only: signs in to Foremost, Liberty Mutual and Selective and saves the current policy and declarations-page PDFs to a Google Drive folder. Login codes are read from email; agents never see credentials.",
-  author: "Barry Carr & Tony Allard",
+    "Read-only: signs in to Foremost, Liberty Mutual and Selective and saves the current policy and declarations-page PDFs to Google Drive (through Drive for desktop or the Drive API). Login codes are read from email; agents never see credentials.",
+  author: "Bryon Stout",
   categories: ["automation", "connector"],
   capabilities: [
     "agent.tools.register",
@@ -114,6 +119,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       "googleClientId",
       "googleClientSecret",
       "googleRefreshToken",
+      "saveTo",
+      "localFolder",
       "chromePath",
       "showBrowser",
       "debugScreenshots",
@@ -160,6 +167,20 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         "Google refresh token (Drive access)",
         "A refresh token that includes Drive access, e.g. the one the Google Workspace plugin uses for this Google account.",
       ),
+      saveTo: {
+        type: "string",
+        enum: ["auto", "local", "google-drive"],
+        default: "auto",
+        title: "Save to",
+        description:
+          "'auto' = Google Drive API when all three Google fields are set, otherwise the local folder. 'local' = always the local folder. 'google-drive' = always the Drive API.",
+      },
+      localFolder: {
+        type: "string",
+        title: "Local folder (optional)",
+        description:
+          "Folder on this computer that the destination path is created under. Leave blank to use the Google Drive for desktop 'My Drive' folder (found automatically when exactly one Google account is signed in), so files sync to Drive. '~' means your home folder.",
+      },
       chromePath: {
         type: "string",
         title: "Chrome path (optional)",

@@ -1,6 +1,6 @@
 # insurance-portals
 
-Paperclip plugin that signs in to insurance carrier customer portals and saves the current policy and declarations-page PDFs to a Google Drive folder. **Read-only**: it never pays, changes a policy or submits anything.
+Paperclip plugin that signs in to insurance carrier customer portals and saves the current policy and declarations-page PDFs to Google Drive, either through the Google Drive for desktop folder on this computer or through the Drive API. **Read-only**: it never pays, changes a policy or submits anything.
 
 Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
@@ -8,22 +8,23 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.2.0**: New **Save to** setting (`auto` / `local` / `google-drive`) and **Local folder**. `auto` (the default) saves into a folder on this computer whenever the three Google fields are empty; with **Local folder** blank it finds the Google Drive for desktop "My Drive" folder by itself (only when exactly one account is signed in), so files sync to Drive with no Google keys. Same rules as Drive: folders created as needed, identical files skipped, nothing overwritten or deleted, and nothing written outside the folder (links that point outside are refused). Author changed to Bryon Stout.
 - **v0.1.0**: First release. One agent tool, `insurance_fetch_documents`. Portal credentials, the code mailbox app password and the Google Drive OAuth secrets are all plugin secrets; agents never see them or the login codes.
 
 ## Agent tool
 
 | Tool | What it does |
 |---|---|
-| `insurance_fetch_documents` | Signs in to one carrier portal, finds the current policy and declarations-page PDFs, and saves them to a Drive folder. Returns file names and Drive links. Up to 5 minutes (host maximum). |
+| `insurance_fetch_documents` | Signs in to one carrier portal, finds the current policy and declarations-page PDFs, and saves them to a Drive folder (local Drive for desktop folder or Drive API). Returns file names and Drive links. Up to 5 minutes (host maximum). |
 
 Parameters:
 
 | Name | Type | Notes |
 |---|---|---|
 | `carrier` | `"foremost" \| "liberty_mutual" \| "selective"` | Which portal. |
-| `destination` | string | Drive folder path under My Drive, e.g. `Insurance/Liberty Mutual/2026`. Missing folders are created. `..` is refused. |
+| `destination` | string | Folder path under My Drive (or under **Local folder**), e.g. `Insurance/Liberty Mutual/2026`. Missing folders are created. `..` is refused. |
 
-Result `data`: `{ carrier, destination, files: [{ name, id, link, status: "saved" \| "already_saved" }], pagesVisited, blockedWriteRequests, notes, seconds }`.
+Result `data`: `{ carrier, destination, files: [{ name, id, link, status: "saved" \| "already_saved" }], pagesVisited, blockedWriteRequests, notes, seconds }`. For a local save, `id` is the file's path and `link` is null.
 
 Files are named `<Carrier> - <document label> - <YYYY-MM-DD>.pdf`. A file already in the folder with the same bytes is skipped; a different file with the same name is saved alongside as `... (2).pdf`. Nothing in Drive is overwritten or deleted.
 
@@ -58,7 +59,9 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 | Code mailbox address | text |
 | Code mailbox app password | secret ref |
 | Code mailbox IMAP host / folder | text (`imap.gmail.com` / `INBOX`) |
-| Google OAuth client ID / client secret / refresh token | secret refs (refresh token needs Drive scope) |
+| Google OAuth client ID / client secret / refresh token | secret refs (refresh token needs Drive scope); only needed for Drive API saving |
+| Save to | `auto` (default: Drive API if all three Google fields are set, else local folder), `local`, `google-drive` |
+| Local folder | optional path; blank = the Google Drive for desktop "My Drive" folder, found automatically. `~` = home folder |
 | Chrome path | optional text |
 | Show the browser window | boolean |
 | Debug screenshots | boolean: saves a PNG per step to a temp folder named in the plugin log. Stays on the machine; can show policy details. |
@@ -66,7 +69,7 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 
 All secrets must belong to the company that calls the tool.
 
-An operator action, `check-setup` (`POST /api/plugins/:id/actions/check-setup`), starts Chrome, reads each configured secret, signs in to the mailbox read-only and signs in to Drive. It does not sign in to any carrier.
+An operator action, `check-setup` (`POST /api/plugins/:id/actions/check-setup`), starts Chrome, reads each configured secret, signs in to the mailbox read-only, and opens the save location (local folder, or a Drive sign-in). It does not sign in to any carrier.
 
 ## Error codes
 
@@ -77,6 +80,7 @@ An operator action, `check-setup` (`POST /api/plugins/:id/actions/check-setup`),
 | `ECONFIG_MISSING` / `ESECRET_UNREADABLE` | A setting is blank, or its secret is missing or belongs to another company. |
 | `ECHROME_NOT_FOUND` | Chrome not found. |
 | `EDRIVE_AUTH` / `EDRIVE_API` | Google refused the Drive sign-in, or a Drive call failed. Checked **before** signing in to the carrier. |
+| `ELOCAL_ROOT` / `ELOCAL_WRITE` | The local folder is missing or not found automatically, or a file could not be written. Checked **before** signing in to the carrier. |
 | `ELOGIN_REJECTED` | The portal refused the user name or password. Not retried. |
 | `ECODE_TIMEOUT` / `ECODE_REJECTED` / `EMAIL_AUTH_FAILED` | No code email within about 2 minutes, the portal refused the code, or the mailbox sign-in failed. |
 | `ECAPTCHA` | The portal showed a robot check. |
