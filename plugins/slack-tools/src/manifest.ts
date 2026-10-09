@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.4.30";
+const PLUGIN_VERSION = "0.6.0";
 
 const workspaceItemSchema = {
   type: "object",
@@ -17,6 +17,12 @@ const workspaceItemSchema = {
     "defaultChannel",
     // Access control
     "allowedCompanies",
+    // Inbound DMs (Socket Mode)
+    "appTokenRef",
+    "inboundDmTarget",
+    "inboundDmCompanyId",
+    "inboundDmAgentId",
+    "inboundDmFromUserIds",
   ],
   properties: {
     key: {
@@ -66,20 +72,54 @@ const workspaceItemSchema = {
     },
     supportChannels: { type: "array",title: "Support Desk reply channels",items: { type: "string" },
       description: "Optional exact channel IDs where confirmed Support Desk replies may be posted by the bot. Empty disables support delivery. Existing allowed-company rules still apply." },
+    appTokenRef: {
+      type: "string",
+      format: "secret-ref",
+      title: "App-level token (xapp-...) for inbound DMs",
+      description:
+        "Optional. The secret holding an app-level token with the connections:write scope. When set, the plugin keeps a Socket Mode connection open and every DM an allowed sender sends the bot is answered within seconds: by Clippy, Paperclip's assistant, acting as the Paperclip user who paired that Slack account (default), or by waking one agent. Generate it under Basic Information, App-Level Tokens; the Slack app also needs Socket Mode, the message.im bot event, Interactivity, the App Home messages tab and the bot scopes im:history, chat:write, reactions:write and users:read (checklist in section 6a of the setup notes). After picking it here, click Save.",
+    },
+    inboundDmTarget: {
+      type: "string",
+      enum: ["clippy", "agent"],
+      default: "clippy",
+      title: "Inbound DMs go to",
+      description:
+        "clippy: each DM is a turn in a Clippy conversation as the Paperclip user who paired that Slack account, with Clippy's tools, memory and approval gate; the answer comes back in the DM, and outbound actions Clippy drafts show Approve and Reject buttons. The first DM from an unpaired Slack account gets a pairing code to enter in the Paperclip profile instead. agent: each DM wakes the agent below with the message as its prompt, and that agent answers with slack_send_dm.",
+    },
+    inboundDmCompanyId: {
+      type: "string",
+      title: "Inbound DM company id",
+      description:
+        "clippy: the company scope of the Slack conversation (the portfolio root is a good choice, it can see every company). agent: the company the agent belongs to.",
+    },
+    inboundDmAgentId: {
+      type: "string",
+      title: "Inbound DM agent id (agent)",
+      description:
+        "Only for 'agent': the agent (UUID) woken for each DM. Its instructions should say to answer with slack_send_dm.",
+    },
+    inboundDmFromUserIds: {
+      type: "array",
+      items: { type: "string" },
+      title: "Inbound DM senders",
+      description:
+        "Slack user IDs whose DMs are delivered. Leave empty to accept only the Default DM target user. Messages from anyone else, from bots, and edits or deletions are ignored. In clippy mode each sender also pairs their Slack account to their own Paperclip user once, from their Paperclip profile, with a code the bot sends them; Clippy then acts with that user's permissions.",
+    },
   },
 } as const;
 
-const SETUP_INSTRUCTIONS = `# Setup — Slack Tools
+const SETUP_INSTRUCTIONS = `# Setup: Slack Tools
 
 Connect one or more Slack workspaces so agents can send DMs, post to channels, and (in future tools) act on your behalf for search, files, reactions, and reminders. Reckon on **about 5 minutes** per workspace using the bundled manifest.
 
-This plugin uses **dual-token auth**: a bot token for announce/notify operations and a user token for "act as me" operations. Configure both at install time — the whole point of an assistant plugin is acting on the operator's behalf, so the user token is first-class.
+This plugin uses **dual-token auth**: a bot token for announce/notify operations and a user token for "act as me" operations. Configure both at install time: the whole point of an assistant plugin is acting on the operator's behalf, so the user token is first-class.
 
 ---
 
 ## 1. Create the Slack App from the bundled manifest
 
-The plugin ships a \`slack-app-manifest.json\` file in its source folder ([github.com/.../paperclip-extensions/plugins/slack-tools](https://github.com/)). It declares all the OAuth scopes both tokens need, so you don't click ~37 checkboxes by hand.
+The plugin ships a \`slack-app-manifest.json\` file in its source folder ([github.com/.../paperclip-extensions/plugins/slack-tools](https://github.com/)). It declares all the OAuth scopes both tokens need, so you don't click ~37 checkboxes by hand, plus the Socket Mode, event, Interactivity and App Home settings that talking to Clippy from Slack needs (section 6).
 
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest**.
 2. Pick the workspace you want to connect.
@@ -93,8 +133,8 @@ The app is now configured with the scopes for both bot and user tokens.
 
 On the new app's **OAuth & Permissions** page, click **Install to Workspace** and approve. After install, the page shows two tokens:
 
-- **Bot User OAuth Token** — starts with \`xoxb-...\` — bot identity (channel posts, operator DMs)
-- **User OAuth Token** — starts with \`xoxp-...\` — your identity (search, files, reactions, reminders)
+- **Bot User OAuth Token**, starting \`xoxb-...\`: bot identity (channel posts, operator DMs)
+- **User OAuth Token**, starting \`xoxp-...\`: your identity (search, files, reactions, reminders)
 
 Copy both.
 
@@ -105,7 +145,7 @@ Copy both.
 In Paperclip, switch to the company that should own this workspace connection. For each token:
 
 - Go to **Secrets → Add**
-- Name it descriptively (e.g. \`SLACK_BOT_TOKEN_MAIN\`, \`SLACK_USER_TOKEN_MAIN\`) — this is the name you'll pick from the dropdown in the next step, so make it recognisable
+- Name it descriptively (e.g. \`SLACK_BOT_TOKEN_MAIN\`, \`SLACK_USER_TOKEN_MAIN\`): this is the name you'll pick from the dropdown in the next step, so make it recognisable
 - Paste the token as the value
 - Save
 
@@ -123,7 +163,7 @@ Click the **Configuration** tab above. Under **Slack workspaces**, click **+ Add
 | **Display name** | (e.g. "Acme Slack") |
 | **Bot token** | pick the \`xoxb-\` secret from step 3 in the dropdown |
 | **User token** | pick the \`xoxp-\` secret from step 3 in the dropdown |
-| **Default DM target** | your Slack user ID — see step 5 |
+| **Default DM target** | your Slack user ID (see step 5) |
 | **Default channel ID** | optional; a C-prefixed channel ID for the default posting channel |
 | **Allowed companies** | tick the company that owns this workspace |
 
@@ -143,20 +183,63 @@ Copy the returned \`userId\` (U-prefixed) and paste it into **Default DM target 
 
 ---
 
-## Token routing — which tools use which token
+## 6. Talk to Clippy from Slack (optional, Socket Mode)
+
+With Socket Mode, Slack pushes each DM you send the bot to Paperclip over a connection the plugin opens outbound, so nothing on your machine is exposed to the internet. By default the DM becomes a turn in a **Clippy** conversation as you: Clippy's tools, memory and approval gate, the answer back in Slack within seconds, and **Approve** / **Reject** buttons for any outbound action it drafts. The buttons do exactly what the Approvals page does, with the same access checks.
+
+### 6a. Slack app checklist
+
+An app created from the current \`slack-app-manifest.json\` already has all of this. An app created from an older manifest, or by hand, usually misses something, and every miss fails quietly, so check each line in the Slack app settings at [api.slack.com/apps](https://api.slack.com/apps):
+
+| Where | Setting | What goes wrong without it |
+|---|---|---|
+| **Socket Mode** | Enabled | The bot never hears your DMs. |
+| **Basic Information**, **App-Level Tokens** | A token with the \`connections:write\` scope (its value starts \`xapp-\`) | The bot never hears your DMs. |
+| **Event Subscriptions** | Enabled, with the bot event \`message.im\` | The bot never hears your DMs. |
+| **Interactivity & Shortcuts** | Enabled (no request URL is needed with Socket Mode) | **Approve** and **Reject** do nothing. |
+| **App Home**, **Show Tabs** | **Messages Tab** on, and "Allow users to send Slash commands and messages from the messages tab" ticked | Slack says "Sending messages to this app has been turned off". |
+| **OAuth & Permissions**, **Bot Token Scopes** | \`im:history\`, \`chat:write\`, \`reactions:write\`, \`users:read\` | Without \`im:history\` no DMs arrive and a reply in a thread loses the message above it; without \`chat:write\` no answers; without \`reactions:write\` no 👀 or ✅; without \`users:read\` the pairing code cannot name your account. |
+
+After adding a scope, Slack asks you to **reinstall the app** to the workspace. Do it, then compare the tokens on **OAuth & Permissions** with the secrets you saved in step 3 and update any that changed.
+
+### 6b. In Paperclip
+
+1. Save the \`xapp-\` token on the **Secrets** page (for example \`SLACK_APP_TOKEN_MAIN\`), in the same company as this workspace's bot token.
+2. On the **Configuration** tab, in this workspace's entry, pick that secret in **App-level token (xapp-...) for inbound DMs**, then click **Save**. Saving the secret alone does nothing: until it is picked here, inbound DMs stay off.
+3. Set **Inbound DMs go to** (clippy) and **Inbound DM company id** (the portfolio root sees every company).
+4. Optional: **Inbound DM senders**. Left empty, only the Default DM target user is answered. DMs from anyone else, from bots, and edits are ignored without a reply.
+5. Check the server log: it says \`slack-tools inbound [<workspace>]: listening for DMs from ...\` and then \`connected\` once this is working.
+
+### 6c. Connect your Slack account (once per person)
+
+Send the bot a DM. The first time, it replies with a pairing code that works for 10 minutes. In Paperclip, open **Profile** (Instance Settings, then Profile), find **Chat apps**, enter the code, click **Check code**, make sure it names your Slack account, and click **Connect**. Then send your message again. Clippy acts as the Paperclip user who connected the account, with that user's access; disconnect it from the same page. The plugin never decides who you are.
+
+### 6d. What to expect
+
+- 👀 on your message while Clippy works, then ✅ when it has answered (❌ if it stopped part way).
+- The answer comes in a thread under your message. Replies you write in that thread carry on the same conversation.
+- Reply in a thread under one of the bot's own messages (an agent's alert, say) and Clippy is given that message as context.
+- Clippy cannot open files sent in Slack. A message with a file is still answered, and Clippy is told a file came with it.
+- Anything outbound that Clippy drafts waits for **Approve**. Times on the result are shown in each reader's own time zone.
+
+Choose **agent** instead of clippy to have one agent woken with each DM as its prompt; that agent then answers with \`slack_send_dm\`.
+
+---
+
+## Token routing: which tools use which token
 
 Default = bot token (announce/notify identity). Send / reaction tools opt into the user token via \`asUser: true\`. Search and status tools always require the user token.
 
-- \`slack_send_dm\` / \`slack_send_channel\` — bot by default; \`asUser: true\` posts as the operator (e.g. an activity-monitor agent reaching out to a teammate from your identity).
-- \`slack_add_reaction\` / \`slack_remove_reaction\` — bot reaction by default; \`asUser: true\` reacts as the operator. Slack restricts removal to the originating token, so a bot reaction can't be removed with \`asUser: true\` and vice versa.
-- \`slack_search_messages\` — **user token only**. Bot tokens cannot call \`search.messages\`.
-- \`slack_set_user_status\` — **user token only**. Bots cannot change a user's status.
-- \`slack_update_message\` / \`slack_delete_message\` — bot only. Each token can only edit/delete its own sends, so messages sent with \`asUser: true\` can't be edited via these tools.
-- \`slack_read_channel\`, \`slack_read_thread\`, \`slack_lookup_user\`, \`slack_list_channels\`, \`slack_list_users\`, \`slack_get_channel\` — bot-token reads. \`slack_upload_file\` is also bot-token.
+- \`slack_send_dm\` / \`slack_send_channel\`: bot by default; \`asUser: true\` posts as the operator (e.g. an activity-monitor agent reaching out to a teammate from your identity).
+- \`slack_add_reaction\` / \`slack_remove_reaction\`: bot reaction by default; \`asUser: true\` reacts as the operator. Slack restricts removal to the originating token, so a bot reaction can't be removed with \`asUser: true\` and vice versa.
+- \`slack_search_messages\`: **user token only**. Bot tokens cannot call \`search.messages\`.
+- \`slack_set_user_status\`: **user token only**. Bots cannot change a user's status.
+- \`slack_update_message\` / \`slack_delete_message\`: bot only. Each token can only edit/delete its own sends, so messages sent with \`asUser: true\` can't be edited via these tools.
+- \`slack_read_channel\`, \`slack_read_thread\`, \`slack_lookup_user\`, \`slack_list_channels\`, \`slack_list_users\`, \`slack_get_channel\`: bot-token reads. \`slack_upload_file\` is also bot-token.
 
 ## Read-history safety switch
 
-\`slack_read_channel\`, \`slack_read_thread\`, and \`slack_search_messages\` return raw message bodies — these are gated behind the **Allow reading message history** switch on the Configuration tab. Off by default; flip on after you've reviewed which agents are allowed to read message content. Roster and channel-metadata reads (\`slack_lookup_user\`, \`slack_list_users\`, \`slack_list_channels\`, \`slack_get_channel\`) stay ungated since they don't expose message bodies.
+\`slack_read_channel\`, \`slack_read_thread\`, and \`slack_search_messages\` return raw message bodies, so they are gated behind the **Allow reading message history** switch on the Configuration tab. Off by default; flip on after you've reviewed which agents are allowed to read message content. Roster and channel-metadata reads (\`slack_lookup_user\`, \`slack_list_users\`, \`slack_list_channels\`, \`slack_get_channel\`) stay ungated since they don't expose message bodies.
 
 ## Required scopes (already in the bundled manifest)
 
@@ -164,16 +247,22 @@ The shipped \`slack-app-manifest.json\` declares everything every current tool n
 - Bot: \`chat:write\`, \`chat:write.public\`, \`im:write\`, \`channels:read\`, \`groups:read\`, \`channels:history\`, \`groups:history\`, \`im:history\`, \`mpim:history\`, \`reactions:read\`, \`reactions:write\`, \`files:write\`, \`pins:read\`, \`pins:write\`, \`users:read\`, \`users:read.email\`.
 - User: \`search:read\`, \`reactions:write\`, \`users.profile:write\`, plus the rest of the act-as-me set (chat, files, im/groups/channels history, etc.).
 
-If you upgraded from v0.3.x, **re-import the v0.4.0 manifest at api.slack.com/apps** (App Manifest → Edit → paste the new JSON), then **reinstall the app to your workspace**. Reinstalling rotates both tokens, so update the \`SLACK_BOT_TOKEN_*\` and \`SLACK_USER_TOKEN_*\` secrets afterward.
+If your app was created from an older manifest, **re-import the current one** at api.slack.com/apps (App Manifest, Edit, paste the new JSON), then **reinstall the app to your workspace**. Afterwards compare the tokens on **OAuth & Permissions** with your \`SLACK_BOT_TOKEN_*\` and \`SLACK_USER_TOKEN_*\` secrets and update any that changed. Section 6a lists what talking to Clippy from Slack needs on top.
 
 ---
 
 ## Troubleshooting
 
-- **\`not_in_channel\` error** — the bot isn't a member of the channel. Either invite it with \`/invite @YourBot\` in Slack, or use \`chat:write.public\` scope (already in the manifest) and post to a public channel.
-- **\`missing_scope\` error** — Slack added a new scope or you've imported an older manifest. Re-import the latest \`slack-app-manifest.json\`, reinstall the app, and update both secrets (the tokens change on reinstall).
-- **\`channel_not_found\`** — double-check you're passing a C-prefixed channel ID, not a channel name. Use \`slack_list_channels\` to find the correct ID.
-- **\`[ECONFIG] ... no userTokenRef configured\`** — a tool needs the user token but you didn't set one. Save the \`xoxp-\` token on the Secrets page, then pick it in the workspace's User token dropdown.
+- **\`not_in_channel\` error**: the bot isn't a member of the channel. Either invite it with \`/invite @YourBot\` in Slack, or use \`chat:write.public\` scope (already in the manifest) and post to a public channel.
+- **\`missing_scope\` error**: the app was set up from an older manifest, or by hand. The error names the scope it needs. Add it (or re-import the latest \`slack-app-manifest.json\`), reinstall the app, and update any secret whose token changed.
+- **\`channel_not_found\`**: double-check you're passing a C-prefixed channel ID, not a channel name. Use \`slack_list_channels\` to find the correct ID.
+- **\`[ECONFIG] ... no userTokenRef configured\`**: a tool needs the user token but you didn't set one. Save the \`xoxp-\` token on the Secrets page, then pick it in the workspace's User token dropdown.
+- **The bot never answers a DM**: the App-level token is not picked (and saved) on the Configuration tab, Socket Mode or the \`message.im\` event is off, or you are not in **Inbound DM senders** (or the Default DM target). The server log says \`listening for DMs\` and \`connected\` once it is set up (section 6b).
+- **No 👀 or ✅ on your messages**: the bot token lacks \`reactions:write\`. The server log says \`could not set a reaction on a DM ... missing scope (needed=reactions:write ...)\`. Add the scope and reinstall the app.
+- **Approve and Reject do nothing**: Interactivity is off in the Slack app.
+- **Slack says "Sending messages to this app has been turned off"**: turn on the Messages Tab under App Home.
+- **A reply in a thread is answered as if Clippy cannot see the message above it**: the bot token lacks \`im:history\`.
+- **"This Slack account is not connected to Paperclip yet"**: connect it (section 6c). A pairing code lasts 10 minutes; DM the bot again for a new one.
 `;
 
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
@@ -197,6 +286,13 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "database.namespace.migrate",
     "database.namespace.read",
     "database.namespace.write",
+    // Inbound DMs: pair a Slack account to a Paperclip user, a Clippy turn
+    // as that user (default), approve or reject from Slack, or wake one agent
+    // with the operator's message.
+    "channels.pairing",
+    "chat.turn",
+    "approvals.respond",
+    "agents.invoke",
   ],
   entrypoints: {
     worker: "./dist/worker.js",

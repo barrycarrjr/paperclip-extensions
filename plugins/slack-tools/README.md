@@ -13,6 +13,10 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 
 ## Recent changes
 
+- **v0.6.0** - Talk to Clippy from Slack. A DM to the bot (Socket Mode, app-level token) becomes a turn in a Clippy conversation as the Paperclip user who paired that Slack account: an unpaired account is sent a pairing code to enter under **Chat apps** in the Paperclip profile, and Clippy then acts with that user's access. Answers come in a thread under the message, with 👀 while Clippy works and ✅ when it is done; a reply in a thread gives Clippy the message above it; Approve and Reject buttons decide drafted actions as the paired user, and the card then says plainly what happened, with the time in each reader's own time zone. A message with a file is answered (Clippy is told it cannot open the file). A reaction that fails is logged once with Slack's reason.
+
+  The bundled `slack-app-manifest.json` now turns on Interactivity and the App Home messages tab, and section 6 of the Setup tab is a checklist of every Slack setting and bot scope this needs. **Needs a Paperclip server with the channel pairing API** (barrycarrjr/paperclip pull request 45). `inboundDmUserId` is no longer used. An existing Slack app may need the `reactions:write` bot scope added, then a reinstall.
+
 - **v0.4.30** - Add immutable reviewed Support Desk replies with company/account/thread guards and durable delivery receipts. Automatic pinned-thread progress remains separately governed by Support Desk policy.
 
 - **v0.4.29** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -213,6 +217,37 @@ Slack workspaces. Fill in:
 
 (Optionally) set **Default workspace key** to the identifier above so
 agents can omit `workspace` on every call.
+
+## Talking to Clippy from Slack (inbound DMs)
+
+Optional. With an app-level token and Socket Mode, a DM to the bot becomes a
+turn in a Clippy conversation as the Paperclip user who paired that Slack
+account. The answer comes in a thread under the message, with Approve and
+Reject buttons for anything Clippy drafts. The full walkthrough is section 6
+of the in-app **Setup** tab.
+
+The Slack app needs everything below. The bundled `slack-app-manifest.json`
+has it all; an app created from an older manifest, or by hand, usually misses
+one, and each miss fails quietly:
+
+| Slack app setting | What goes wrong without it |
+|---|---|
+| Socket Mode on, an app-level token with `connections:write`, the bot event `message.im` | The bot never hears DMs. |
+| Interactivity on (no request URL is needed with Socket Mode) | Approve and Reject do nothing. |
+| App Home: Messages Tab on, users allowed to send messages | Slack says sending messages to the app is turned off. |
+| Bot scopes `im:history`, `chat:write`, `reactions:write`, `users:read` | No DMs and no thread context; no answers; no 👀 or ✅; the pairing code cannot name the account. |
+
+After adding a scope, reinstall the app and update any token secret that
+changed. In Paperclip, save the `xapp-` token as a secret, pick it in the
+workspace's **App-level token** field and click Save: saving the secret alone
+does nothing. The server log says `listening for DMs` and `connected` once it
+works. If the 👀 never appears, the log line `could not set a reaction on a DM`
+names the missing scope.
+
+Each person connects their Slack account once: the bot answers their first DM
+with a pairing code (10 minutes), which they enter under **Chat apps** in their
+Paperclip profile. Clippy cannot open files sent in Slack; a message with a
+file is still answered, and Clippy is told a file came with it.
 
 ## Token routing — which tools use which token
 
@@ -426,9 +461,8 @@ and returned as `[ECOMPANY_NOT_ALLOWED]` to the caller.
 
 - Reading channels, threads, or search — covered by the existing Slack MCP
   if you have it connected. Don't duplicate.
-- Slash commands / button interactivity — needs a Paperclip-level inbound
-  HTTP path. See cross-plugin webhook discussion in
-  `paperclip-extensions/plugin-plans/README.md`.
+- Slash commands. (Approve and Reject buttons do work, over Socket Mode:
+  see "Talking to Clippy from Slack" above.)
 - Workflow Builder integration.
 - Canvases — use the existing Slack MCP.
 

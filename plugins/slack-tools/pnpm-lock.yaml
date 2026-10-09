@@ -4,13 +4,17 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@paperclipai/plugin-sdk': file:../../vendor/sdk/plugin-sdk.tgz
+  '@paperclipai/shared': file:../../vendor/sdk/shared.tgz
+
 importers:
 
   .:
     dependencies:
       '@paperclipai/plugin-sdk':
-        specifier: ^2026.427.0
-        version: 2026.428.0
+        specifier: file:../../vendor/sdk/plugin-sdk.tgz
+        version: file:../../vendor/sdk/plugin-sdk.tgz
       '@slack/web-api':
         specifier: ^7.7.0
         version: 7.15.1
@@ -345,8 +349,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@paperclipai/plugin-sdk@2026.428.0':
-    resolution: {integrity: sha512-FcpV5zmSCz6Kkp+JfSmHNtcmN6NJyMxCv3ILwj1/yesRa4xP+mEmJrMnkXC9PLeVeIoEub7BlmVJ9UWzig2JKA==}
+  '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
+    resolution: {integrity: sha512-ixI25q49scJl55OYgi1rcRrOAhF6UPTp6zcV6HGDLKlyCBlX2YbyXqpPHuNiaJ+yPGflgJLTGwycMulpV2KFQw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    version: 1.0.0
     hasBin: true
     peerDependencies:
       react: '>=18'
@@ -354,8 +359,9 @@ packages:
       react:
         optional: true
 
-  '@paperclipai/shared@2026.428.0':
-    resolution: {integrity: sha512-b4irrk/b+aGafkDgURVZJ/uGkyL1ryXy85RUv6cr1X+hg4581CejIiZ4QDMNxCGtRzfyKKXIecSDaq8Yqx4gKw==}
+  '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
+    resolution: {integrity: sha512-OP5PhwTv57qMxJ9ITHbCcPGFOFiPUvmVufVeXFk0NFIOuwkfAGQE5fcU6xN/DC+VxNkry/kACCK4YqLzdXuthA==, tarball: file:../../vendor/sdk/shared.tgz}
+    version: 0.3.1
 
   '@slack/logger@4.0.1':
     resolution: {integrity: sha512-6cmdPrV/RYfd2U0mDGiMK8S7OJqpCTm7enMLRR3edccsPX8j7zXTLnaEF4fhxxJJTAIOil6+qZrnUPTuaLvwrQ==}
@@ -727,12 +733,12 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@paperclipai/plugin-sdk@2026.428.0':
+  '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
     dependencies:
-      '@paperclipai/shared': 2026.428.0
+      '@paperclipai/shared': file:../../vendor/sdk/shared.tgz
       zod: 3.25.76
 
-  '@paperclipai/shared@2026.428.0':
+  '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
     dependencies:
       zod: 3.25.76
 
