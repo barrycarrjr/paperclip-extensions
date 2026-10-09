@@ -76,11 +76,35 @@ async function newestCode(
     const parsed = await simpleParser(one.source);
     const fromAddr = parsed.from?.value?.[0]?.address ?? "";
     if (!senderAllowed(fromAddr, senderDomains)) return null;
-    const body = parsed.text || (typeof parsed.html === "string" ? parsed.html.replace(/<[^>]+>/g, " ") : "");
+    const body = emailBodyText(parsed.text, parsed.html);
     return extractLoginCode(parsed.subject ?? "", body);
   } finally {
     await client.logout().catch(() => undefined);
   }
+}
+
+/**
+ * The readable text of an email. Some senders (Selective) include an empty
+ * plain-text part and put everything in the HTML part, so a blank plain part
+ * falls back to the HTML. The HTML is turned into text properly: style and
+ * script blocks and comments dropped, each cell or line break on its own
+ * line, and character codes such as "&#8201;" (a thin space) decoded, so they
+ * cannot be mistaken for the code.
+ */
+export function emailBodyText(text: string | undefined, html: string | false | undefined): string {
+  if (text && text.trim()) return text;
+  if (typeof html !== "string") return "";
+  const named: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", zwnj: "", zwj: "", thinsp: " ", ensp: " ", emsp: " " };
+  return html
+    .replace(/<(style|script|head)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(br|\/p|\/div|\/td|\/tr|\/li|\/h\d)\b[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m, d) => String.fromCodePoint(Number(d)))
+    .replace(/&([a-z]+);/gi, (m, n) => named[n.toLowerCase()] ?? m)
+    .replace(/[ \t\u00a0\u2000-\u200b]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n");
 }
 
 /** Poll until a code arrives or `timeoutMs` passes. */

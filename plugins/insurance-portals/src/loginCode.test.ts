@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Socket } from "node:net";
 import type { AddressInfo } from "node:net";
-import { waitForLoginCode } from "./loginCode.js";
+import { emailBodyText, waitForLoginCode } from "./loginCode.js";
 
 interface Msg {
   uid: number;
@@ -23,6 +23,8 @@ const imapDate = (d: Date) =>
   `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()} ${d.toISOString().slice(11, 19)} +0000`;
 
 function raw(m: Msg): string {
+  const over = rawOverride.current.get(m.uid);
+  if (over) return over;
   return [
     `From: ${m.from}`,
     `To: me@example.com`,
@@ -110,6 +112,15 @@ function fakeImap(messages: Msg[], log: string[]) {
     sock.on("error", () => undefined);
   });
 }
+
+/** Same fake server, but each message carries its own raw source. */
+function fakeImapRaw(messages: Array<{ uid: number; from: string; date: Date; raw: string }>, log: string[]) {
+  const asMsgs: Msg[] = messages.map((m) => ({ uid: m.uid, from: m.from, date: m.date, subject: "x", body: "" }));
+  const server = fakeImap(asMsgs, log);
+  rawOverride.current = new Map(messages.map((m) => [m.uid, m.raw]));
+  return server;
+}
+const rawOverride: { current: Map<number, string> } = { current: new Map() };
 
 test("reads only the newest carrier code, read-only", { timeout: 30_000 }, async () => {
   const requestedAt = new Date();
@@ -214,4 +225,65 @@ test("Selective: accepts AccountVerification@underwritingalerts.selective.com, i
   } finally {
     server.close();
   }
+});
+
+test("Selective-style email: empty plain-text part, code only in the HTML (made-up code)", { timeout: 30_000 }, async () => {
+  const requestedAt = new Date();
+  const html = `<!DOCTYPE html><html><head><style type="text/css">
+.hiddenHeader{display:none !important;font-size:0px;line-height:1px;top: -9999px;}
+.bodyContentWhite { font-size: 14px; max-width: 680px; }</style></head>
+<body><table><tr><td><span style="font-size: 13px">MySelective Password Reset</span></td></tr>
+<tr><td><span style="font-size: 32px">MySelective </span></td></tr><tr><td><span>One-Time
+Code</span></td></tr>
+<tr><td><span>&#8201;</span></td></tr>
+<tr><td><span style="font-size: 19px; line-height:23.00px">Here
+is the One-Time Code.</span></td></tr>
+<tr><td><span style="font-size: 16px">&#8201;</span></td></tr>
+<tr><td><span style="font-size: 16px; font-weight: bold">3816</span></td></tr>
+<tr><td><span>&#8201;</span></td></tr>
+<tr><td><span>This is a single use code that expires in 10 minutes.</span></td></tr>
+<tr><td><span>If you did not request this code, please contact us immediately at </span><a href="tel:18005550100"><span>800-555-0100</span></a></td></tr>
+</table></body></html>`;
+  const raw = [
+    "From: \"Selective Insurance\" <AccountVerification@underwritingalerts.selective.com>",
+    "To: ME@EXAMPLE.COM",
+    "Subject: Here is Your MySelective One Time-Code",
+    `Date: ${new Date(requestedAt.getTime() + 5000).toUTCString()}`,
+    "MIME-Version: 1.0",
+    'Content-Type: multipart/alternative; boundary="b1"',
+    "",
+    "--b1",
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: quoted-printable",
+    "",
+    "",
+    "--b1",
+    "Content-Transfer-Encoding: 7bit",
+    'Content-Type: text/html; charset="UTF-8"',
+    "",
+    html,
+    "--b1--",
+    "",
+  ].join("\r\n");
+  const log: string[] = [];
+  const server = fakeImapRaw([{ uid: 9, from: "AccountVerification@underwritingalerts.selective.com", date: new Date(requestedAt.getTime() + 5000), raw }], log);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const code = await waitForLoginCode(
+      { user: "me@example.com", password: "app-pass", host: "127.0.0.1", port: (server.address() as AddressInfo).port, folder: "INBOX", secure: false },
+      ["selective.com"],
+      requestedAt,
+      8_000,
+    );
+    assert.equal(code, "3816", "the code, not the &#8201; character code or a CSS number");
+  } finally {
+    server.close();
+  }
+});
+
+test("emailBodyText uses the HTML when the plain part is blank, and decodes character codes", () => {
+  assert.equal(emailBodyText("Your code is 1234", "<p>ignored</p>"), "Your code is 1234");
+  const t = emailBodyText("\n", "<style>.a{font-size:0px}</style><p>Code&#8201;</p><td>5678</td>");
+  assert.ok(!t.includes("8201") && !t.includes("font-size"), t);
+  assert.ok(t.includes("5678"));
 });
