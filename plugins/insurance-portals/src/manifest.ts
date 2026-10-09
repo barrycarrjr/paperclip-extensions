@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.2.4";
+const PLUGIN_VERSION = "0.3.0";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -58,6 +58,10 @@ Either way, missing folders are created and nothing is overwritten or deleted.
 Ask an agent to call \`insurance_fetch_documents\` with \`carrier: "liberty_mutual"\` and \`destination: "Insurance/Liberty Mutual"\`. A run takes one to four minutes, most of it waiting for the code email.
 
 ---
+
+## Remembering sign-in
+
+With **Remember sign-in between runs** on (the default), each carrier gets its own saved Chrome profile in \`~/.paperclip/insurance-portals/profiles\`, and the plugin ticks "remember this device" or "trust this browser" whenever a site offers it. The first run for a carrier may still need the emailed code; later runs usually do not. To make a carrier forget this computer, delete that carrier's folder there.
 
 ## Requirements
 
@@ -122,6 +126,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       "saveTo",
       "localFolder",
       "chromePath",
+      "rememberSignIn",
+      "profilesFolder",
       "showBrowser",
       "debugScreenshots",
       "maxDocuments",
@@ -185,6 +191,19 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         type: "string",
         title: "Chrome path (optional)",
         description: "Leave blank to use Google Chrome from its usual place.",
+      },
+      rememberSignIn: {
+        type: "boolean",
+        title: "Remember sign-in between runs",
+        default: true,
+        description:
+          "On = each carrier gets its own Chrome profile kept between runs, and the plugin ticks 'remember this device' / 'trust this browser' when a site offers it, so later runs can skip the emailed code. Off = a fresh, throwaway browser every run.",
+      },
+      profilesFolder: {
+        type: "string",
+        title: "Browser profiles folder (optional)",
+        description:
+          "Where the kept Chrome profiles live. Blank = ~/.paperclip/insurance-portals/profiles. Must not be in Google Drive or any other synced folder: it holds live sign-in cookies.",
       },
       showBrowser: {
         type: "boolean",

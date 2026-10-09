@@ -12,6 +12,7 @@ import { assertCompanyAccess } from "./companyAccess.js";
 import { Browser, findChrome } from "./cdp.js";
 import { Drive, type SavedFile } from "./drive.js";
 import { LocalFolder } from "./localFolder.js";
+import { profileDirFor } from "./profiles.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { safeFileName, splitDrivePath } from "./safety.js";
@@ -34,6 +35,8 @@ interface InstanceConfig {
   saveTo?: "auto" | "local" | "google-drive";
   localFolder?: string;
   chromePath?: string;
+  rememberSignIn?: boolean;
+  profilesFolder?: string;
   showBrowser?: boolean;
   debugScreenshots?: boolean;
   maxDocuments?: number;
@@ -147,7 +150,11 @@ export async function fetchDocuments(
     : null;
   if (debugDir) ctx.logger.info("insurance-portals: debug screenshots for this run", { debugDir });
 
-  const browser = await Browser.launch({ executablePath: findChrome(cfg.chromePath), headless: !cfg.showBrowser });
+  const browser = await Browser.launch({
+    executablePath: findChrome(cfg.chromePath),
+    headless: !cfg.showBrowser,
+    profileDir: profileDirFor(cfg, carrierKey) ?? undefined,
+  });
   let result;
   try {
     result = await runCarrier(browser, carrier, {

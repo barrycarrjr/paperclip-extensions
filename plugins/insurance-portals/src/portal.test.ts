@@ -396,3 +396,123 @@ test("Foremost code page: picks Email, clicks 'Email me', never text or call", {
     server.close();
   }
 });
+
+test("kept profile: remembers the device, then skips the code, then skips sign-in", { skip: !chrome, timeout: 400_000 }, async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const profileDir = join(await mkdtemp(join(tmpdir(), "ip-profile-test-")), "foremost");
+  let passwordPosts = 0;
+  let codesAsked = 0;
+  let keepSession = false;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const cookies = req.headers.cookie ?? "";
+    const html = (b: string, headers: Record<string, string | string[]> = {}) => {
+      res.writeHead(200, { "content-type": "text/html", ...headers });
+      res.end(page(b));
+    };
+    const go = (to: string, setCookie: string[] = []) => {
+      res.writeHead(302, { location: to, "set-cookie": setCookie });
+      res.end();
+    };
+    const session = keepSession ? "session=ok; Path=/; Max-Age=3600" : "session=ok; Path=/";
+    if (url.pathname === "/login") {
+      if (cookies.includes("session=ok")) return go("/home");
+      return html(`<form action="/session" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/session") {
+      passwordPosts++;
+      if (cookies.includes("trusted=yes")) return go("/home", [session]);
+      return go("/mfa");
+    }
+    if (url.pathname === "/mfa") {
+      return html(`<h1>Verify your identity</h1><p>Enter the code we emailed you.</p>
+        <form action="/check" method="get"><label for="c">Verification code</label><input id="c" name="code" autocomplete="one-time-code">
+        <label class="box"><input type="checkbox" name="remember" style="position:absolute;opacity:0;width:1px;height:1px"> Remember this device</label>
+        <button type="submit">Verify</button></form>`);
+    }
+    if (url.pathname === "/check") {
+      if (url.searchParams.get("code") !== "1357") return html(`<div role="alert">Invalid code</div>`);
+      const set = [session];
+      if (url.searchParams.get("remember") === "on") set.push("trusted=yes; Path=/; Max-Age=86400");
+      return go("/home", set);
+    }
+    if (url.pathname === "/home") {
+      if (!cookies.includes("session=ok")) return go("/login");
+      return html(`<nav><a href="/home">Home</a><a href="/p">Policies</a><a href="/b">Billing</a><a href="/logout">Log out</a></nav>`);
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const carrier: CarrierProfile = { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] };
+  const run = async () => {
+    const browser = await Browser.launch({ executablePath: chrome!, headless: true, profileDir });
+    try {
+      return await runCarrier(browser, carrier, {
+        username: "u",
+        password: "p",
+        getCode: async () => {
+          codesAsked++;
+          return "1357";
+        },
+        deadline: Date.now() + 150_000,
+        maxDocuments: 5,
+        debugDir: null,
+        log: (x) => process.env.PC_TRACE && console.log("step", x),
+      });
+    } finally {
+      await browser.close();
+    }
+  };
+  try {
+    await run();
+    assert.equal(codesAsked, 1, "first run needs the emailed code");
+    assert.equal(passwordPosts, 1);
+
+    keepSession = true;
+    await run();
+    assert.equal(codesAsked, 1, "second run: device remembered, no code");
+    assert.equal(passwordPosts, 2, "second run still signs in with the password");
+
+    const third = await run();
+    assert.equal(passwordPosts, 2, "third run: session kept, no password typed");
+    assert.equal(codesAsked, 1);
+    assert.ok(third.notes.some((n) => /Already signed in/.test(n)));
+  } finally {
+    server.close();
+  }
+});
+
+test("clicks 'Trust this browser' (not 'Not now') when offered after the code", { skip: !chrome, timeout: 120_000 }, async () => {
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(url.pathname);
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") return html(`<form action="/mfa" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Sign in</button></form>`);
+    if (url.pathname === "/mfa") return html(`<p>Enter the verification code we emailed.</p><form action="/trust" method="get"><input name="code" autocomplete="one-time-code"><button type="submit">Verify</button></form>`);
+    if (url.pathname === "/trust") return html(`<h1>Trust this browser?</h1><p>You won't need a code next time.</p><a href="/home?t=no">Not now</a> <a href="/trusted">Trust this browser</a>`);
+    if (url.pathname === "/trusted" || url.pathname === "/home") return html(`<nav><a href="/x">Home</a><a href="/y">Policies</a><a href="/z">Billing</a><a href="/logout">Log out</a></nav>`);
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    await runCarrier(
+      browser,
+      { key: "selective", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "4321", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.ok(hits.includes("/trusted"), `clicked Trust this browser: ${hits.join(", ")}`);
+    assert.ok(!hits.includes("/logout"));
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

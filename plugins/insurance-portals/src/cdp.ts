@@ -12,7 +12,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
@@ -47,11 +47,45 @@ export function findChrome(override?: string): string {
   );
 }
 
+/**
+ * Create a kept profile folder private to this user, and clear a lock left by
+ * a Chrome that is no longer running (a crash, a killed worker). A lock held
+ * by a live Chrome is left alone, and the launch will fail rather than share.
+ */
+async function prepareProfile(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700).catch(() => undefined);
+  const lock = join(dir, "SingletonLock");
+  const st = await lstat(lock).catch(() => null);
+  if (!st) return;
+  const target = await readlink(lock).catch(() => "");
+  const pid = Number(/-(\d+)$/.exec(target)?.[1] ?? NaN);
+  let alive = false;
+  if (Number.isFinite(pid)) {
+    try {
+      process.kill(pid, 0);
+      alive = true;
+    } catch {
+      alive = false;
+    }
+  }
+  if (!alive) {
+    for (const f of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+      await rm(join(dir, f), { force: true }).catch(() => undefined);
+    }
+  }
+}
+
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface LaunchOptions {
   executablePath: string;
   headless: boolean;
+  /**
+   * A profile folder kept between runs (cookies, "remember this device"
+   * marks). Omit for a throwaway profile deleted on close.
+   */
+  profileDir?: string;
 }
 
 export class Browser {
@@ -68,6 +102,7 @@ export class Browser {
     output: Readable,
     readonly profileDir: string,
     readonly downloadDir: string,
+    private readonly keepProfile = false,
   ) {
     output.setEncoding("utf8");
     output.on("data", (chunk: string) => this.onData(chunk));
@@ -79,7 +114,9 @@ export class Browser {
   }
 
   static async launch(opts: LaunchOptions): Promise<Browser> {
-    const profileDir = await mkdtemp(join(tmpdir(), "pc-insurance-profile-"));
+    const keepProfile = !!opts.profileDir;
+    const profileDir = opts.profileDir ?? (await mkdtemp(join(tmpdir(), "pc-insurance-profile-")));
+    if (keepProfile) await prepareProfile(profileDir);
     const downloadDir = await mkdtemp(join(tmpdir(), "pc-insurance-dl-"));
     const args = [
       "--remote-debugging-pipe",
@@ -90,6 +127,10 @@ export class Browser {
       "--disable-sync",
       "--disable-background-networking",
       "--password-store=basic",
+      // Keep Chrome away from the macOS keychain: a background run must never
+      // raise a keychain prompt. The profile folder itself is private (0700).
+      "--use-mock-keychain",
+      "--hide-crash-restore-bubble",
       "--window-size=1366,900",
       "--lang=en-US",
       ...(opts.headless ? ["--headless=new"] : []),
@@ -100,7 +141,7 @@ export class Browser {
     });
     const input = proc.stdio[3] as Writable;
     const output = proc.stdio[4] as Readable;
-    const browser = new Browser(proc, input, output, profileDir, downloadDir);
+    const browser = new Browser(proc, input, output, profileDir, downloadDir, keepProfile);
     await browser.send("Browser.setDownloadBehavior", {
       behavior: "allowAndName",
       downloadPath: downloadDir,
@@ -236,7 +277,7 @@ export class Browser {
       await sleep(300);
       if (!this.closed) this.proc.kill("SIGKILL");
     }
-    await rm(this.profileDir, { recursive: true, force: true }).catch(() => undefined);
+    if (!this.keepProfile) await rm(this.profileDir, { recursive: true, force: true }).catch(() => undefined);
     await rm(this.downloadDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }

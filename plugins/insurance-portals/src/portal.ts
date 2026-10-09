@@ -140,6 +140,10 @@ interface LoginScan {
   cookieReject: string | null;
   error: string | null;
   captcha: boolean;
+  /** An unticked "remember this device / trust this browser" box. */
+  rememberBox: string | null;
+  /** A "trust this browser" / "remember this device" button. */
+  trustButton: string | null;
   signedInHint: boolean;
 }
 
@@ -249,6 +253,34 @@ export function scanLogin(): LoginScan {
     /(incorrect|invalid|locked|not recognized|doesn.t match|does not match|try again|unable to|disabled|suspended|wrong)/i.test(t),
   );
 
+  // "Remember this device", "Trust this browser", "Don't ask again on this
+  // device", "Keep me signed in". Only these; a "save username" box is not one.
+  const rememberRe =
+    /(remember (?:this |my )?(?:device|browser|computer)|trust (?:this |my )?(?:device|browser|computer)|(?:don'?t|do not) (?:ask|challenge) (?:me )?(?:again|for a code)|skip (?:this|verification) (?:step )?(?:next time|on this)|keep me (?:signed|logged) in|stay (?:signed|logged) in|remember me\b)/i;
+  const boxLabel = (b: HTMLInputElement) =>
+    [b.labels?.[0]?.textContent, b.getAttribute("aria-label"), b.closest("label")?.textContent, b.parentElement?.textContent]
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .slice(0, 200);
+  const rememberEl =
+    ([...document.querySelectorAll("input[type=checkbox], [role=checkbox], [role=switch]")] as HTMLInputElement[]).find((b) => {
+      const checked = b.tagName === "INPUT" ? b.checked : b.getAttribute("aria-checked") === "true";
+      if (checked) return false;
+      const lab = b.tagName === "INPUT" ? boxLabel(b) : label(b) || boxLabel(b);
+      if (!rememberRe.test(lab)) return false;
+      // A styled checkbox often hides the input itself; its label is what shows.
+      return visible(b) || (!!b.labels?.[0] && visible(b.labels[0]));
+    }) ?? null;
+  const trustEl =
+    clickables.find((c) =>
+      c.tagName !== "LABEL" &&
+      c.tagName !== "INPUT" &&
+      !c.querySelector("input[type=checkbox], [role=checkbox]") &&
+      c.getAttribute("role") !== "checkbox" &&
+      /^(?:yes,? )?(?:trust|remember) (?:this )?(?:device|browser|computer)$|^(?:yes,? )?(?:trust|remember)$|^don'?t ask again$/i.test(label(c)),
+    ) ?? null;
+
   const captcha = !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="captcha"], .g-recaptcha, #px-captcha');
   const signedInHint = clickables.some((c) => /^(log ?out|sign ?out|log off)$/i.test(label(c)));
 
@@ -264,6 +296,8 @@ export function scanLogin(): LoginScan {
     cookieReject: cookieReject && visible(cookieReject) ? mark(cookieReject) : null,
     error: errText ? errText.slice(0, 160) : null,
     captcha,
+    rememberBox: rememberEl ? mark(rememberEl) : null,
+    trustButton: trustEl ? mark(trustEl) : null,
     signedInHint,
   };
 }
@@ -465,6 +499,8 @@ async function runCarrierInner(
   let sendClicked = false;
   let emailChosenAt = 0;
   let cookiesHandled = false;
+  const rememberClicked = new Set<string>();
+  const loginStartedAt = Date.now();
   let signedIn = false;
   let busySince = 0;
   const loginDeadline = Math.min(opts.deadline - 60_000, Date.now() + 200_000);
@@ -480,6 +516,30 @@ async function runCarrierInner(
       throw new Error(
         `[ECAPTCHA] ${carrier.name} showed a robot check. The plugin does not solve these. Sign in once by hand in Chrome, then try again later.`,
       );
+    }
+    if (s.rememberBox && !rememberClicked.has(s.rememberBox)) {
+      rememberClicked.add(s.rememberBox);
+      opts.log("remember-device-ticked");
+      // Click the box, or its label when the box itself is hidden by styling.
+      const ok = await page.evaluate<boolean>((m: string) => {
+        const b = document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null;
+        if (!b) return false;
+        const target = (b.getBoundingClientRect().width > 2 ? b : b.labels?.[0]) as HTMLElement | undefined;
+        if (!target) return false;
+        target.scrollIntoView({ block: "center" });
+        return true;
+      }, s.rememberBox);
+      if (ok) await page.clickMark(s.rememberBox);
+      await sleep(400);
+      continue;
+    }
+    if (s.trustButton && !rememberClicked.has(s.trustButton) && (codeEnteredAt || passwordSubmittedAt)) {
+      rememberClicked.add(s.trustButton);
+      opts.log("trust-browser-clicked");
+      await snap(page, "trust-browser");
+      await page.clickMark(s.trustButton);
+      await waitForChange(s, 20_000);
+      continue;
     }
     if (s.cookieReject && !cookiesHandled) {
       cookiesHandled = true;
@@ -609,6 +669,22 @@ async function runCarrierInner(
       busySince = 0;
       const links = await page.evaluate<number>(contentLinkCount).catch(() => 0);
       if (s.signedInHint || (onPortal && links >= 4 && Date.now() - passwordSubmittedAt > 8_000)) {
+        signedIn = true;
+        break;
+      }
+    } else if (!s.username && !s.password && s.codeInputs.length === 0 && !s.emailChoice) {
+      // The kept profile may still hold a session: the portal skipped the
+      // sign-in page. Require a sign-out control, or a settled page with real
+      // content whose address is not a sign-in address.
+      const busy = await page.evaluate<boolean>(pageBusy).catch(() => true);
+      const path = new URL((await page.url()) || "about:blank").pathname;
+      const links = busy ? 0 : await page.evaluate<number>(contentLinkCount).catch(() => 0);
+      if (
+        !busy &&
+        (s.signedInHint || (onPortal && links >= 4 && !/log-?in|sign-?in|auth|mfa|verify/i.test(path) && Date.now() - loginStartedAt > 8_000))
+      ) {
+        opts.log("already-signed-in");
+        notes.push(`Already signed in to ${carrier.name} from an earlier run; no password or code was needed.`);
         signedIn = true;
         break;
       }

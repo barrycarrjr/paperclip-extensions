@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.3.0**: **Remember sign-in between runs** (on by default). Each carrier gets its own Chrome profile kept under `~/.paperclip/insurance-portals/profiles/<carrier>` (folder private to the user, never in a synced folder: one inside Google Drive, Dropbox, iCloud or OneDrive is refused). Whenever a sign-in page offers "remember this device", "trust this browser", "don't ask again" or "keep me signed in", the plugin ticks or clicks it, so later runs can skip the emailed code, and a still-valid session skips sign-in entirely. The emailed code remains the fallback. Chrome runs with a mock keychain so a background run never raises a macOS keychain prompt. New settings: **Remember sign-in between runs**, **Browser profiles folder**.
 - **v0.2.4**: Foremost asks how to send a one-time code (text, call or email) and only shows its **Email me** button after Email is picked. The run now picks Email, then clicks the send button that appears ("Email me", "Send code" and similar, never text or call). If no code boxes appear within 60 seconds of choosing email, the run stops with `ECODE_STEP`.
 - **v0.2.3**: After the password, sign-in is only treated as finished once any loading spinner or dimmed "please wait" screen has cleared and the page has real content (a sign-out control, or several links outside the footer). Fixes Foremost, where the run declared itself signed in under the loading screen and found no documents. Each page also waits (up to 45 seconds) for its loading screen before links are read. A loading screen still up 90 seconds after the password stops the run with `ELOGIN_STUCK`. Site matching now ignores port numbers.
 - **v0.2.2**: Sign-in now waits (up to 20 seconds after the user name, 30 after the password) for the page to actually change before deciding what to do next. Fixes Foremost, where the password box appears a few seconds after Continue on the same page and the run gave up with `ELOGIN_REJECTED ... kept asking for the user name`. A failed run now always saves `99-failed.png` and a note of which boxes were on screen (never their contents), and the error names the screenshot folder when Debug screenshots is on.
@@ -52,7 +53,7 @@ Why the plugin holds its own mailbox and Drive secrets: Paperclip plugins cannot
 
 ## Browser
 
-Drives the locally installed Google Chrome over the DevTools pipe (`--remote-debugging-pipe`), with no Playwright or Puppeteer and no bundled browser. Each run uses a fresh, throwaway profile that is deleted afterwards. Chrome runs invisibly unless **Show the browser window** is on. The only disguise is dropping "Headless" from the browser's user-agent string.
+Drives the locally installed Google Chrome over the DevTools pipe (`--remote-debugging-pipe`), with no Playwright or Puppeteer and no bundled browser. With **Remember sign-in between runs** on (the default), each carrier has its own kept profile under `~/.paperclip/insurance-portals/profiles/<carrier>` holding its cookies and "remembered device" marks; the folder is created private (0700) and a stale lock left by a crashed Chrome is cleared before launch. With it off, each run uses a throwaway profile deleted afterwards. To make a carrier forget this computer, delete its profile folder. Chrome runs invisibly unless **Show the browser window** is on. The only disguise is dropping "Headless" from the browser's user-agent string.
 
 ## Configuration
 
@@ -67,6 +68,8 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 | Save to | `auto` (default: Drive API if all three Google fields are set, else local folder), `local`, `google-drive` |
 | Local folder | optional path; blank = the Google Drive for desktop "My Drive" folder, found automatically. `~` = home folder |
 | Chrome path | optional text |
+| Remember sign-in between runs | boolean, default on |
+| Browser profiles folder | optional path; blank = `~/.paperclip/insurance-portals/profiles`; synced folders refused |
 | Show the browser window | boolean |
 | Debug screenshots | boolean: saves a PNG per step to a temp folder named in the plugin log. Stays on the machine; can show policy details. |
 | Most documents per run | 1 to 50, default 20 |
@@ -88,6 +91,7 @@ Operator actions `start-fetch` / `fetch-status` run the same fetch without an ag
 | `ELOGIN_REJECTED` | The portal refused the user name or password. Not retried. |
 | `ECODE_TIMEOUT` / `ECODE_REJECTED` / `EMAIL_AUTH_FAILED` | No code email within about 2 minutes, the portal refused the code, or the mailbox sign-in failed. |
 | `ECODE_STEP` | The portal asked how to send a code, but no code boxes appeared after choosing email. |
+| `EPROFILE_FOLDER` | The browser profiles folder is inside a synced folder. |
 | `ECAPTCHA` | The portal showed a robot check. |
 | `ELOGIN_TIMEOUT` | Sign-in did not finish in time. |
 | `ELOGIN_STUCK` | The portal's loading screen was still up 90 seconds after the password was sent. |
