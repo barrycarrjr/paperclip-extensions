@@ -13,9 +13,11 @@ import { Browser, findChrome } from "./cdp.js";
 import { Drive, type SavedFile } from "./drive.js";
 import { LocalFolder } from "./localFolder.js";
 import { profileDirFor } from "./profiles.js";
+import { pdfText } from "./pdfText.js";
+import { assignTerms, fileNameFor, findTerm } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
-import { safeFileName, splitDrivePath } from "./safety.js";
+import { splitDrivePath } from "./safety.js";
 
 interface InstanceConfig {
   allowedCompanies?: string[];
@@ -40,6 +42,7 @@ interface InstanceConfig {
   showBrowser?: boolean;
   debugScreenshots?: boolean;
   maxDocuments?: number;
+  defaultTerms?: "all" | "current";
 }
 
 const CREDENTIAL_FIELDS: Record<CarrierKey, [keyof InstanceConfig, keyof InstanceConfig]> = {
@@ -115,7 +118,7 @@ async function saverFor(ctx: PluginContext, cfg: InstanceConfig, companyId?: str
 export async function fetchDocuments(
   ctx: PluginContext,
   cfg: InstanceConfig,
-  params: { carrier?: unknown; destination?: unknown },
+  params: { carrier?: unknown; destination?: unknown; terms?: unknown },
   companyId: string,
 ): Promise<ToolResult> {
   const started = Date.now();
@@ -173,11 +176,35 @@ export async function fetchDocuments(
     await browser.close();
   }
 
-  const files = [];
-  const date = today();
+  // Read each document's policy period, then sort into current and prior terms.
+  const termsWanted = params.terms === "current" || params.terms === "all" ? params.terms : (cfg.defaultTerms ?? "all");
+  const read = [];
   for (const doc of result.documents) {
-    const name = safeFileName(`${carrier.name} - ${doc.label} - ${date}`);
-    files.push(await drive.savePdf(folderId, name, doc.bytes));
+    read.push({ ...doc, term: findTerm(await pdfText(doc.bytes)) });
+  }
+  const sorted = assignTerms(read, today());
+  const keep = termsWanted === "current" ? sorted.filter((d) => d.current) : sorted;
+
+  const files = [];
+  for (const doc of keep) {
+    const name = fileNameFor(carrier.name, doc);
+    const savedFile = await drive.savePdf(folderId, name, doc.bytes);
+    files.push({
+      ...savedFile,
+      policy: doc.policy || null,
+      term: doc.term,
+      posted: doc.posted,
+      current: doc.current,
+    });
+  }
+  if (keep.length < sorted.length) {
+    result.notes.push(`Kept the current term only: skipped ${sorted.length - keep.length} prior-term document(s).`);
+  }
+  const noTerm = files.filter((f) => !f.term).length;
+  if (noTerm) {
+    result.notes.push(
+      `${noTerm} document(s) had no readable policy period, so they are named by posted date and marked current or prior from the posted dates.`,
+    );
   }
 
   const saved = files.filter((f) => f.status === "saved").length;
@@ -192,7 +219,9 @@ export async function fetchDocuments(
     .track("insurance-portals.fetch_documents", { carrier: carrierKey, documents: files.length, saved, companyId })
     .catch(() => undefined);
 
-  const lines = files.map((f) => `- ${f.name}${f.status === "already_saved" ? " (already in Drive, unchanged)" : ""}`);
+  const lines = files.map(
+    (f) => `- [${f.current ? "current" : "prior"}] ${f.name}${f.status === "already_saved" ? " (already there, unchanged)" : ""}`,
+  );
   return {
     content:
       `${carrier.name}: found ${files.length} document(s); ${saved} new file(s) saved to "${destination}".` +
@@ -201,6 +230,7 @@ export async function fetchDocuments(
     data: {
       carrier: carrierKey,
       destination,
+      terms: termsWanted,
       files,
       pagesVisited: result.pagesVisited,
       blockedWriteRequests: result.blockedRequests,

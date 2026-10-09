@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.3.2";
+const PLUGIN_VERSION = "0.4.0";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -58,6 +58,10 @@ Either way, missing folders are created and nothing is overwritten or deleted.
 Ask an agent to call \`insurance_fetch_documents\` with \`carrier: "liberty_mutual"\` and \`destination: "Insurance/Liberty Mutual"\`. A run takes one to four minutes, most of it waiting for the code email.
 
 ---
+
+## Which terms are fetched
+
+By default every term the portal shows is saved, current and prior. Each file is named with its term dates, read from the document itself: \`Foremost - <address> - Policy <number> - Term 2026-08-01 to 2027-08-01 - RENEWAL (posted 2026-06-29)\`. The tool's result marks each file current or prior, so an agent can file them (for example prior terms into \`_Superseded\`). For regular runs, set **Terms to fetch by default** to \`current\`, or have the agent pass \`terms: "current"\`.
 
 ## Remembering sign-in
 
@@ -131,6 +135,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       "showBrowser",
       "debugScreenshots",
       "maxDocuments",
+      "defaultTerms",
     ],
     properties: {
       allowedCompanies: {
@@ -218,6 +223,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         description:
           "Save a screenshot of each step to a temporary folder on this computer (named in the plugin log). Can show policy details; never sent anywhere. Leave off normally.",
       },
+      defaultTerms: {
+        type: "string",
+        enum: ["all", "current"],
+        default: "all",
+        title: "Terms to fetch by default",
+        description:
+          "'all' = every term the portal shows (current and prior), each named with its term dates. 'current' = only the current term (for regular monthly runs). An agent can override this per call with the 'terms' parameter.",
+      },
       maxDocuments: {
         type: "integer",
         title: "Most documents per run",
@@ -233,7 +246,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       name: "insurance_fetch_documents",
       displayName: "Fetch insurance policy documents",
       description:
-        "Sign in to an insurance carrier's customer portal (read-only), download the current policy and declarations-page PDFs, and save them to a Google Drive folder. Never pays, changes or submits anything. Takes 1 to 4 minutes. Returns the saved file names and Drive links.",
+        "Sign in to an insurance carrier's customer portal (read-only), download the current policy and declarations-page PDFs, and save them to a Google Drive folder. Never pays, changes or submits anything. Takes 1 to 4 minutes. Files are named '<Carrier> - <address> - Policy <number> - Term <from> to <to> - <document> (posted <date>)'. Returns each file with its policy, term dates, posted date and whether it is the current term (current: true) or a prior one.",
       executionTimeoutMs: 300_000,
       writes: true,
       parametersSchema: {
@@ -245,6 +258,12 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
             type: "string",
             enum: ["foremost", "liberty_mutual", "selective"],
             description: "Which carrier portal to fetch from.",
+          },
+          terms: {
+            type: "string",
+            enum: ["all", "current"],
+            description:
+              "'all' (default unless the settings say otherwise): every term the portal shows, current and prior. 'current': only the current term. Each file in the result is marked current: true/false.",
           },
           destination: {
             type: "string",

@@ -15,7 +15,6 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Browser, Page, sleep } from "./cdp.js";
 import {
-  currentTerm,
   findDate,
   isDangerous,
   isDocumentLink,
@@ -77,10 +76,19 @@ export interface RunOptions {
 }
 
 export interface CapturedPdf {
+  /** Everything known about it in one line (used when nothing better exists). */
   label: string;
+  /** Which policy it belongs to, e.g. "12 Oak St - Policy 1234567" ("" if unknown). */
+  policy: string;
+  /** The document's own name as listed, without dates ("RENEWAL", "Declarations Page"). */
+  title: string;
+  /** Date the portal says it was posted, YYYY-MM-DD, if shown. */
+  posted: string | null;
   bytes: Buffer;
   sha256: string;
 }
+
+type DocMeta = Omit<CapturedPdf, "bytes" | "sha256">;
 
 export interface RunResult {
   documents: CapturedPdf[];
@@ -743,11 +751,11 @@ async function runCarrierInner(
 
   const documents: CapturedPdf[] = [];
   const seen = new Set<string>();
-  const addPdf = (label: string, bytes: Buffer) => {
+  const addPdf = (meta: DocMeta, bytes: Buffer) => {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     if (seen.has(sha256)) return false;
     seen.add(sha256);
-    documents.push({ label, bytes, sha256 });
+    documents.push({ ...meta, bytes, sha256 });
     return true;
   };
 
@@ -809,21 +817,21 @@ async function runCarrierInner(
    * a PDF is queued as a page to read instead.
    */
   const takeDocs = async (found: LinkInfo[], ctx: string) => {
-    const docs = currentTerm(
-      found.filter((l) => !l.footer && isDocumentLink(l.text, l.href, l.pdfHint)).map((l) => ({ ...l, text: l.text })),
-    );
+    // Every listed document is fetched; which terms to keep is decided once
+    // the term dates have been read from the PDFs.
+    const docs = found.filter((l) => !l.footer && isDocumentLink(l.text, l.href, l.pdfHint));
     for (const d of docs) {
       if (documents.length >= opts.maxDocuments || Date.now() > workDeadline) break;
       const id = `${ctx}|${d.text}|${d.href}`;
       if (tried.has(id)) continue;
       tried.add(id);
-      const label = makeLabel(d, contextFor(d.text, ctx));
+      const meta = docMeta(d, contextFor(d.text, ctx));
       if (d.href && isSafeNavigationUrl(d.href, carrier.siteDomains)) {
         const got = await fetchInPage(page, d.href);
         if (got) {
           const bytes = Buffer.from(got.b64, "base64");
           if (isPdf(bytes)) {
-            if (addPdf(label, bytes)) opts.log("document-saved-in-memory");
+            if (addPdf(meta, bytes)) opts.log("document-saved-in-memory");
             continue;
           }
         }
@@ -841,13 +849,13 @@ async function runCarrierInner(
       }
       await sleep(800);
       let got = 0;
-      for (const c of captured.filter((c) => c.at >= clickAt)) if (addPdf(label, c.bytes)) got++;
+      for (const c of captured.filter((c) => c.at >= clickAt)) if (addPdf(meta, c.bytes)) got++;
       if (got === 0) {
         for (const u of pdfUrls.filter((u) => u.at >= clickAt)) {
           if (!isSafeNavigationUrl(u.url, carrier.siteDomains)) continue;
           const again = await fetchInPage(page, u.url);
           const bytes = again ? Buffer.from(again.b64, "base64") : null;
-          if (bytes && isPdf(bytes) && addPdf(label, bytes)) {
+          if (bytes && isPdf(bytes) && addPdf(meta, bytes)) {
             got++;
             break;
           }
@@ -962,6 +970,18 @@ async function runCarrierInner(
     await writeFile(join(opts.debugDir, "blocked-requests.json"), JSON.stringify(blockedPaths, null, 2)).catch(() => undefined);
   }
   return { documents, pagesVisited, blockedRequests, blockedPaths, notes };
+}
+
+function docMeta(l: LinkInfo, ctx: string): DocMeta {
+  const shown = (l.shown || l.text).replace(/\s+/g, " ").trim();
+  let title = shown
+    .replace(/\b\d{1,2}\/\d{1,2}\/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^(view|download|open|pdf|view pdf|download pdf|print|view document|document)?$/i.test(title) && l.context) {
+    title = `${l.context.replace(shown, "").replace(/\s+/g, " ").trim().slice(0, 60)} ${title}`.trim();
+  }
+  return { label: makeLabel(l, ctx), policy: ctx, title: title.slice(0, 80) || "Document", posted: findDate(l.text) };
 }
 
 function makeLabel(l: LinkInfo, ctx = ""): string {

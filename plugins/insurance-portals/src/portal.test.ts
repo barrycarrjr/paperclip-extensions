@@ -579,7 +579,7 @@ test("Foremost-style dashboard: opens the Policies menu and fetches each policy'
   }
 });
 
-test("Foremost layout: one 'Policy documents' button per policy, current term only, named by address", { skip: !chrome, timeout: 240_000 }, async () => {
+test("Foremost layout: one 'Policy documents' button per policy, every term, tagged by address", { skip: !chrome, timeout: 240_000 }, async () => {
   const hits: string[] = [];
   const policies = [
     { n: "1234567", addr: "12 Oak St" },
@@ -638,9 +638,16 @@ test("Foremost layout: one 'Policy documents' button per policy, current term on
       { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
     );
     const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
-    assert.deepEqual(tags, ["% 1234567-0", "% 7654321-0"], `current renewal only; hits: ${hits.join(", ")}`);
-    const labels = result.documents.map((d) => d.label).sort();
-    assert.deepEqual(labels, ["12 Oak St - Policy 1234567 - RENEWAL 2026-06-29", "900 Elm Ave - Policy 7654321 - RENEWAL 2026-06-29"].map((x) => x), `labels: ${labels.join(" | ")}`);
+    assert.deepEqual(tags, ["% 1234567-0", "% 1234567-1", "% 1234567-2", "% 7654321-0", "% 7654321-1", "% 7654321-2"], `every term; hits: ${hits.join(", ")}`);
+    const meta = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted}`).sort();
+    assert.deepEqual(meta, [
+      "12 Oak St - Policy 1234567 | NEW BUSINESS | 2024-09-05",
+      "12 Oak St - Policy 1234567 | RENEWAL | 2025-06-27",
+      "12 Oak St - Policy 1234567 | RENEWAL | 2026-06-29",
+      "900 Elm Ave - Policy 7654321 | NEW BUSINESS | 2024-09-05",
+      "900 Elm Ave - Policy 7654321 | RENEWAL | 2025-06-27",
+      "900 Elm Ave - Policy 7654321 | RENEWAL | 2026-06-29",
+    ]);
     assert.ok(!hits.some((h) => h.startsWith("POST /pay")), "never paid");
   } finally {
     await browser.close();

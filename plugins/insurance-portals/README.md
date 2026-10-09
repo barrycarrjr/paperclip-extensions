@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.4.0**: Every term, not just the current one. All documents the portal lists are fetched; each PDF's policy period is read from its own text (pdf.js, bundled, pure JavaScript) and the file is named `<Carrier> - <address> - Policy <number> - Term <from> to <to> - <document> (posted <date>)`. Documents without a printed period (endorsements, notices) take the term their posted date falls in. Each file in the result carries `policy`, `term`, `posted` and `current` (true for the term covering today, else the latest). New per-call parameter `terms` (`all` | `current`) and setting **Terms to fetch by default** (default `all`) for monthly current-only runs. The fetch date is no longer part of the file name.
 - **v0.3.2**: Tuned on the real Foremost account. A "Policy documents" button (one per policy) is treated as the way to a list, not as a document, and every one on a page is followed. Entries the portal marks as PDFs (a PDF icon) count as documents even when named only "RENEWAL 06/29/2026". From each policy's list only the current term is kept: the newest renewal / new-business / declarations document and anything posted after it. Files are named by the street address and policy number shown on the portal, with dates as YYYY-MM-DD. A link that opens a page instead of a PDF is read as a page after 5 seconds instead of 15. Blocked requests are listed (method and address, no query) in the result and the debug folder.
 - **v0.3.1**: Finding documents after sign-in, tuned on the real Foremost portal. Waits for a page's main area to fill in before reading it. A button that opens a menu (Foremost's "Policies, select policy from dropdown") has each item visited; documents a click reveals (a "Documents" tab) are saved on the spot. Footer links are never used to navigate, icon names in link text ("chevron_right") are ignored, and each page's buttons are tried per page rather than once per run.
 - **v0.3.0**: **Remember sign-in between runs** (on by default). Each carrier gets its own Chrome profile kept under `~/.paperclip/insurance-portals/profiles/<carrier>` (folder private to the user, never in a synced folder: one inside Google Drive, Dropbox, iCloud or OneDrive is refused). Whenever a sign-in page offers "remember this device", "trust this browser", "don't ask again" or "keep me signed in", the plugin ticks or clicks it, so later runs can skip the emailed code, and a still-valid session skips sign-in entirely. The emailed code remains the fallback. Chrome runs with a mock keychain so a background run never raises a macOS keychain prompt. New settings: **Remember sign-in between runs**, **Browser profiles folder**.
@@ -29,11 +30,12 @@ Parameters:
 | Name | Type | Notes |
 |---|---|---|
 | `carrier` | `"foremost" \| "liberty_mutual" \| "selective"` | Which portal. |
+| `terms` | `"all" \| "current"` | Optional. Default from settings (`all`). `current` keeps only the current term. |
 | `destination` | string | Folder path under My Drive (or under **Local folder**), e.g. `Insurance/Liberty Mutual/2026`. Missing folders are created. `..` is refused. |
 
-Result `data`: `{ carrier, destination, files: [{ name, id, link, status: "saved" \| "already_saved" }], pagesVisited, blockedWriteRequests, notes, seconds }`. For a local save, `id` is the file's path and `link` is null.
+Result `data`: `{ carrier, destination, terms, files: [{ name, id, link, status: "saved" \| "already_saved", policy, term: { from, to } \| null, posted, current }], pagesVisited, blockedWriteRequests, blockedPaths, notes, seconds }`. For a local save, `id` is the file's path and `link` is null.
 
-Files are named `<Carrier> - <document label> - <YYYY-MM-DD>.pdf`. A file already in the folder with the same bytes is skipped; a different file with the same name is saved alongside as `... (2).pdf`. Nothing in Drive is overwritten or deleted.
+Files are named `<Carrier> - <address> - Policy <number> - Term <from> to <to> - <document> (posted <date>).pdf`; parts the portal or the PDF do not show are left out. A file already in the folder with the same bytes is skipped; a different file with the same name is saved alongside as `... (2).pdf`. Nothing in Drive is overwritten or deleted.
 
 ## How it stays read-only
 
@@ -74,6 +76,7 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 | Browser profiles folder | optional path; blank = `~/.paperclip/insurance-portals/profiles`; synced folders refused |
 | Show the browser window | boolean |
 | Debug screenshots | boolean: saves a PNG per step to a temp folder named in the plugin log. Stays on the machine; can show policy details. |
+| Terms to fetch by default | `all` (default) or `current` |
 | Most documents per run | 1 to 50, default 20 |
 
 All secrets must belong to the company that calls the tool.
