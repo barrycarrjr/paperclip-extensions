@@ -1,0 +1,38 @@
+{
+  "name": "paperclip-plugin-amazon-tools",
+  "version": "0.1.0",
+  "description": "Paperclip plugin that gives agents read-only access to a seller's own Amazon Seller Central data (orders without buyer details, inventory, settlements, financial events, reports) through the Selling Partner API. Never writes to Amazon.",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "esbuild": "^0.27.3",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT",
+  "author": "Barry Carr & Tony Allard",
+  "pnpm": {
+    "overrides": {
+      "@paperclipai/plugin-sdk": "file:../../vendor/sdk/plugin-sdk.tgz",
+      "@paperclipai/shared": "file:../../vendor/sdk/shared.tgz"
+    }
+  }
+}
