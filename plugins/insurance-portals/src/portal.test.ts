@@ -1062,11 +1062,12 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
       return html(`<div id="frmLogin">
         <input type="text" id="frmLogin_txtUserID" autocomplete="off"><input type="password" id="frmLogin_txtPassword" autocomplete="off">
         <input type="button" id="frmLogin_btnLogin" value="Log In" onclick="fetch('/login',{method:'POST'}).then(()=>{document.getElementById('pop').style.display='block'})">
+        <div role="switch" aria-checked="false" style="display:inline-block;width:120px;height:24px;cursor:pointer" onclick="const covered=document.getElementById('pop').style.display==='block'||document.getElementById('codes').style.display==='block'; this.outerHTML=this.outerHTML; if(covered){document.getElementById('pop').style.display='none';document.getElementById('codes').style.display='none';fetch('/reset',{method:'POST'})}">Remember Me</div>
         <input type="button" id="frmLogin_btnPWAReportAClaim" value="Report a Claim" onclick="fetch('/claim',{method:'POST'})">
-        <div id="pop" style="display:none"><p>For your security we need to verify your identity. How should we send your code?</p>
+        <div id="pop" style="display:none;position:fixed;inset:0;background:#fff"><p>For your security we need to verify your identity. How should we send your code?</p>
           <input type="button" id="frmLogin_btnSendEmail" value="Send Email" onclick="fetch('/send-email',{method:'POST'});document.getElementById('codes').style.display='block';document.getElementById('pop').style.display='none'">
           <input type="button" id="frmLogin_btnSendText" value="Send Text" onclick="fetch('/send-text',{method:'POST'})"></div>
-        <div id="codes" style="display:none"><p>Enter the code we emailed you.</p>
+        <div id="codes" style="display:none;position:fixed;inset:0;background:#fff"><p>Enter the code we emailed you.</p>
           <input id="frmLogin_txtCode1" maxlength="1"><input id="frmLogin_txtCode2" maxlength="1"><input id="frmLogin_txtCode3" maxlength="1"><input id="frmLogin_txtCode4" maxlength="1">
           <input type="button" id="frmLogin_btnNextStep" value="Next" title="Next" onclick="const c=[1,2,3,4].map(i=>document.getElementById('frmLogin_txtCode'+i).value).join('');location.href='/apps/SelectiveWeb/home?c='+c"></div>
         </div>
@@ -1106,6 +1107,7 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
     assert.ok(hits.includes("POST /send-email") && !hits.includes("POST /send-text"), "email, never text");
     assert.ok(!hits.includes("POST /claim") && !hits.includes("POST /pay"), "no claim, no payment");
     assert.ok(!hits.includes("POST /cookie-settings") && !hits.includes("POST /cookie-accept"), "cookie banner left alone");
+    assert.ok(!hits.includes("POST /reset"), "never clicked Remember Me through the code window");
   } finally {
     await browser.close();
     server.close();

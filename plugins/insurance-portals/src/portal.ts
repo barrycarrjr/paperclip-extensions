@@ -751,15 +751,21 @@ async function runCarrierInner(
       rememberClicked.add(s.rememberBox);
       opts.log("remember-device-ticked");
       // Click the box, or its label when the box itself is hidden by styling.
+      // Never through a pop-up: a "Remember Me" switch on a sign-in form that
+      // is now covered by a code window (Selective) is left alone, since
+      // clicking it underneath can reset the window.
       const ok = await page.evaluate<boolean>((m: string) => {
         const b = document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null;
         if (!b) return false;
         const target = (b.getBoundingClientRect().width > 2 ? b : b.labels?.[0]) as HTMLElement | undefined;
         if (!target) return false;
         target.scrollIntoView({ block: "center" });
-        return true;
+        const r = target.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!top && (top === target || target.contains(top) || top.contains(target) || (b.labels?.[0]?.contains(top) ?? false));
       }, s.rememberBox);
       if (ok) await page.clickMark(s.rememberBox);
+      else opts.log("remember-box-covered-left-alone");
       await sleep(400);
       continue;
     }
@@ -878,9 +884,13 @@ async function runCarrierInner(
           );
         }
       }
+      await snap(page, "code-typed");
       const again = await page.evaluate<LoginScan>(scanLogin).catch(() => s);
       if (again.submit) await page.clickMark(again.submit);
       else await page.pressEnter();
+      opts.log(again.submit ? "code-submit-button-pressed" : "code-submitted-with-enter");
+      await sleep(1500);
+      await snap(page, "code-submitted");
       codeEnteredAt = Date.now();
       await page.waitForLoad(20_000);
       continue;
