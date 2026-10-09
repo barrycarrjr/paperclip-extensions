@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.6.0";
+const PLUGIN_VERSION = "0.6.1";
 
 const workspaceItemSchema = {
   type: "object",
@@ -217,7 +217,7 @@ Send the bot a DM. The first time, it replies with a pairing code that works for
 ### 6d. What to expect
 
 - 👀 on your message while Clippy works, then ✅ when it has answered (❌ if it stopped part way).
-- The answer comes in a thread under your message. Replies you write in that thread carry on the same conversation.
+- The answer comes in a thread under your message. Replies you write in that thread carry on the same conversation. A new message (not a reply) starts a new conversation, listed in Clippy's chat history under its first line.
 - Reply in a thread under one of the bot's own messages (an agent's alert, say) and Clippy is given that message as context.
 - Clippy cannot open files sent in Slack. A message with a file is still answered, and Clippy is told a file came with it.
 - Anything outbound that Clippy drafts waits for **Approve**. Times on the result are shown in each reader's own time zone.

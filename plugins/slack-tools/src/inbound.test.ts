@@ -6,8 +6,10 @@ import type { ResolvedWorkspace } from "./slackClient.js";
 import { APPROVE_ACTION_ID } from "./socketMode.js";
 import {
   InboundDmBridges,
+  MAX_SLACK_CHAT_TITLE_CHARS,
   MAX_THREAD_PARENT_CHARS,
   pairingInstructions,
+  slackChatTitle,
   slackIdentity,
   withThreadContext,
   type InboundWorkspace,
@@ -218,6 +220,79 @@ describe("inbound DMs to Clippy", () => {
       slack.posted.map((post) => post.threadTs),
       ["1760000000.000600", "1760000000.000100"],
     );
+  });
+
+  it("starts a new Clippy conversation for each new message, named after it", async () => {
+    const turns: Array<{ sessionId: string | null; title?: string }> = [];
+    const { harness, handlers } = bridgesWith({
+      pairedChannelUsers: [{ workspace: "main", externalUserId: PAT }],
+      chatTurn: (input) => {
+        turns.push(input as { sessionId: string | null; title?: string });
+        return {
+          sessionId: `chat-session-${turns.length}`,
+          replyText: "Done.",
+          stopReason: "end_turn",
+          pendingApprovals: [],
+          needsConfirmation: [],
+          toolCalls: [],
+          error: null,
+        };
+      },
+    });
+    await handlers.onDm(WS, dmPayload("remind me to send the IRS letter tomorrow", "1760000000.000100"));
+    await handlers.onDm(WS, dmPayload("what needs me today?", "1760000500.000200"));
+
+    // Each message is looked up and saved under its own thread, so neither continues the other.
+    const lookups = harness.dbQueries.filter((call) => call.sql.includes("inbound_thread_sessions"));
+    assert.deepEqual(lookups.map((call) => (call.params as unknown[])[2]), ["1760000000.000100", "1760000500.000200"]);
+    assert.deepEqual(turns.map((turn) => turn.sessionId), [null, null]);
+    assert.equal(turns[0]?.title, "Slack: remind me to send the IRS letter tomorrow");
+    const saves = harness.dbExecutes.filter((call) => call.sql.includes("inbound_thread_sessions"));
+    assert.deepEqual(
+      saves.map((call) => (call.params as unknown[]).slice(2, 5)),
+      [
+        ["1760000000.000100", PAT, "chat-session-1"],
+        ["1760000500.000200", PAT, "chat-session-2"],
+      ],
+    );
+  });
+
+  it("continues a thread's conversation when the reply is in that thread", async () => {
+    const ROOT = "1760000000.000100";
+    const sessions: Array<string | null> = [];
+    const { harness, handlers } = bridgesWith({
+      pairedChannelUsers: [{ workspace: "main", externalUserId: PAT }],
+      chatTurn: (input) => {
+        sessions.push((input as { sessionId: string | null }).sessionId);
+        return {
+          sessionId: (input as { sessionId: string | null }).sessionId ?? "chat-session-new",
+          replyText: "Done.",
+          stopReason: "end_turn",
+          pendingApprovals: [],
+          needsConfirmation: [],
+          toolCalls: [],
+          error: null,
+        };
+      },
+    });
+    // The thread started at ROOT already has a conversation saved.
+    harness.ctx.db.query = (async (sql: string, params?: unknown[]) => {
+      harness.dbQueries.push({ sql, params });
+      return params?.[2] === ROOT ? [{ chat_session_id: "chat-session-7", last_ts: ROOT }] : [];
+    }) as typeof harness.ctx.db.query;
+
+    await handlers.onDm(WS, dmPayload("and copy Calystah", "1760000100.000300", ROOT));
+    await handlers.onDm(WS, dmPayload("something else entirely", "1760000200.000400"));
+
+    assert.deepEqual(sessions, ["chat-session-7", null]);
+  });
+
+  it("names a Slack conversation after the first line of its first message", () => {
+    assert.equal(slackChatTitle("  \nremind me\nsecond line"), "Slack: remind me");
+    assert.equal(slackChatTitle(""), "Slack DM");
+    const long = slackChatTitle("x".repeat(100));
+    assert.equal(long.length, "Slack: ".length + MAX_SLACK_CHAT_TITLE_CHARS);
+    assert.ok(long.endsWith("..."));
   });
 
   it("still answers a thread reply when Slack will not show the thread", async () => {

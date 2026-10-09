@@ -94,10 +94,31 @@ export function withThreadContext(text: string, parent: { text: string; author: 
   ].join("\n");
 }
 
+/** Longest title a Slack conversation gets in Clippy's chat list. */
+export const MAX_SLACK_CHAT_TITLE_CHARS = 60;
+
+/**
+ * The title a Slack thread's conversation gets in Clippy's chat list: its
+ * first line, so each thread can be told apart there. Only used when the
+ * conversation is created.
+ */
+export function slackChatTitle(text: string): string {
+  const firstLine = text.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+  if (!firstLine) return "Slack DM";
+  const capped =
+    firstLine.length > MAX_SLACK_CHAT_TITLE_CHARS
+      ? `${firstLine.slice(0, MAX_SLACK_CHAT_TITLE_CHARS - 3).trimEnd()}...`
+      : firstLine;
+  return `Slack: ${capped}`;
+}
+
 export class InboundDmBridges {
   private connections: SocketModeConnection[] = [];
   private readonly seen: string[] = [];
-  /** One turn at a time per DM conversation, in arrival order. */
+  /**
+   * One turn at a time per DM channel, in arrival order, across all of its
+   * threads, so a reply never races the message that started its thread.
+   */
   private readonly queues = new Map<string, Promise<void>>();
   /** Approvals shown with buttons, so a decision can be written back in words. */
   private readonly approvalsShown = new Map<string, PendingApprovalSummary>();
@@ -369,20 +390,22 @@ export class InboundDmBridges {
   }
 
   /**
-   * One Clippy turn on the conversation's saved session. Paperclip starts a
-   * new session itself when the saved one was deleted in the app, so the id
-   * it returns is always the one to keep.
+   * One Clippy turn on the Slack thread's saved session. Each thread is its
+   * own conversation: a new message starts one, and replies in its thread
+   * continue it. Paperclip starts a new session itself when the saved one was
+   * deleted in the app, so the id it returns is always the one to keep.
    */
   private async runClippyTurn(ws: InboundWorkspace, dm: OperatorDm, text: string) {
-    const existing = await this.loadSession(ws.key, dm.channelId);
+    const threadTs = dm.threadTs ?? dm.ts;
+    const existing = await this.loadSession(ws.key, dm.channelId, threadTs);
     const turn = await this.ctx.chat.turn({
       identity: slackIdentity(ws.key, dm.userId),
       companyId: ws.companyId,
       sessionId: existing?.chatSessionId ?? null,
-      title: "Slack DM",
+      title: slackChatTitle(dm.text),
       text,
     });
-    await this.saveSession(ws.key, dm.channelId, dm.userId, turn.sessionId, dm.ts);
+    await this.saveSession(ws.key, dm.channelId, threadTs, dm.userId, turn.sessionId, dm.ts);
     return turn;
   }
 
@@ -460,11 +483,13 @@ export class InboundDmBridges {
   private async loadSession(
     workspaceKey: string,
     channelId: string,
+    threadTs: string,
   ): Promise<{ chatSessionId: string; lastTs: string | null } | null> {
     const ns = this.ctx.db.namespace;
     const rows = await this.ctx.db.query<{ chat_session_id: string; last_ts: string | null }>(
-      `SELECT chat_session_id, last_ts FROM ${ns}.inbound_dm_sessions WHERE workspace_key = $1 AND channel_id = $2`,
-      [workspaceKey, channelId],
+      `SELECT chat_session_id, last_ts FROM ${ns}.inbound_thread_sessions
+       WHERE workspace_key = $1 AND channel_id = $2 AND thread_ts = $3`,
+      [workspaceKey, channelId, threadTs],
     );
     const row = rows[0];
     return row ? { chatSessionId: row.chat_session_id, lastTs: row.last_ts } : null;
@@ -473,20 +498,21 @@ export class InboundDmBridges {
   private async saveSession(
     workspaceKey: string,
     channelId: string,
+    threadTs: string,
     slackUserId: string,
     chatSessionId: string,
     lastTs: string,
   ): Promise<void> {
     const ns = this.ctx.db.namespace;
     await this.ctx.db.execute(
-      `INSERT INTO ${ns}.inbound_dm_sessions (workspace_key, channel_id, slack_user_id, chat_session_id, last_ts)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (workspace_key, channel_id) DO UPDATE SET
+      `INSERT INTO ${ns}.inbound_thread_sessions (workspace_key, channel_id, thread_ts, slack_user_id, chat_session_id, last_ts)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (workspace_key, channel_id, thread_ts) DO UPDATE SET
          slack_user_id = EXCLUDED.slack_user_id,
          chat_session_id = EXCLUDED.chat_session_id,
          last_ts = EXCLUDED.last_ts,
          updated_at = now()`,
-      [workspaceKey, channelId, slackUserId, chatSessionId, lastTs],
+      [workspaceKey, channelId, threadTs, slackUserId, chatSessionId, lastTs],
     );
   }
 

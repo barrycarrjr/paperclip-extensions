@@ -13,6 +13,8 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 
 ## Recent changes
 
+- **v0.6.1** - Each Slack thread is its own Clippy conversation. A new message (not a reply) starts a fresh conversation, named in Clippy's chat history after its first line; replies in its thread continue it. Before, every DM continued one long conversation, so a new request was answered from an older one's context. Adds migration `003_inbound_thread_sessions.sql`; replies in threads started before the upgrade begin a fresh conversation.
+
 - **v0.6.0** - Talk to Clippy from Slack. A DM to the bot (Socket Mode, app-level token) becomes a turn in a Clippy conversation as the Paperclip user who paired that Slack account: an unpaired account is sent a pairing code to enter under **Chat apps** in the Paperclip profile, and Clippy then acts with that user's access. Answers come in a thread under the message, with 👀 while Clippy works and ✅ when it is done; a reply in a thread gives Clippy the message above it; Approve and Reject buttons decide drafted actions as the paired user, and the card then says plainly what happened, with the time in each reader's own time zone. A message with a file is answered (Clippy is told it cannot open the file). A reaction that fails is logged once with Slack's reason.
 
   The bundled `slack-app-manifest.json` now turns on Interactivity and the App Home messages tab, and section 6 of the Setup tab is a checklist of every Slack setting and bot scope this needs. **Needs a Paperclip server with the channel pairing API** (barrycarrjr/paperclip pull request 45). `inboundDmUserId` is no longer used. An existing Slack app may need the `reactions:write` bot scope added, then a reinstall.
@@ -223,8 +225,9 @@ agents can omit `workspace` on every call.
 Optional. With an app-level token and Socket Mode, a DM to the bot becomes a
 turn in a Clippy conversation as the Paperclip user who paired that Slack
 account. The answer comes in a thread under the message, with Approve and
-Reject buttons for anything Clippy drafts. The full walkthrough is section 6
-of the in-app **Setup** tab.
+Reject buttons for anything Clippy drafts. Each Slack thread is its own Clippy
+conversation: a new message starts one, and replies in its thread continue it.
+The full walkthrough is section 6 of the in-app **Setup** tab.
 
 The Slack app needs everything below. The bundled `slack-app-manifest.json`
 has it all; an app created from an older manifest, or by hand, usually misses
