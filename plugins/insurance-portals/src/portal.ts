@@ -233,7 +233,9 @@ export function scanLogin(): LoginScan {
     }
     if (plainEmail || mfaPage) {
       sendCode =
-        clickables.find((c) => /^(send|send code|send me (?:a|the) code|send (?:a )?code|get code|continue|next)$/i.test(label(c))) ?? null;
+        clickables.find((c) =>
+          /^(send|send code|send me (?:a|the) code|send (?:a )?code|get code|continue|next|e-?mail me|e-?mail me (?:a|the) code|send (?:me )?(?:an )?e-?mail|send code (?:by|via|to) e-?mail)$/i.test(label(c)),
+        ) ?? null;
     }
   }
 
@@ -460,6 +462,8 @@ async function runCarrierInner(
   let codeRequestedAt = 0;
   let codeEnteredAt = 0;
   let emailChosen = false;
+  let sendClicked = false;
+  let emailChosenAt = 0;
   let cookiesHandled = false;
   let signedIn = false;
   let busySince = 0;
@@ -516,14 +520,31 @@ async function runCarrierInner(
       continue;
     }
 
+    // Email was picked but the code was not sent yet: the send button
+    // ("Email me", "Send code") may only appear once email is selected.
+    if (passwordSubmittedAt && emailChosen && !sendClicked && !codeEnteredAt && s.sendCode) {
+      sendClicked = true;
+      await snap(page, "send-code-by-email");
+      await page.clickMark(s.sendCode);
+      codeRequestedAt = Date.now();
+      await waitForChange(s, 20_000);
+      continue;
+    }
+    if (passwordSubmittedAt && emailChosen && !codeEnteredAt && Date.now() - emailChosenAt > 60_000) {
+      await snap(page, "no-code-boxes");
+      throw new Error(`[ECODE_STEP] ${carrier.name} asked how to send a login code, but no code boxes appeared after choosing email.`);
+    }
+
     if (passwordSubmittedAt && !emailChosen && s.emailChoice) {
       emailChosen = true;
+      emailChosenAt = Date.now();
       await snap(page, "choose-email");
       await page.clickMark(s.emailChoice);
       codeRequestedAt = Date.now();
       await sleep(1200);
       const after = await page.evaluate<LoginScan>(scanLogin).catch(() => null);
       if (after && after.codeInputs.length === 0 && after.sendCode) {
+        sendClicked = true;
         await page.clickMark(after.sendCode);
         codeRequestedAt = Date.now();
       }

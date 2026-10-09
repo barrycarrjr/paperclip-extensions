@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.2.4**: Foremost asks how to send a one-time code (text, call or email) and only shows its **Email me** button after Email is picked. The run now picks Email, then clicks the send button that appears ("Email me", "Send code" and similar, never text or call). If no code boxes appear within 60 seconds of choosing email, the run stops with `ECODE_STEP`.
 - **v0.2.3**: After the password, sign-in is only treated as finished once any loading spinner or dimmed "please wait" screen has cleared and the page has real content (a sign-out control, or several links outside the footer). Fixes Foremost, where the run declared itself signed in under the loading screen and found no documents. Each page also waits (up to 45 seconds) for its loading screen before links are read. A loading screen still up 90 seconds after the password stops the run with `ELOGIN_STUCK`. Site matching now ignores port numbers.
 - **v0.2.2**: Sign-in now waits (up to 20 seconds after the user name, 30 after the password) for the page to actually change before deciding what to do next. Fixes Foremost, where the password box appears a few seconds after Continue on the same page and the run gave up with `ELOGIN_REJECTED ... kept asking for the user name`. A failed run now always saves `99-failed.png` and a note of which boxes were on screen (never their contents), and the error names the screenshot folder when Debug screenshots is on.
 - **v0.2.1**: Operator lane for running without an agent: `start-fetch` (params `carrier`, `destination`; company from the request) starts a run in the background and returns a `jobId`; `fetch-status` (`jobId`) returns its state and result. Needed because plugin actions are cut off after 30 seconds. Board-only and gated by Allowed companies like the tool. The result now includes `debugDir` when Debug screenshots is on.
@@ -86,6 +87,7 @@ Operator actions `start-fetch` / `fetch-status` run the same fetch without an ag
 | `ELOCAL_ROOT` / `ELOCAL_WRITE` | The local folder is missing or not found automatically, or a file could not be written. Checked **before** signing in to the carrier. |
 | `ELOGIN_REJECTED` | The portal refused the user name or password. Not retried. |
 | `ECODE_TIMEOUT` / `ECODE_REJECTED` / `EMAIL_AUTH_FAILED` | No code email within about 2 minutes, the portal refused the code, or the mailbox sign-in failed. |
+| `ECODE_STEP` | The portal asked how to send a code, but no code boxes appeared after choosing email. |
 | `ECAPTCHA` | The portal showed a robot check. |
 | `ELOGIN_TIMEOUT` | Sign-in did not finish in time. |
 | `ELOGIN_STUCK` | The portal's loading screen was still up 90 seconds after the password was sent. |

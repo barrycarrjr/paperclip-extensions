@@ -343,3 +343,56 @@ test("waits out a loading screen after sign-in before looking for documents", { 
     server.close();
   }
 });
+
+test("Foremost code page: picks Email, clicks 'Email me', never text or call", { skip: !chrome, timeout: 120_000 }, async () => {
+  const hits: string[] = [];
+  let ok = false;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(`${req.method} ${url.pathname}`);
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/fmcss/login") {
+      return html(`<form action="/fmcss/login/mfa-enroll/abc" method="get"><input type="email" id="usernameInputField"><input type="password" placeholder="Enter password *"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/fmcss/login/mfa-enroll/abc") {
+      return html(`<h1>Receive a one-time verification code</h1>
+        <p>To make sure your data is secure, we're going to send a verification code. How would you like to receive it?</p>
+        <b>Text or voice</b>
+        <label><input type="radio" name="m" value="p1" checked onchange="pick()"> (•••) •••-0000</label>
+        <label><input type="radio" name="m" value="p2" onchange="pick()"> (•••) •••-0000</label>
+        <b>Email</b>
+        <label><input type="radio" name="m" value="email" onchange="pick()"> m...e@example.com</label>
+        <div id="btns"><button type="button" onclick="fetch('/send-text',{method:'POST'})">Send me a text</button><button type="button" onclick="fetch('/call',{method:'POST'})">Call me</button></div>
+        <div id="code" style="display:none"><label for="c">Enter code</label><input id="c" autocomplete="one-time-code"><button type="button" onclick="fetch('/verify?c='+document.getElementById('c').value,{method:'POST'}).then(r=>r.ok?location.href='/home':0)">Verify</button></div>
+        <script>function pick(){const e=document.querySelector('input[value=email]').checked;document.getElementById('btns').innerHTML=e?
+          '<button type=button onclick="fetch(\\'/send-email\\',{method:\\'POST\\'}).then(()=>{document.getElementById(\\'btns\\').remove();document.getElementById(\\'code\\').style.display=\\'block\\'})">Email me</button>':
+          '<button type=button onclick="fetch(\\'/send-text\\',{method:\\'POST\\'})">Send me a text</button><button type=button>Call me</button>'}</script>`);
+    }
+    if (url.pathname === "/verify") {
+      ok = url.searchParams.get("c") === "246810";
+      res.writeHead(ok ? 200 : 400);
+      return res.end();
+    }
+    if (url.pathname === "/home") return html(`<nav><a href="/a">Home</a><a href="/b">Policies</a><a href="/c">Billing</a><a href="/logout">Log out</a></nav>`);
+    res.writeHead(200).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/fmcss/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u@example.com", password: "p", getCode: async () => "246810", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.equal(ok, true, `signed in with the emailed code; hits: ${hits.join(", ")}`);
+    assert.ok(hits.includes("POST /send-email"), "clicked Email me");
+    assert.ok(!hits.includes("POST /send-text") && !hits.includes("POST /call"), "never text or call");
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
