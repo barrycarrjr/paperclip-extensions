@@ -123,7 +123,8 @@ export function pageBusy(): boolean {
   ].some(vis);
   // A stray "loading" class on a finished page is common (lazy images), so a
   // spinner only counts while the page has little else on it.
-  const links = [...document.querySelectorAll("a, button, [role=button], [role=link]")].filter(
+  const boxes = [...document.querySelectorAll('[onclick], [tabindex="0"], [kwidgettype]')].filter((e) => getComputedStyle(e as HTMLElement).cursor === "pointer" && !e.querySelector("a, button, input, [onclick]"));
+  const links = [...document.querySelectorAll("a, button, [role=button], [role=link]"), ...boxes].filter(
     (el) => !el.closest("footer, [role=contentinfo], [class*=footer], [id*=footer]") && vis(el),
   ).length;
   if (spinner && links < 6) return true;
@@ -140,7 +141,8 @@ export function pageBusy(): boolean {
 
 /** Visible links and buttons outside the page footer: a rough "is there a page here" count. */
 export function contentLinkCount(): number {
-  return [...document.querySelectorAll("a, button, [role=button], [role=link]")].filter((el) => {
+  const boxes = [...document.querySelectorAll('[onclick], [tabindex="0"], [kwidgettype]')].filter((e) => getComputedStyle(e as HTMLElement).cursor === "pointer" && !e.querySelector("a, button, input, [onclick]"));
+  return [...document.querySelectorAll("a, button, [role=button], [role=link]"), ...boxes].filter((el) => {
     if (el.closest("footer, [role=contentinfo], [class*=footer], [id*=footer]")) return false;
     const r = (el as HTMLElement).getBoundingClientRect();
     return r.width > 2 && r.height > 2;
@@ -163,6 +165,10 @@ interface LoginScan {
   rememberBox: string | null;
   /** A "trust this browser" / "remember this device" button. */
   trustButton: string | null;
+  /** The code page says the code went by text or phone, not email. */
+  codeSentByText: boolean;
+  /** "Try another method" and similar, to switch the code to email. */
+  otherMethod: string | null;
   signedInHint: boolean;
 }
 
@@ -206,7 +212,9 @@ export function scanLogin(): LoginScan {
     (i.autocomplete === "one-time-code" ||
       /(code|otp|passcode|verif|one.?time|pin\b|token)/.test(describe(i))) &&
     !/(zip|postal|promo|coupon|search)/.test(describe(i));
-  const codeInputs = password ? [] : inputs.filter(isCode);
+  // Code boxes count even with the password box still showing: Selective
+  // opens its code step as a pop-up over the sign-in form.
+  const codeInputs = inputs.filter(isCode);
   const username =
     inputs.find(
       (i) =>
@@ -218,27 +226,46 @@ export function scanLogin(): LoginScan {
 
   const clickables = [
     ...document.querySelectorAll('button, input[type=submit], input[type=button], a, [role=button], label, [role=radio], input[type=radio]'),
+    // Plain boxes acting as buttons (Selective's "Log Out" is one).
+    ...[...document.querySelectorAll('[onclick], [tabindex="0"], [kwidgettype]')].filter((e) => getComputedStyle(e as HTMLElement).cursor === "pointer" && !e.querySelector("a, button, input, [onclick]")),
   ].filter(visible);
 
   // Look for the submit control near the field first (the field's own form,
   // dialog or login panel), then anywhere on the page.
-  const field = password ?? codeInputs[0] ?? username;
+  const field = codeInputs[0] ?? password ?? username;
   const scope = field?.parentElement?.closest("form, [role=dialog], [class*=modal], [class*=login], [id*=Login], [id*=login]") ?? null;
   const submitRe = /^(log ?in|sign ?in|continue|next|submit|verify|verify code|confirm|ok|done)$/i;
   const pickSubmit = (pool: Element[]) =>
     pool.find((c) => submitRe.test(label(c)) && c.tagName !== "A" && c.tagName !== "LABEL") ??
     pool.find((c) => (c as HTMLInputElement).type === "submit" && !/(reject|accept|cookie)/i.test(label(c))) ??
     null;
-  const submitEl = (scope ? pickSubmit(clickables.filter((c) => scope.contains(c))) : null) ?? (field ? pickSubmit(clickables) : null);
+  let submitEl = (scope ? pickSubmit(clickables.filter((c) => scope.contains(c))) : null) ?? (field ? pickSubmit(clickables) : null);
+  if (codeInputs.length) {
+    // On a code step the button is the one after the code boxes ("Next",
+    // "Continue", "Verify"), never the sign-in form's "Log In" that may share
+    // the same panel (Selective).
+    const last = codeInputs[codeInputs.length - 1];
+    const after = clickables.filter(
+      (c) => last.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING && c.tagName !== "A" && c.tagName !== "LABEL",
+    );
+    const codeSubmit =
+      after.find((c) => /^(next|continue|submit|verify|verify code|confirm|ok|done|validate code)$/i.test(label(c))) ??
+      after.find((c) => (c as HTMLInputElement).type === "submit" && !/^(log ?in|sign ?in)$/i.test(label(c)));
+    if (codeSubmit) submitEl = codeSubmit;
+    else if (submitEl && /^(log ?in|sign ?in)$/i.test(label(submitEl))) submitEl = null;
+  }
 
   let emailChoice: Element | null = null;
   let sendCode: Element | null = null;
-  if (!password) {
+  {
     const pageText = document.body.innerText.toLowerCase();
     // A button that plainly says "Send Email" is the choice itself, whatever
-    // the surrounding text says (Selective's pop-up).
+    // the surrounding text says (Selective's pop-up, shown over the sign-in
+    // form, so the password box may still be on screen).
     const plainEmail = clickables.find((c) => /^(send )?(an )?e-?mail( me)?( (a|the|my) code)?$/i.test(label(c)));
-    const mfaPage = /(code|verif|confirm (?:it'?s|your identity)|security check|two.?step|multi.?factor)/.test(pageText);
+    // Reading the page for "code"/"verify" wording only once the sign-in
+    // form is gone; the sign-in page itself often mentions codes.
+    const mfaPage = !password && /(code|verif|confirm (?:it'?s|your identity)|security check|two.?step|multi.?factor)/.test(pageText);
     if (plainEmail) emailChoice = plainEmail;
     else if (mfaPage) {
       emailChoice =
@@ -303,6 +330,16 @@ export function scanLogin(): LoginScan {
       /^(?:yes,? )?(?:trust|remember) (?:this )?(?:device|browser|computer)$|^(?:yes,? )?(?:trust|remember)$|^don'?t ask again$/i.test(label(c)),
     ) ?? null;
 
+  const bodyText = document.body.innerText;
+  const codeSentByText =
+    codeInputs.length > 0 &&
+    /(text message|texted|\bsms\b|sent (?:a |the |your )?(?:code |verification code )?to (?:your )?(?:phone|mobile)|\(\W*\d{0,3}\W*\)\s*\W*-?\d{4}|[•*]{2,}\W?\d{4}\b|ending in \d{4}|voice call)/i.test(bodyText) &&
+    !/@|e-?mail/i.test(bodyText.replace(/(?:email|e-mail) (?:or|and) (?:text|phone)|(?:text|phone) (?:or|and) e-?mail/gi, ""));
+  const otherMethodEl = codeSentByText
+    ? clickables.find((c) =>
+        /^(try another (?:method|way)|choose another (?:method|way)|use another (?:method|way)|use a different (?:method|way)|other (?:verification )?(?:options|methods)|more options|send (?:the |a )?code (?:by|via|to) e-?mail|e-?mail me (?:a|the) code(?: instead)?|use e-?mail(?: instead)?|get (?:a|the) code by e-?mail)$/i.test(label(c)),
+      ) ?? null
+    : null;
   const captcha = !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="captcha"], .g-recaptcha, #px-captcha');
   const signedInHint = clickables.some((c) => /^(log ?out|sign ?out|log off)$/i.test(label(c)));
 
@@ -319,6 +356,8 @@ export function scanLogin(): LoginScan {
     error: errText ? errText.slice(0, 160) : null,
     captcha,
     rememberBox: rememberEl ? mark(rememberEl) : null,
+    codeSentByText,
+    otherMethod: otherMethodEl ? mark(otherMethodEl) : null,
     trustButton: trustEl ? mark(trustEl) : null,
     signedInHint,
   };
@@ -391,7 +430,17 @@ function scanLinks(): LinkInfo[] {
     const s = getComputedStyle(el as HTMLElement);
     return s.visibility !== "hidden" && s.display !== "none";
   };
-  const els = [...document.querySelectorAll('a, button, [role=button], [role=link], [role=tab], [role=menuitem], input[type=button]')];
+  const standard = 'a, button, [role=button], [role=link], [role=tab], [role=menuitem], input[type=button]';
+  // Some portals (Selective) build buttons from plain boxes with a click
+  // handler and a pointer cursor; count the innermost such box too.
+  const boxes = [...document.querySelectorAll('[onclick], [tabindex="0"], [kwidgettype]')].filter(
+    (e) =>
+      !e.matches(standard) &&
+      !e.closest(standard) &&
+      !e.querySelector(`${standard}, input, [onclick]`) &&
+      getComputedStyle(e as HTMLElement).cursor === "pointer",
+  );
+  const els = [...document.querySelectorAll(standard), ...boxes];
   for (const el of els) {
     if (!visible(el)) continue;
     const h = el as HTMLAnchorElement;
@@ -618,6 +667,7 @@ async function runCarrierInner(
   let codeRequestedAt = 0;
   let codeEnteredAt = 0;
   let emailChosen = false;
+  let switchedMethod = false;
   let sendClicked = false;
   let emailChosenAt = 0;
   let cookiesHandled = false;
@@ -674,6 +724,24 @@ async function runCarrierInner(
       throw new Error(`[ELOGIN_REJECTED] ${carrier.name} did not accept the sign-in: "${s.error}"`);
     }
 
+    if (s.codeInputs.length > 0 && s.codeSentByText && !codeEnteredAt) {
+      // The portal sent the code by text (its default). Switch to email; the
+      // plugin can only read email.
+      if (s.otherMethod && !switchedMethod) {
+        switchedMethod = true;
+        await snap(page, "code-by-text-switching");
+        opts.log("code-sent-by-text-switching-to-email");
+        await page.clickMark(s.otherMethod);
+        emailChosen = false;
+        sendClicked = false;
+        await waitForChange(s, 15_000);
+        continue;
+      }
+      await snap(page, "code-by-text");
+      throw new Error(
+        `[ECODE_BY_TEXT] ${carrier.name} sent the login code by text message and offered no way to switch to email. Set email as the verification method in your ${carrier.name} account settings, or sign in once by hand and choose email with "remember this device".`,
+      );
+    }
     if (s.codeInputs.length > 0) {
       if (codeEnteredAt) {
         if (Date.now() - codeEnteredAt > 20_000) {
@@ -992,10 +1060,20 @@ async function runCarrierInner(
    * current term is kept. A link that turns out to open a page rather than
    * a PDF is queued as a page to read instead.
    */
-  const takeDocs = async (found: LinkInfo[], ctx: string) => {
+  const takeDocs = async (found: LinkInfo[], ctx: string, docsPage = false) => {
     // Every listed document is fetched; which terms to keep is decided once
     // the term dates have been read from the PDFs.
-    const docs = found.filter((l) => !l.footer && isDocumentLink(l.text, l.href, l.pdfHint));
+    // On a page that is a list of documents, a dated entry is a document even
+    // with no PDF mark or telling name ("Policy Change Confirmation 03/12/2026").
+    // Titles like "Policy Change Confirmation" or "Cancellation Notice" name
+    // a document; only an entry that starts with an action is refused.
+    const datedOnList = (l: LinkInfo) =>
+      docsPage &&
+      !!findDate(l.text) &&
+      !/^(make|pay|submit|cancel|change|update|edit|delete|remove|add|enroll|sign|request|report|start|set ?up|manage|go)\b/i.test((l.shown || l.text).trim()) &&
+      !/(bill|invoice|payment|statement|receipt|claim)/i.test(l.text) &&
+      !isNavigationLink(l.text);
+    const docs = found.filter((l) => !l.footer && (isDocumentLink(l.text, l.href, l.pdfHint) || datedOnList(l)));
     for (const d of docs) {
       if (documents.length >= opts.maxDocuments || outOfTime()) break;
       const id = `${ctx}|${d.text}|${d.href}`;
@@ -1193,16 +1271,20 @@ async function runCarrierInner(
     const ownPolicy = policyNumberIn(ctx);
     if (ownPolicy) policiesRead.add(ownPolicy);
 
+    // A link or box naming a policy number ("Homeowners H37-291-123456-40")
+    // leads to that policy's page, unless it is a bill, payment or claim entry.
+    const isNav = (l: LinkInfo) => isNavigationLink(l.text) || (!!policyNumberIn(l.text) && notMoney(l.text) && l.text.length <= 100);
     for (const l of links) {
-      if (l.href && !l.footer && isNavigationLink(l.text)) enqueue(l.href, contextFor(l.text, ctx));
+      if (l.href && !l.footer && isNav(l)) enqueue(l.href, contextFor(l.text, ctx));
     }
-    await takeDocs(links, ctx);
+    const docsPage = /\bdocuments?\b/i.test((await mainText()).slice(0, 400));
+    await takeDocs(links, ctx, docsPage);
     if (depth >= 2) return;
 
     // Navigation buttons with no address. When a page offers "documents"
     // buttons, follow only those; when some name a policy (Foremost's home
     // page has one per policy), follow only those and skip the general one.
-    let navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${ctx}|${pageKey}|${l.text}`));
+    let navs = links.filter((l) => !l.href && !l.footer && isNav(l) && !tried.has(`nav|${ctx}|${pageKey}|${l.text}`));
     const docNavs = navs.filter((l) => /\bdocuments?\b/i.test(l.text));
     // General "documents" buttons (no policy named), kept as a fallback for
     // policies whose own button cannot be found again.
@@ -1293,7 +1375,7 @@ async function runCarrierInner(
       );
       Object.assign(addresses, policyAddresses(shown.map((l) => l.text)), addresses);
       await snap(page, `opened-${pagesVisited}`, shown.map((l) => l.text));
-      await takeDocs(shown, navCtx);
+      await takeDocs(shown, navCtx, /\bdocuments?\b/i.test((await mainText()).slice(0, 400)));
       for (const item of shown.filter((l) => !isDocumentLink(l.text, l.href, l.pdfHint)).slice(0, 10)) {
         if (outOfTime()) break;
         const itemPolicy = policyNumberIn(item.text);
@@ -1309,9 +1391,20 @@ async function runCarrierInner(
           im = await markByText(item.text, 5_000);
         }
         if (!im) continue;
+        const textBefore = await mainText();
         await page.clickMark(im);
         await settle(20_000);
         const went = await page.url();
+        if (keyOf(went) === pageKey && (await mainText()) !== textBefore) {
+          // The item swapped the page's content in place (Selective): read it here.
+          const vk = `${contextFor(item.text, navCtx)}|${keyOf(went)}|${(await mainText()).slice(0, 80)}`;
+          if (!visited.has(vk)) {
+            visited.add(vk);
+            pagesVisited++;
+            await readPage(contextFor(item.text, navCtx), depth + 1);
+          }
+          continue;
+        }
         if (keyOf(went) !== pageKey) {
           const vk = `${contextFor(item.text, navCtx)}|${keyOf(went)}`;
           if (!visited.has(vk)) {

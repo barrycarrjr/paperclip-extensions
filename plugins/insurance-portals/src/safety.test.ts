@@ -185,3 +185,14 @@ test("policy numbers are matched to the address shown with them", () => {
   assert.equal(policyNumberIn("policy documents for policy 1234567"), "1234567");
   assert.equal(policyNumberIn("Homepage"), null);
 });
+
+test("policy numbers with letters and dashes; phones and dates are not policy numbers", () => {
+  assert.equal(policyNumberIn("View policy documents for H37-291-123456-40"), "H37-291-123456-40");
+  assert.equal(policyNumberIn("Auto policy AOS2911234564 details"), "AOS2911234564");
+  assert.equal(policyNumberIn("#381 - 4012345678 Specialty Dwelling"), "4012345678");
+  assert.equal(policyNumberIn("Call us at 610-898-3810"), null);
+  assert.equal(policyNumberIn("Call 1-800-555-1212 today"), null);
+  assert.equal(policyNumberIn("Posted 2026-06-29"), null);
+  assert.equal(policyNumberIn("Card ending •••• 0000"), null);
+  assert.deepEqual(policyAddresses(["Homeowners policy H37-291-123456-40 at 12 Oak St"]), { "H37-291-123456-40": "12 Oak St" });
+});

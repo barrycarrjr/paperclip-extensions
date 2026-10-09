@@ -172,17 +172,39 @@ export function currentTerm<T extends { text: string }>(docs: T[]): T[] {
 export function policyAddresses(texts: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   const street =
-    /\b(\d{1,6} [A-Za-z0-9.' ]{1,40}? (?:St|Street|Pl|Place|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Sq|Square|Trl|Trail|Pike|Row|Aly|Alley)\b\.?)/;
+    /(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:St|Street|Pl|Place|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Sq|Square|Trl|Trail|Pike|Row|Aly|Alley)\b\.?)/;
   for (const t of texts) {
     const addr = street.exec(t)?.[1];
     if (!addr) continue;
-    for (const n of t.match(/\d{7,}/g) ?? []) out[n] ??= addr.replace(/\.$/, "").trim();
+    for (const n of policyNumbersIn(t)) out[n] ??= addr.replace(/\.$/, "").trim();
   }
   return out;
 }
 
-/** The longest policy-looking number (7+ digits) in `text`, if any. */
+/**
+ * Policy-looking numbers in `text`: a run of 7+ digits ("4012345678"), or a
+ * token of letters, digits and dashes holding at least 7 digits
+ * ("H37-291-123456-40", "AOS2911234564"). Phone numbers, dates and card
+ * endings are not policy numbers.
+ */
+export function policyNumbersIn(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(?<![A-Za-z0-9-])[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){5,}(?![A-Za-z0-9-])/g)) {
+    const tok = m[0];
+    const digits = tok.replace(/\D/g, "").length;
+    if (digits < 7) continue;
+    if (/^\(?\d{3}\)?[-. ]?\d{3}-\d{4}$/.test(tok) || /^1?-?\d{3}-\d{3}-\d{4}$/.test(tok)) continue; // phone
+    if (/^\d{1,4}-\d{1,2}-\d{1,4}$/.test(tok)) continue; // date
+    if (/^\d{8}$/.test(tok) && /^(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/.test(tok)) continue; // 20260929
+    out.push(tok);
+  }
+  return out;
+}
+
+/** The policy-looking number in `text` with the most digits, if any. */
 export function policyNumberIn(text: string): string | null {
-  const all = text.match(/\d{7,}/g);
-  return all ? all.sort((a, b) => b.length - a.length)[0] : null;
+  const all = policyNumbersIn(text);
+  if (!all.length) return null;
+  const score = (t: string) => t.replace(/\D/g, "").length;
+  return all.sort((a, b) => score(b) - score(a))[0];
 }

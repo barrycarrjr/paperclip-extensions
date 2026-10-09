@@ -8,6 +8,13 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.0**: Prepared for Liberty Mutual and Selective from their sign-in pages and public help, with a full rehearsal of each in tests.
+  - Policy numbers with letters and dashes ("H37-291-123456-40") are recognised; phone numbers, dates and card endings are not policy numbers.
+  - A code sent by text by default is switched to email through "Try another method" and similar; if the portal offers no way to switch, the run stops with `ECODE_BY_TEXT` explaining what to change.
+  - On a page that lists documents, a dated entry counts as a document even without a PDF mark ("Policy Change Confirmation 03/12/2026"); bills, statements, payments and entries that start with an action are excluded.
+  - Plain boxes that act as buttons (pointer cursor and a click handler, as on Selective) are clickable, count toward "signed in", and are followed.
+  - A code step shown over the sign-in form (Selective's pop-up) is handled; the button after the code boxes ("Next") is pressed, never the form's "Log In".
+  - Entries named by a policy number are followed to that policy's page; a click that changes the page's content without changing its address is read.
 - **v0.5.3**: A run where every document was already saved no longer says it "found no policy or declarations PDFs". Seen on a repeat Foremost run: all 11 documents recognised as already saved, nothing downloaded again.
 - **v0.5.2**: The "Stopped early to stay inside the 5-minute tool limit" note now appears only when the time limit actually cut work short. On the real Foremost run all 11 listed documents across 4 policies were fetched, yet the note appeared because the run finished close to the limit.
 - **v0.5.1**: Foremost shows every policy's documents at the same web address (the chosen policy is kept inside the page, not in the address). Pages and buttons already handled are now tracked per policy, not per address, so policies 2 onward are no longer skipped as "already read"; reaching another policy is judged by the page content changing, and a page that mentions a different policy but not the one wanted is skipped rather than saved under the wrong name. Reproduced with a test that fails on 0.4.3 exactly as the real run did.

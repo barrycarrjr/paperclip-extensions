@@ -962,3 +962,147 @@ test(`every policy's documents at the same address (policy kept out of the URL)$
     server.close();
   }
 });
+
+test("Liberty Mutual rehearsal: text-code default switched to email, remember device, unnamed documents, nothing billed", { skip: !chrome, timeout: 240_000 }, async () => {
+  const hits: string[] = [];
+  let remembered = false;
+  let codeOk = false;
+  const pol = "H37-291-123456-40";
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(`${req.method} ${url.pathname}${url.search}`);
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    const p = url.pathname;
+    if (p === "/login") {
+      return html(`<button style="width:0;height:0;padding:0;border:0;overflow:hidden">Log out</button>
+        <form action="/u/mfa-sms" method="get"><input name="username" placeholder="Email or username"><input type="password" name="password" placeholder="Password">
+        <input type="checkbox" id="slideOne" style="display:none"><button type="submit" id="1-submit">Log in</button>
+        <p>By selecting Log in, I agree to the Liberty Mutual Paperless Terms and Conditions.</p></form>`);
+    }
+    if (p === "/u/mfa-sms") {
+      return html(`<h1>Verify your identity</h1><p>We've sent a text message to (•••) •••-1234.</p>
+        <form action="/u/mfa-check" method="get"><label for="c">Enter the 6-digit code</label><input id="c" name="code" autocomplete="one-time-code"><button type="submit">Continue</button></form>
+        <a href="/u/mfa-methods">Try another method</a>`);
+    }
+    if (p === "/u/mfa-methods") {
+      return html(`<h1>Other methods</h1><p>How do you want to get your verification code?</p><a href="/u/mfa-sms">SMS</a> <a href="/u/mfa-email">Email</a> <a href="/u/mfa-voice">Phone call</a>`);
+    }
+    if (p === "/u/mfa-email") {
+      return html(`<h1>Verify your identity</h1><p>We've sent an email with your code to m***@example.com.</p>
+        <form action="/u/mfa-check" method="get"><label for="c">Enter the code</label><input id="c" name="code" autocomplete="one-time-code">
+        <label><input type="checkbox" name="remember"> Remember this device for 30 days</label><button type="submit">Continue</button></form>`);
+    }
+    if (p === "/u/mfa-check") {
+      codeOk = url.searchParams.get("code") === "654321";
+      remembered = url.searchParams.get("remember") === "on";
+      res.writeHead(302, { location: codeOk ? "/account/home" : "/u/mfa-email" });
+      return res.end();
+    }
+    if (!codeOk) return html("no");
+    if (p === "/account/home") {
+      return html(`<aside><h2>Policies</h2><a href="/account/policy?id=1">Homeowners ${pol}</a></aside>
+        <nav><a href="/account/billing">Billing</a><a href="/account/claims">Claims</a><button>Log out</button></nav>
+        <main><h1>Welcome</h1><p>Your account at a glance.</p></main>
+        <div role="dialog" aria-modal="true" id="d" style="position:fixed;inset:0;background:#fff"><h2>Go paperless and save</h2>
+          <button onclick="fetch('/account/paperless/enroll',{method:'POST'})">Enroll</button><button onclick="document.getElementById('d').remove()">Not now</button></div>`);
+    }
+    if (p === "/account/policy") {
+      return html(`<nav><a href="/account/home">Home</a><button>Log out</button></nav><main><h1>Homeowners policy ${pol}</h1>
+        <a href="/account/policy/documents?id=1">View policy documents</a> <a href="/account/billing/pay">Make a payment</a></main>`);
+    }
+    if (p === "/account/policy/documents") {
+      return html(`<nav><a href="/account/home">Home</a><button>Log out</button></nav><main><h1>Policy documents</h1><table>
+        <tr><td><a href="/api/doc?d=dec">Declarations 08/01/2026</a></td></tr>
+        <tr><td><a href="/api/doc?d=chg">Policy Change Confirmation 03/12/2026</a></td></tr>
+        <tr><td><a href="/api/doc?d=bill">Billing statement 09/01/2026</a></td></tr>
+        <tr><td><a href="/account/billing/pay">Make a payment</a></td></tr></table></main>`);
+    }
+    if (p === "/api/doc") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`lm-${url.searchParams.get("d")}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "654321", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+    );
+    const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
+    assert.deepEqual(tags, ["% lm-chg", "% lm-dec"], `hits: ${hits.join(", ")}`);
+    assert.ok(hits.includes("GET /u/mfa-email"), "switched to email");
+    assert.ok(!hits.some((h) => h.includes("mfa-voice")), "never chose a phone call");
+    assert.ok(remembered, "ticked remember this device");
+    assert.ok(!hits.some((h) => h.includes("/billing/pay") || h.includes("paperless/enroll") || h.includes("d=bill")), "no payment, no enrolment, no bill");
+    assert.ok(result.documents.every((d) => d.policy.includes(pol)), `filed under ${pol}`);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-digit boxes, clickable boxes after sign-in", { skip: !chrome, timeout: 240_000 }, async () => {
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(`${req.method} ${url.pathname}${url.search}`);
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/apps/SelectiveWeb/") {
+      return html(`<div id="frmLogin">
+        <input type="text" id="frmLogin_txtUserID" autocomplete="off"><input type="password" id="frmLogin_txtPassword" autocomplete="off">
+        <input type="button" id="frmLogin_btnLogin" value="Log In" onclick="fetch('/login',{method:'POST'}).then(()=>{document.getElementById('pop').style.display='block'})">
+        <input type="button" id="frmLogin_btnPWAReportAClaim" value="Report a Claim" onclick="fetch('/claim',{method:'POST'})">
+        <div id="pop" style="display:none"><p>For your security we need to verify your identity. How should we send your code?</p>
+          <input type="button" id="frmLogin_btnSendEmail" value="Send Email" onclick="fetch('/send-email',{method:'POST'});document.getElementById('codes').style.display='block';document.getElementById('pop').style.display='none'">
+          <input type="button" id="frmLogin_btnSendText" value="Send Text" onclick="fetch('/send-text',{method:'POST'})"></div>
+        <div id="codes" style="display:none"><p>Enter the code we emailed you.</p>
+          <input id="frmLogin_txtCode1" maxlength="1"><input id="frmLogin_txtCode2" maxlength="1"><input id="frmLogin_txtCode3" maxlength="1"><input id="frmLogin_txtCode4" maxlength="1">
+          <input type="button" id="frmLogin_btnNextStep" value="Next" onclick="const c=[1,2,3,4].map(i=>document.getElementById('frmLogin_txtCode'+i).value).join('');location.href='/apps/SelectiveWeb/home?c='+c"></div>
+        </div>`);
+    }
+    if (url.pathname === "/apps/SelectiveWeb/home") {
+      if (url.searchParams.get("c") !== "5521") return html("bad code");
+      return html(`<style>.k{cursor:pointer;padding:6px;display:inline-block}</style>
+        <div class="k" kwidgettype="Button" onclick="show('pols')">My Policies</div> <div class="k" kwidgettype="Button" onclick="fetch('/pay',{method:'POST'})">Pay My Bill</div> <div class="k" kwidgettype="Button">Log Out</div>
+        <main id="m"><p>Welcome to MySelective</p></main>
+        <script>
+          function show(w){const m=document.getElementById('m');
+            if(w==='pols'){m.innerHTML='<div class="k" kwidgettype="Button" onclick="show(\\'pol\\')">Homeowners Policy S 2290000123</div>';return}
+            if(w==='pol'){m.innerHTML='<h1>Policy Details</h1><div class="k" kwidgettype="Button">Coverage</div><div class="k" kwidgettype="Button" onclick="show(\\'docs\\')">Documents</div>';return}
+            m.innerHTML='<h1>Policy Documents</h1><div class="k" kwidgettype="Button" onclick="window.open(\\'/docs/sel.pdf\\')">Policy PDF</div>';
+          }
+        </script>`);
+    }
+    if (url.pathname === "/docs/sel.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("selective-policy"));
+    }
+    res.writeHead(200).end("ok");
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "selective", name: "Fake", loginUrl: `http://127.0.0.1:${port}/apps/SelectiveWeb/`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "5521", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+    );
+    assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% selective-policy"], `hits: ${hits.join(", ")}`);
+    assert.ok(hits.includes("POST /send-email") && !hits.includes("POST /send-text"), "email, never text");
+    assert.ok(!hits.includes("POST /claim") && !hits.includes("POST /pay"), "no claim, no payment");
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
