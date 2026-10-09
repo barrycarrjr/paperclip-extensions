@@ -1147,7 +1147,7 @@ test(`Liberty Mutual code screen (${style}): 6-digit code entered, Continue pres
     await runCarrier(
       browser,
       { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
-      { username: "u", password: "p", getCode: async () => "482913", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+      { username: "u", password: "p", getCode: async () => "482913", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: process.env.PC_DEBUG_DIR ?? null, log: (x) => process.env.PC_TRACE && console.log("step", x) },
     );
     assert.equal(entered, "482913");
   } finally {
@@ -1214,6 +1214,51 @@ test("Selective 'This code is invalid': closes it, asks for one new code, uses i
     assert.equal(ok, true);
     assert.equal(sends, 2, "exactly one new code requested");
     assert.equal(asked, 2);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("code boxes that jump back on Backspace and forward on typing get the right digits", { skip: !chrome, timeout: 120_000 }, async () => {
+  let got = "";
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") {
+      return html(`<form action="/code" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/code") {
+      return html(`<p>Please enter the 4-digit code you received below.</p>
+        ${[0, 1, 2, 3].map((i) => `<input class="b" data-i="${i}" maxlength="1">`).join("")}
+        <input type="button" value="Next" title="Next" onclick="location.href='/check?c='+[...document.querySelectorAll('.b')].map(x=>x.value).join('')">
+        <script>
+          const bs=[...document.querySelectorAll('.b')];
+          bs.forEach((b,i)=>{
+            b.addEventListener('keydown',e=>{ if(e.key==='Backspace'&&!b.value&&i>0){ e.preventDefault(); bs[i-1].value=''; bs[i-1].focus(); } });
+            b.addEventListener('input',()=>{ if(b.value.length===1&&i<3) bs[i+1].focus(); });
+          });
+        </script>`);
+    }
+    if (url.pathname === "/check") {
+      got = url.searchParams.get("c") ?? "";
+      return html(got === "0092" ? `<nav><a href="/a">Home</a><a href="/b">Policies</a><a href="/c">Billing</a><a href="/logout">Log out</a></nav>` : `<p>This code is invalid.</p>`);
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    await runCarrier(
+      browser,
+      { key: "selective", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0092", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.equal(got, "0092");
   } finally {
     await browser.close();
     server.close();

@@ -425,6 +425,37 @@ export class Page {
     );
   }
 
+  /**
+   * Type `text` into one small code box the way a person does: focus it,
+   * empty it without a Backspace (on many code screens Backspace in an empty
+   * box jumps back and clears the previous box), then real key presses.
+   * Returns the box's value afterwards.
+   */
+  async typeIntoBox(mark: string, text: string): Promise<string> {
+    const ok = await this.evaluate<boolean>((m: string) => {
+      const el = document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null;
+      if (!el) return false;
+      el.focus();
+      if (el.value) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(el, "");
+      }
+      return document.activeElement === el;
+    }, mark);
+    if (!ok) return "";
+    for (const ch of text) {
+      const digit = /\d/.test(ch);
+      const base = {
+        key: ch,
+        code: digit ? `Digit${ch}` : `Key${ch.toUpperCase()}`,
+        windowsVirtualKeyCode: ch.toUpperCase().charCodeAt(0),
+      };
+      await this.send("Input.dispatchKeyEvent", { type: "keyDown", ...base, text: ch, unmodifiedText: ch });
+      await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+    }
+    return this.evaluate<string>((m: string) => (document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null)?.value ?? "", mark);
+  }
+
   async pressEscape(): Promise<void> {
     const k = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 };
     await this.send("Input.dispatchKeyEvent", { type: "keyDown", ...k });

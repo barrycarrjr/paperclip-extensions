@@ -843,7 +843,30 @@ async function runCarrierInner(
         } else {
           parts = [code, ...boxes.slice(1).map(() => "")];
         }
-        for (let i = 0; i < boxes.length; i++) if (parts[i]) await page.typeIntoMark(boxes[i], parts[i]);
+        for (let i = 0; i < boxes.length; i++) if (parts[i]) await page.typeIntoBox(boxes[i], parts[i]);
+        // Check the boxes really hold the code before pressing anything; a
+        // screen that moves focus as you type can scramble the digits.
+        const held = await page
+          .evaluate<string>((ms: string[]) => ms.map((m) => (document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null)?.value ?? "").join(""), boxes)
+          .catch(() => "");
+        if (held !== code) {
+          opts.log("code-boxes-mismatch-retyping");
+          // Second way: fill each box directly, then announce the change.
+          await page.evaluate(
+            (ms: string[], vals: string[]) => {
+              const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+              ms.forEach((m, i) => {
+                const el = document.querySelector(`[data-pcip="${m}"]`) as HTMLInputElement | null;
+                if (!el) return;
+                setter?.call(el, vals[i] ?? "");
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+              });
+            },
+            boxes,
+            parts,
+          );
+        }
       }
       const again = await page.evaluate<LoginScan>(scanLogin).catch(() => s);
       if (again.submit) await page.clickMark(again.submit);
