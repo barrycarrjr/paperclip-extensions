@@ -73,6 +73,8 @@ export interface RunOptions {
   maxDocuments: number;
   debugDir: string | null;
   log: (step: string, meta?: Record<string, unknown>) => void;
+  /** Name of a file already saved for this document, if any: it is then not downloaded again. */
+  alreadyHave?: (doc: { policy: string; title: string; posted: string | null }) => string | null;
 }
 
 export interface CapturedPdf {
@@ -96,6 +98,8 @@ export interface RunResult {
   blockedRequests: number;
   /** Method and address (no query) of each blocked request, for checking the guard. */
   blockedPaths: string[];
+  /** Documents not downloaded because a file for them is already saved. */
+  skipped: Array<{ policy: string; title: string; posted: string | null; label: string; existingName: string }>;
   notes: string[];
 }
 
@@ -460,6 +464,21 @@ async function runCarrierInner(
   // PDF capture runs on every tab; it only records once `collecting` is on.
   let collecting = false;
   const captured: Array<{ at: number; bytes: Buffer }> = [];
+  // Debug only: how each PDF arrived and when, to tune for slow portals.
+  // Addresses are reduced to host + path; no query strings, no contents.
+  const captureLog: Array<Record<string, unknown>> = [];
+  const runStart = Date.now();
+  const logCapture = (event: string, meta: Record<string, unknown> = {}) => {
+    if (opts.debugDir && captureLog.length < 500) captureLog.push({ s: Math.round((Date.now() - runStart) / 100) / 10, event, ...meta });
+  };
+  const pathOf = (u?: string) => {
+    try {
+      const x = new URL(u ?? "");
+      return x.protocol === "blob:" ? "blob:" : `${x.hostname}${x.pathname}`;
+    } catch {
+      return "";
+    }
+  };
   // PDF addresses whose bytes Chrome would not hand over (its PDF viewer
   // replaces a tab's body with a wrapper; a script that reads a response as a
   // blob leaves nothing behind). These are fetched again from the signed-in tab.
@@ -467,9 +486,16 @@ async function runCarrierInner(
   const pdfRequests = new Map<string, string>();
   await browser.addHook(async (p) => {
     p.on("Network.responseReceived", (e) => {
-      const r = e.response as { mimeType?: string; url?: string };
-      if (collecting && (r?.mimeType === "application/pdf" || /\.pdf(?:$|\?)/i.test(r?.url ?? ""))) {
+      const r = e.response as { mimeType?: string; url?: string; headers?: Record<string, string> };
+      const disposition = Object.entries(r?.headers ?? {}).find(([k]) => k.toLowerCase() === "content-disposition")?.[1] ?? "";
+      const looksPdf =
+        r?.mimeType === "application/pdf" ||
+        /\.pdf(?:$|\?)/i.test(r?.url ?? "") ||
+        /\.pdf\b/i.test(disposition) ||
+        (r?.mimeType === "application/octet-stream" && /document|download|pdf/i.test(r?.url ?? ""));
+      if (collecting && looksPdf) {
         pdfRequests.set(String(e.requestId), r.url ?? "");
+        logCapture("response", { mime: r?.mimeType, type: e.type, path: pathOf(r?.url), disposition: disposition ? "yes" : "no" });
       }
     });
     p.on("Network.loadingFinished", (e) => {
@@ -485,19 +511,35 @@ async function runCarrierInner(
         .then((b) => {
           const body = b as { body: string; base64Encoded: boolean };
           const bytes = Buffer.from(body.body, body.base64Encoded ? "base64" : "latin1");
-          if (isPdf(bytes)) captured.push({ at: Date.now(), bytes });
-          else fallback();
+          if (isPdf(bytes)) {
+            captured.push({ at: Date.now(), bytes });
+            logCapture("body-captured", { bytes: bytes.length });
+          } else {
+            logCapture("body-not-pdf", { bytes: bytes.length });
+            fallback();
+          }
         })
-        .catch(fallback);
+        .catch(() => {
+          logCapture("body-unavailable");
+          fallback();
+        });
     });
+  });
+  browser.on("Browser.downloadWillBegin", (e) => {
+    if (collecting) logCapture("download-begin", { path: pathOf(String(e.url ?? "")) });
   });
   browser.on("Browser.downloadProgress", (e) => {
     if (!collecting || e.state !== "completed") return;
     void readFile(join(browser.downloadDir, String(e.guid)))
       .then((bytes) => {
+        logCapture("download-complete", { bytes: bytes.length, pdf: isPdf(bytes) });
         if (isPdf(bytes)) captured.push({ at: Date.now(), bytes });
       })
       .catch(() => undefined);
+  });
+  browser.on("Target.targetCreated", (e) => {
+    const info = e.targetInfo as { type?: string; url?: string };
+    if (collecting && info?.type === "page") logCapture("new-tab", { scheme: String(info.url ?? "").split(":")[0] });
   });
 
   const page = await browser.firstPage();
@@ -750,6 +792,7 @@ async function runCarrierInner(
   collecting = true;
 
   const documents: CapturedPdf[] = [];
+  const skipped: RunResult["skipped"] = [];
   const seen = new Set<string>();
   const addPdf = (meta: DocMeta, bytes: Buffer) => {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -780,12 +823,21 @@ async function runCarrierInner(
     }
     await sleep(500);
   };
-  /** Find a visible element by its exact link text and mark it, or null. */
-  const markByText = (text: string) =>
-    page
-      .evaluate<LinkInfo[]>(scanLinks)
-      .then((ls) => ls.find((l) => l.text === text && !l.footer)?.mark ?? null)
-      .catch(() => null);
+  /**
+   * Find a visible element by its exact link text and mark it, waiting up to
+   * `waitMs` for it to appear (a page redrawn after Back fills in late).
+   */
+  const markByText = async (text: string, waitMs = 0): Promise<string | null> => {
+    const until = Date.now() + waitMs;
+    for (;;) {
+      const m = await page
+        .evaluate<LinkInfo[]>(scanLinks)
+        .then((ls) => ls.find((l) => l.text === text && !l.footer)?.mark ?? null)
+        .catch(() => null);
+      if (m || Date.now() >= until) return m;
+      await sleep(700);
+    }
+  };
 
   // What each page is about ("12 Oak St Policy 1234567"), learnt from the
   // button that led there; used to name the files saved from it.
@@ -826,6 +878,12 @@ async function runCarrierInner(
       if (tried.has(id)) continue;
       tried.add(id);
       const meta = docMeta(d, contextFor(d.text, ctx));
+      const existing = opts.alreadyHave?.(meta);
+      if (existing) {
+        skipped.push({ ...meta, existingName: existing });
+        opts.log("document-already-saved");
+        continue;
+      }
       if (d.href && isSafeNavigationUrl(d.href, carrier.siteDomains)) {
         const got = await fetchInPage(page, d.href);
         if (got) {
@@ -838,6 +896,7 @@ async function runCarrierInner(
       }
       const before = await page.url();
       const clickAt = Date.now();
+      logCapture("click-document");
       await page.clickMark(d.mark);
       const arrived = () => captured.some((c) => c.at >= clickAt) || pdfUrls.some((u) => u.at >= clickAt);
       // A PDF usually shows up within seconds. If the click moved to another
@@ -861,6 +920,7 @@ async function runCarrierInner(
           }
         }
       }
+      logCapture("document-done", { got, waitedS: Math.round((Date.now() - clickAt) / 100) / 10 });
       if (got > 0) opts.log("document-saved-in-memory");
       // Close tabs the click opened, and return to where we were.
       for (const p of [...browser.pages.values()]) {
@@ -926,13 +986,15 @@ async function runCarrierInner(
       tried.add(`nav|${pageKey}|${nb.text}`);
       const n = policyNumberIn(nb.text);
       if (n && policiesRead.has(n)) continue;
-      let m = await markByText(nb.text);
+      let m = await markByText(nb.text, 20_000);
       if (!m) {
         // Back did not bring the page's content back: load it again.
+        opts.log("button-missing-after-back-reloading");
         await page.goto(here).catch(() => undefined);
         await settle(20_000);
-        m = await markByText(nb.text);
+        m = await markByText(nb.text, 20_000);
       }
+      if (!m) opts.log("button-not-found", { policy: policyNumberIn(nb.text) ? "yes" : "no" });
       if (!m) continue;
       const shownBefore = new Set((await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).map((l) => l.text));
       await page.clickMark(m);
@@ -964,12 +1026,12 @@ async function runCarrierInner(
         if (/^(close|cancel|dismiss|back)\b/i.test(item.text)) continue;
         if (tried.has(`item|${pageKey}|${item.text}`)) continue;
         tried.add(`item|${pageKey}|${item.text}`);
-        let im = await markByText(item.text);
+        let im = await markByText(item.text, 3_000);
         if (!im) {
           const reopen = await markByText(nb.text);
           if (reopen) await page.clickMark(reopen);
           await sleep(1000);
-          im = await markByText(item.text);
+          im = await markByText(item.text, 5_000);
         }
         if (!im) continue;
         await page.clickMark(im);
@@ -1011,7 +1073,10 @@ async function runCarrierInner(
   if (opts.debugDir) {
     await writeFile(join(opts.debugDir, "blocked-requests.json"), JSON.stringify(blockedPaths, null, 2)).catch(() => undefined);
   }
-  return { documents, pagesVisited, blockedRequests, blockedPaths, notes };
+  if (opts.debugDir) {
+    await writeFile(join(opts.debugDir, "pdf-capture-log.json"), JSON.stringify(captureLog, null, 2)).catch(() => undefined);
+  }
+  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, notes };
 }
 
 function docMeta(l: LinkInfo, ctx: string): DocMeta {

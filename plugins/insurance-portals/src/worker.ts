@@ -14,7 +14,7 @@ import { Drive, type SavedFile } from "./drive.js";
 import { LocalFolder } from "./localFolder.js";
 import { profileDirFor } from "./profiles.js";
 import { pdfText } from "./pdfText.js";
-import { assignTerms, fileNameFor, findTerm } from "./terms.js";
+import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { splitDrivePath } from "./safety.js";
@@ -100,6 +100,7 @@ async function driveFor(ctx: PluginContext, cfg: InstanceConfig, companyId?: str
 
 interface Saver {
   ensureFolder(path: string): Promise<string>;
+  listNames(folder: string): Promise<string[]>;
   savePdf(folder: string, name: string, bytes: Buffer): Promise<SavedFile>;
 }
 
@@ -141,6 +142,7 @@ export async function fetchDocuments(
   // Open the save location before signing in, so a problem there doesn't cost a login.
   const drive = await saverFor(ctx, cfg, companyId);
   const folderId = await drive.ensureFolder(destination);
+  const alreadyThere = await drive.listNames(folderId);
 
   let mailbox: MailboxSettings | null = null;
   const getCode = async (requestedAt: Date) => {
@@ -166,6 +168,7 @@ export async function fetchDocuments(
       getCode,
       deadline: started + TOOL_BUDGET_MS,
       maxDocuments: Math.max(1, Math.min(50, cfg.maxDocuments ?? 20)),
+      alreadyHave: (d) => existingFileFor(alreadyThere, carrier.name, d),
       debugDir,
       log: (step, meta) => ctx.logger.info(`insurance-portals: ${carrierKey} ${step}`, meta ?? {}),
     });
@@ -178,17 +181,23 @@ export async function fetchDocuments(
 
   // Read each document's policy period, then sort into current and prior terms.
   const termsWanted = params.terms === "current" || params.terms === "all" ? params.terms : (cfg.defaultTerms ?? "all");
-  const read = [];
+  const read: Array<(typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; existingName?: string }> = [];
   for (const doc of result.documents) {
     read.push({ ...doc, term: findTerm(await pdfText(doc.bytes)) });
+  }
+  // Documents already saved by an earlier run take part in the current/prior
+  // sorting (their term is in their file name) and are reported, unchanged.
+  for (const s of result.skipped) {
+    read.push({ ...s, bytes: Buffer.alloc(0), sha256: "", term: termFromName(s.existingName), existingName: s.existingName });
   }
   const sorted = assignTerms(read, today());
   const keep = termsWanted === "current" ? sorted.filter((d) => d.current) : sorted;
 
   const files = [];
   for (const doc of keep) {
-    const name = fileNameFor(carrier.name, doc);
-    const savedFile = await drive.savePdf(folderId, name, doc.bytes);
+    const savedFile = doc.existingName
+      ? { name: doc.existingName, id: doc.existingName, link: null, status: "already_saved" as const }
+      : await drive.savePdf(folderId, fileNameFor(carrier.name, doc), doc.bytes);
     files.push({
       ...savedFile,
       policy: doc.policy || null,

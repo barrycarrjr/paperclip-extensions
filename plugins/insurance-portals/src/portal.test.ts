@@ -588,7 +588,7 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
   const home = `<header><nav><button>Homepage</button><button>Policies <span>chevron_right</span> Select policy from dropdown</button><button>Payments</button><button>Sign out</button></nav></header>
     <main id="main"></main><footer><a href="#">Policies</a></footer>
     <script>
-      function showHome(){const mm=document.getElementById('main'); mm.innerHTML=''; setTimeout(()=>{mm.innerHTML=${JSON.stringify(
+      function showHome(delay){const mm=document.getElementById('main'); mm.innerHTML=''; setTimeout(()=>{mm.innerHTML=${JSON.stringify(
         policies
           .map(
             (p) => `<section><h3>#100 - ${p.n} Specialty Dwelling</h3>
@@ -600,8 +600,9 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
           `<button>Paperless settings</button><ul>` +
           policies.map((p) => `<li><a href="#" onclick="return false">#100 - ${p.n} Managed policies ${p.addr} policy number ${p.n}</a></li>`).join("") +
           `</ul>`,
-      )};},1500);}
-      window.onpopstate=()=>{ if (location.pathname.startsWith('/policy')) render(); else showHome(); };
+      )};},delay||1500);}
+      // After Back the cards take a while to come back, as on the real portal.
+      window.onpopstate=()=>{ if (location.pathname.startsWith('/policy')) render(); else showHome(5000); };
       if (!location.pathname.startsWith('/policy')) showHome();
       function render(){
         const n=new URLSearchParams(location.search).get('p');
@@ -637,14 +638,28 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
     const result = await runCarrier(
       browser,
       { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
-      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+      {
+        username: "u",
+        password: "p",
+        getCode: async () => "0000",
+        deadline: Date.now() + 230_000,
+        maxDocuments: 20,
+        debugDir: process.env.PC_DEBUG_DIR ?? null,
+        log: () => undefined,
+        // One document is already saved from an earlier run.
+        alreadyHave: (d) =>
+          d.policy === "12 Oak St - Policy 1234567" && d.title === "RENEWAL" && d.posted === "2025-06-27"
+            ? "Foremost - 12 Oak St - Policy 1234567 - Term 2025-07-01 to 2026-07-01 - RENEWAL (posted 2025-06-27).pdf"
+            : null,
+      },
     );
     const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
-    assert.deepEqual(tags, ["% 1234567-0", "% 1234567-1", "% 1234567-2", "% 7654321-0", "% 7654321-1", "% 7654321-2"], `every term; hits: ${hits.join(", ")}`);
+    assert.deepEqual(tags, ["% 1234567-0", "% 1234567-2", "% 7654321-0", "% 7654321-1", "% 7654321-2"], `every term but the saved one; hits: ${hits.join(", ")}`);
+    assert.ok(!hits.some((h) => h.includes("/docs/1234567-1.pdf")), "the saved document was not downloaded again");
+    assert.equal(result.skipped.length, 1);
     const meta = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted}`).sort();
     assert.deepEqual(meta, [
       "12 Oak St - Policy 1234567 | NEW BUSINESS | 2024-09-05",
-      "12 Oak St - Policy 1234567 | RENEWAL | 2025-06-27",
       "12 Oak St - Policy 1234567 | RENEWAL | 2026-06-29",
       "900 Elm Ave - Policy 7654321 | NEW BUSINESS | 2024-09-05",
       "900 Elm Ave - Policy 7654321 | RENEWAL | 2025-06-27",

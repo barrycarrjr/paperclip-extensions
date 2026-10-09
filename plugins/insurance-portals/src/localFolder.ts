@@ -81,6 +81,11 @@ export class LocalFolder {
     return dir;
   }
 
+  /** Names of the PDFs already in the folder. */
+  async listNames(dir: string): Promise<string[]> {
+    return readdirSync(dir).filter((n) => /\.pdf$/i.test(n));
+  }
+
   async savePdf(dir: string, wantedName: string, bytes: Buffer): Promise<SavedFile> {
     const sha = createHash("sha256").update(bytes).digest("hex");
     const base = safeFileName(wantedName.replace(/\.pdf$/i, "")) || "document";

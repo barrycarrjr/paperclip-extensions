@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { pdfText } from "./pdfText.js";
-import { assignTerms, fileNameFor, findTerm, toIso } from "./terms.js";
+import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName, toIso } from "./terms.js";
 
 test("finds the policy period in the wordings declarations pages use", () => {
   assert.deepEqual(findTerm("Policy Period: 08/01/2026 to 08/01/2027 12:01 AM standard time"), { from: "2026-08-01", to: "2027-08-01" });
@@ -80,4 +80,25 @@ test("file names carry the term dates", () => {
     "Foremost - 12 Oak St - Policy 1234567 - Term 2026-08-01 to 2027-08-01 - RENEWAL (posted 2026-06-29)",
   );
   assert.equal(fileNameFor("Selective", { policy: "", title: "Declarations Page", posted: null, term: null }), "Selective - Declarations Page");
+});
+
+test("Foremost declarations layout: dates side by side, far from the label", () => {
+  const text =
+    "FOREMOST BASICS DECLARATIONS PAGE POLICY NUMBER POLICY PERIOD BEGINNING YOUR POLICY IS SERVICED BY - - NON PARTICIPATING 100 1234567 03 100- 1234567 -02 09/05/26 09/05/27 12:01 A.M. STANDARD TIME OAK LLC";
+  assert.deepEqual(findTerm(text), { from: "2026-09-05", to: "2027-09-05" });
+  assert.equal(findTerm("Payment schedule 09/05/26 10/05/26 12:01 AM"), null, "a one-month pair is not a term");
+});
+
+test("already-saved documents are recognised by policy, document and posted date", () => {
+  const names = [
+    "Foremost - 12 Oak St - Policy 1234567 - Term 2026-09-05 to 2027-09-05 - RENEWAL (posted 2026-06-29).pdf",
+    "Foremost - 12 Oak St - Policy 1234567 - RENEWAL (posted 2025-06-27) (2).pdf",
+  ];
+  const P = "12 Oak St - Policy 1234567";
+  assert.equal(existingFileFor(names, "Foremost", { policy: P, title: "RENEWAL", posted: "2026-06-29" }), names[0]);
+  assert.equal(existingFileFor(names, "Foremost", { policy: P, title: "RENEWAL", posted: "2025-06-27" }), null, "a name without term dates is fetched again");
+  assert.equal(existingFileFor(names, "Foremost", { policy: P, title: "NEW BUSINESS", posted: "2024-09-05" }), null);
+  assert.equal(existingFileFor(names, "Foremost", { policy: "9 Elm St - Policy 7654321", title: "RENEWAL", posted: "2026-06-29" }), null);
+  assert.equal(existingFileFor(names, "Foremost", { policy: P, title: "RENEWAL", posted: null }), null, "no posted date: never assume");
+  assert.deepEqual(termFromName(names[0]), { from: "2026-09-05", to: "2027-09-05" });
 });

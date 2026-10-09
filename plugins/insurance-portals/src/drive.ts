@@ -98,6 +98,12 @@ export class Drive {
     return parent;
   }
 
+  /** Names of the PDFs already in the folder. */
+  async listNames(folderId: string): Promise<string[]> {
+    const files = await this.list(`'${folderId}' in parents and trashed = false and mimeType = 'application/pdf'`, "name");
+    return files.map((f) => f.name);
+  }
+
   async savePdf(folderId: string, wantedName: string, bytes: Buffer): Promise<SavedFile> {
     const md5 = createHash("md5").update(bytes).digest("hex");
     const base = safeFileName(wantedName.replace(/\.pdf$/i, "")) || "document";

@@ -41,7 +41,18 @@ export function toIso(s: string): string | null {
  */
 export function findTerm(text: string): Term | null {
   const t = text.replace(/\s+/g, " ");
+  // A term is about six months or a year long; anything else is some other
+  // pair of dates (a payment schedule, a notice period).
+  const plausible = (from: string, to: string) => {
+    const days = (Date.parse(to) - Date.parse(from)) / 86_400_000;
+    return days >= 150 && days <= 400;
+  };
   const patterns = [
+    // Foremost and similar forms: the two dates printed side by side, then
+    // the time the term starts ("09/05/26 09/05/27 12:01 A.M. STANDARD TIME"),
+    // well after the "POLICY PERIOD" label.
+    new RegExp(String.raw`${DATE}\s+${DATE}\s+12:01\s*A\.?\s?M\.?`, "i"),
+    new RegExp(String.raw`policy\s*period.{0,300}?${DATE}\s+(?:to\s+)?${DATE}`, "i"),
     new RegExp(String.raw`(?:policy|coverage|insurance)\s*(?:period|term)\b[^0-9A-Z]{0,40}?(?:from\s*)?${DATE}[^0-9A-Za-z]{0,30}?(?:\d{1,2}:\d{2}\s*[AP]\.?M\.?[^0-9A-Za-z]{0,20})?(?:to|through|thru|until|-|–)\s*${DATE}`, "i"),
     new RegExp(String.raw`\bterm\b[^0-9A-Z]{0,20}?${DATE}\s*(?:to|through|thru|-|–)\s*${DATE}`, "i"),
     new RegExp(String.raw`effective\s*(?:date)?\s*:?\s*${DATE}.{0,80}?expiration\s*(?:date)?\s*:?\s*${DATE}`, "i"),
@@ -51,7 +62,7 @@ export function findTerm(text: string): Term | null {
     if (!m) continue;
     const from = toIso(m[1]);
     const to = toIso(m[2]);
-    if (from && to && from < to) return { from, to };
+    if (from && to && from < to && plausible(from, to)) return { from, to };
   }
   return null;
 }
@@ -125,4 +136,25 @@ export function fileNameFor(carrier: string, d: { policy: string; title: string;
   if (d.term) parts.push(`Term ${d.term.from} to ${d.term.to}`);
   parts.push(d.posted ? `${d.title} (posted ${d.posted})` : d.title);
   return safeFileName(parts.filter(Boolean).join(" - "));
+}
+
+/** The term written into a file name by `fileNameFor`, if there is one. */
+export function termFromName(name: string): Term | null {
+  const m = /Term (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})/.exec(name);
+  return m ? { from: m[1], to: m[2] } : null;
+}
+
+/**
+ * The name of a file already saved for this document (same policy, same
+ * document, same posted date), or null. Lets a run skip downloads it has
+ * already made: an interrupted run resumes, and monthly runs fetch only new
+ * documents.
+ */
+export function existingFileFor(names: string[], carrier: string, d: { policy: string; title: string; posted: string | null }): string | null {
+  if (!d.posted || !d.policy) return null;
+  const head = safeFileName(`${carrier} - ${d.policy} - `);
+  const tail = safeFileName(`${d.title} (posted ${d.posted})`);
+  // Only names that carry term dates count: an older name without them is
+  // fetched again so it can be saved under the full name.
+  return names.find((n) => n.startsWith(head) && termFromName(n) && n.replace(/\.pdf$/i, "").replace(/ \(\d+\)$/, "").endsWith(tail)) ?? null;
 }

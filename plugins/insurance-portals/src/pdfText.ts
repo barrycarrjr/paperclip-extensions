@@ -9,7 +9,7 @@ import * as pdfWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 // which the bundled plugin does not ship.
 (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfWorker;
 
-export async function pdfText(bytes: Buffer, maxPages = 6): Promise<string> {
+export async function pdfText(bytes: Buffer, maxPages = 40): Promise<string> {
   const task = pdfjs.getDocument({
     data: new Uint8Array(bytes),
     isEvalSupported: false,
