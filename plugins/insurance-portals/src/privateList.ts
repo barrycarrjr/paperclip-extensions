@@ -13,6 +13,7 @@ import { appendFile, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { expandHome } from "./localFolder.js";
+import { policyNumberIn } from "./safety.js";
 
 export const DEFAULT_PRIVATE_LIST = join(homedir(), ".config", "private-push-guard", "patterns.txt");
 
@@ -48,4 +49,20 @@ export async function addPrivateItems(path: string, carrier: string, items: stri
   const block = `${current.endsWith("\n") ? "" : "\n"}\n# Added by insurance-portals from ${carrier}, ${today}\n${fresh.join("\n")}\n`;
   await appendFile(path, block, "utf8");
   return fresh.length;
+}
+
+/**
+ * The policy number and property address of each document's policy, from
+ * labels like "12 Oak St - Policy 1234567".
+ */
+export function privateItemsFromPolicies(policies: string[]): string[] {
+  const out = new Set<string>();
+  for (const p of policies) {
+    if (!p) continue;
+    const n = policyNumberIn(p);
+    if (n) out.add(n);
+    const addr = p.split(" - Policy ")[0];
+    if (addr && addr !== p) out.add(addr);
+  }
+  return [...out];
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addPrivateItems, privateListPath } from "./privateList.js";
+import { addPrivateItems, privateItemsFromPolicies, privateListPath } from "./privateList.js";
 
 test("appends only new items, keeps existing lines and the file's privacy", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ip-list-"));
@@ -28,4 +28,12 @@ test("the list is used only if it exists, and can be turned off", async () => {
   await writeFile(file, "");
   assert.equal(privateListPath(file), file);
   assert.equal(privateListPath("off"), null);
+});
+
+test("each downloaded document's policy number and address are listed", () => {
+  assert.deepEqual(privateItemsFromPolicies(["12 Oak St - Policy 1234567", "12 Oak St - Policy 1234567", "Policy H37-291-123456-40", ""]).sort(), [
+    "12 Oak St",
+    "1234567",
+    "H37-291-123456-40",
+  ]);
 });

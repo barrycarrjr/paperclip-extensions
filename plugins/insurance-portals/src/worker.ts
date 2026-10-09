@@ -13,7 +13,7 @@ import { Browser, findChrome } from "./cdp.js";
 import { Drive, type SavedFile } from "./drive.js";
 import { LocalFolder } from "./localFolder.js";
 import { profileDirFor } from "./profiles.js";
-import { addPrivateItems, privateListPath } from "./privateList.js";
+import { addPrivateItems, privateItemsFromPolicies, privateListPath } from "./privateList.js";
 import { pdfText } from "./pdfText.js";
 import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
@@ -220,9 +220,13 @@ export async function fetchDocuments(
 
   // Keep the operator's private-details list current (only if it exists).
   const listPath = privateListPath(cfg.privateListFile);
-  if (listPath && result.identifiers.length) {
+  // Always include each downloaded (or already saved) document's own policy
+  // number and property address, whatever else the pages showed.
+  const fromDocs = privateItemsFromPolicies(sorted.map((d) => d.policy));
+  const privateItems = [...new Set([...fromDocs, ...result.identifiers])];
+  if (listPath && privateItems.length) {
     try {
-      const added = await addPrivateItems(listPath, carrier.name, result.identifiers, today());
+      const added = await addPrivateItems(listPath, carrier.name, privateItems, today());
       if (added) result.notes.push(`Added ${added} new policy/account number(s) or address(es) to the private-details list.`);
     } catch {
       result.notes.push("Could not update the private-details list.");
