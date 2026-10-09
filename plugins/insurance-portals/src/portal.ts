@@ -228,7 +228,26 @@ export function scanLogin(): LoginScan {
     !/(zip|postal|promo|coupon|search)/.test(describe(i));
   // Code boxes count even with the password box still showing: Selective
   // opens its code step as a pop-up over the sign-in form.
-  const codeInputs = inputs.filter(isCode);
+  let codeInputs = inputs.filter(isCode);
+  const mentionsCode = /\b(code|passcode|verification|one.?time)\b/i.test(document.body.innerText);
+  if (!codeInputs.length && !password && mentionsCode) {
+    // A row of one-character boxes is a code, whatever the boxes are called
+    // (Liberty Mutual's six boxes carry no "code" in their names).
+    const single = inputs.filter((i) => i.type !== "password" && i.maxLength > 0 && i.maxLength <= 2);
+    if (single.length >= 4 && single.length <= 8) codeInputs = single;
+  }
+  if (!codeInputs.length && !password && mentionsCode) {
+    // Or one real field made invisible and laid over boxes that are only
+    // drawn: still in the layout and enabled, just transparent.
+    const hiddenOne = ([...document.querySelectorAll("input")] as HTMLInputElement[]).find((i) => {
+      if (i.disabled || ["hidden", "checkbox", "radio", "submit", "button", "image", "password"].includes(i.type)) return false;
+      const r = i.getBoundingClientRect();
+      const st = getComputedStyle(i);
+      if (r.width < 2 || r.height < 2 || st.display === "none" || st.visibility === "hidden") return false;
+      return i.autocomplete === "one-time-code" || /numeric/.test(i.inputMode || "") || isCode(i);
+    });
+    if (hiddenOne) codeInputs = [hiddenOne];
+  }
   const username =
     inputs.find(
       (i) =>

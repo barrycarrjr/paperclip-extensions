@@ -1111,3 +1111,47 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
     server.close();
   }
 });
+
+for (const style of ["six named boxes", "one invisible field over drawn boxes"] as const)
+test(`Liberty Mutual code screen (${style}): 6-digit code entered, Continue pressed`, { skip: !chrome, timeout: 120_000 }, async () => {
+  let entered = "";
+  const boxes =
+    style === "six named boxes"
+      ? [1, 2, 3, 4, 5, 6].map((i) => `<input type="text" inputmode="numeric" maxlength="1" aria-label="Digit ${i}" class="d">`).join("")
+      : `<div style="position:relative;width:300px;height:50px"><div style="display:flex;gap:6px">${"<div style='width:40px;height:46px;border:1px solid #999'></div>".repeat(6)}</div>
+         <input id="otp" type="text" inputmode="numeric" maxlength="6" style="position:absolute;inset:0;opacity:0"></div>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") {
+      return html(`<form action="/u/mfa-email-challenge" method="get"><input name="username" placeholder="Email or username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    }
+    if (url.pathname === "/u/mfa-email-challenge") {
+      return html(`<h1>Check your email</h1><p>We emailed a code to m***@ex*****</p><p>Enter the code to continue.</p>
+        <form action="/u/done" method="get" onsubmit="document.getElementById('v').value=[...document.querySelectorAll('.d')].map(x=>x.value).join('')||document.getElementById('otp').value">
+        ${boxes}<input type="hidden" name="v" id="v"><button type="submit">Continue</button></form><button type="button">Send a new code</button>`);
+    }
+    if (url.pathname === "/u/done") {
+      entered = url.searchParams.get("v") ?? "";
+      return html(`<nav><a href="/a">Home</a><a href="/b">Policies</a><a href="/c">Billing</a><button>Log out</button></nav><main><p>Welcome</p></main>`);
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    await runCarrier(
+      browser,
+      { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "482913", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.equal(entered, "482913");
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
