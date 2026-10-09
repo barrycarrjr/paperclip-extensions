@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.5.2**: The "Stopped early to stay inside the 5-minute tool limit" note now appears only when the time limit actually cut work short. On the real Foremost run all 11 listed documents across 4 policies were fetched, yet the note appeared because the run finished close to the limit.
 - **v0.5.1**: Foremost shows every policy's documents at the same web address (the chosen policy is kept inside the page, not in the address). Pages and buttons already handled are now tracked per policy, not per address, so policies 2 onward are no longer skipped as "already read"; reaching another policy is judged by the page content changing, and a page that mentions a different policy but not the one wanted is skipped rather than saved under the wrong name. Reproduced with a test that fails on 0.4.3 exactly as the real run did.
 - **v0.5.0**: A review of everything seen on the real Foremost account plus the Liberty Mutual and Selective sign-in pages, fixing each thing that could stop a run rather than only the first failure.
   - Policy to policy without the browser's Back: for each policy the run tries the policy's own documents button, then the **Policies** menu in the page header, then the home page again, then the general documents picker. Bill, payment, autopay and claim entries are never chosen even though they name the policy too.

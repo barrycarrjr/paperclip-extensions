@@ -973,6 +973,12 @@ async function runCarrierInner(
   const tried = new Set<string>();
   let pagesVisited = 0;
   const workDeadline = opts.deadline - 25_000;
+  // Set only when the clock actually cut work short, so the note is true.
+  let ranOut = false;
+  const outOfTime = () => {
+    if (Date.now() > workDeadline) ranOut = true;
+    return ranOut;
+  };
   const enqueue = (u: string, ctx: string) => {
     const k = keyOf(u);
     if (visited.has(k) || queue.some((q) => keyOf(q) === k)) return;
@@ -991,7 +997,7 @@ async function runCarrierInner(
     // the term dates have been read from the PDFs.
     const docs = found.filter((l) => !l.footer && isDocumentLink(l.text, l.href, l.pdfHint));
     for (const d of docs) {
-      if (documents.length >= opts.maxDocuments || Date.now() > workDeadline) break;
+      if (documents.length >= opts.maxDocuments || outOfTime()) break;
       const id = `${ctx}|${d.text}|${d.href}`;
       if (tried.has(id)) continue;
       tried.add(id);
@@ -1213,8 +1219,8 @@ async function runCarrierInner(
     if (depth === 0 && perPolicyNumbers.length) {
       navLog("policies-found", { count: perPolicyNumbers.length });
       for (const n of perPolicyNumbers) {
-        if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
         if (policiesRead.has(n)) continue;
+        if (outOfTime() || documents.length >= opts.maxDocuments) break;
         if (await openPolicyDocs(n, here)) {
           // Make sure the page is about policy n before naming files after it:
           // it must not mention another policy unless it also mentions n.
@@ -1240,7 +1246,7 @@ async function runCarrierInner(
       // On a policy's own pages, the last button followed needs no way back:
       // the next policy is opened from wherever the run ends up.
       const needBack = depth === 0 || idx < toFollow.length - 1;
-      if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
+      if (outOfTime() || documents.length >= opts.maxDocuments) break;
       tried.add(`nav|${ctx}|${pageKey}|${nb.text}`);
       const n = policyNumberIn(nb.text);
       if (n && policiesRead.has(n)) continue;
@@ -1289,7 +1295,7 @@ async function runCarrierInner(
       await snap(page, `opened-${pagesVisited}`, shown.map((l) => l.text));
       await takeDocs(shown, navCtx);
       for (const item of shown.filter((l) => !isDocumentLink(l.text, l.href, l.pdfHint)).slice(0, 10)) {
-        if (Date.now() > workDeadline) break;
+        if (outOfTime()) break;
         const itemPolicy = policyNumberIn(item.text);
         if (itemPolicy && policiesRead.has(itemPolicy)) continue;
         if (/^(close|cancel|dismiss|back)\b/i.test(item.text)) continue;
@@ -1323,7 +1329,7 @@ async function runCarrierInner(
   visited.add(keyOf(start));
   pagesVisited++;
   await readPage("");
-  while (queue.length && pagesVisited < 15 && Date.now() < workDeadline && documents.length < opts.maxDocuments) {
+  while (queue.length && pagesVisited < 15 && !outOfTime() && documents.length < opts.maxDocuments) {
     const url = queue.shift()!;
     const k = keyOf(url);
     if (visited.has(k)) continue;
@@ -1339,7 +1345,7 @@ async function runCarrierInner(
     );
   }
   if (documents.length >= opts.maxDocuments) notes.push(`Stopped at the limit of ${opts.maxDocuments} documents.`);
-  if (Date.now() >= workDeadline) notes.push("Stopped early to stay inside the 5-minute tool limit; some documents may be missing.");
+  if (ranOut) notes.push("Stopped early to stay inside the 5-minute tool limit; some documents may be missing.");
   if (opts.debugDir) {
     await writeFile(join(opts.debugDir, "blocked-requests.json"), JSON.stringify(blockedPaths, null, 2)).catch(() => undefined);
   }
