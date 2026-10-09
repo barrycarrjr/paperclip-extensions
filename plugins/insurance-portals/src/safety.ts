@@ -20,7 +20,7 @@ const DOCUMENT =
 
 /** Link text that leads toward documents or a policy's own page. */
 const NAVIGATE =
-  /(\bdocuments?\b|\bpolicy (?:details|summary|overview|information|info)\b|\bview (?:policy|details|documents)\b|\bmy polic(?:y|ies)\b|^\s*polic(?:y|ies)\s*$|\bcoverages?\b|\bid cards?\b)/i;
+  /(\bdocuments?\b|\bpolicy (?:details|summary|overview|information|info)\b|\bview (?:policy|details|documents)\b|\bmy polic(?:y|ies)\b|^\s*polic(?:y|ies)\b|\bselect (?:a |your )?polic(?:y|ies)\b|\bcoverages?\b|\bid cards?\b)/i;
 
 /** Words that mark an older document we were not asked for. */
 const NOT_CURRENT = /\b(prior|previous|expired|archived?|history|historical|cancell?ed|old)\b/i;

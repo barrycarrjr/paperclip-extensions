@@ -15,7 +15,8 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Browser, Page, sleep } from "./cdp.js";
 import {
-    isDocumentLink,
+  isDangerous,
+  isDocumentLink,
   isNavigationLink,
   isSafeNavigationUrl,
   shouldBlockRequest,
@@ -307,6 +308,8 @@ interface LinkInfo {
   text: string;
   href: string;
   context: string;
+  /** Inside the page footer: never used for navigation. */
+  footer: boolean;
 }
 
 function scanLinks(): LinkInfo[] {
@@ -325,6 +328,8 @@ function scanLinks(): LinkInfo[] {
     const text = [h.innerText, (h as unknown as HTMLInputElement).value, h.getAttribute("aria-label"), h.getAttribute("title")]
       .filter((x) => typeof x === "string" && x.trim())
       .join(" ")
+      // Icon-font ligatures read as words ("chevron_right", "open_in_new").
+      .replace(/\b(?:chevron|expand|keyboard_arrow|arrow|open_in|navigate|arrow_drop)_[a-z_]+\b/g, " ")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 120);
@@ -337,7 +342,8 @@ function scanLinks(): LinkInfo[] {
     }
     const box = el.closest("tr, li, article, section, [class*=card], [class*=Card], [class*=row], [class*=policy], [class*=Policy]");
     const context = box ? (box as HTMLElement).innerText.replace(/\s+/g, " ").trim().slice(0, 140) : "";
-    out.push({ mark: m, text, href, context });
+    const footer = !!el.closest("footer, [role=contentinfo], [class*=footer], [class*=Footer], [id*=footer]");
+    out.push({ mark: m, text, href, context, footer });
   }
   (window as any).__pcipN = n;
   return out;
@@ -725,6 +731,81 @@ async function runCarrierInner(
     return true;
   };
 
+  /** Let the page finish: loading screen gone, then a short pause for late content. */
+  const settle = async (ms = 30_000) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until && (await page.evaluate<boolean>(pageBusy).catch(() => false))) await sleep(1000);
+    // A page whose main area is still empty is usually still rendering:
+    // wait for some text, then for it to stop changing.
+    const mainUntil = Date.now() + 15_000;
+    let last = -1;
+    while (Date.now() < mainUntil) {
+      const len = await page
+        .evaluate<number>(() => {
+          const m = document.querySelector("main, [role=main]");
+          return m ? (m as HTMLElement).innerText.trim().length : -2;
+        })
+        .catch(() => -2);
+      if (len === -2 || (len > 0 && len === last)) break;
+      last = len;
+      await sleep(700);
+    }
+    await sleep(500);
+  };
+  /** Find a visible element by its exact link text and mark it, or null. */
+  const markByText = (text: string) =>
+    page
+      .evaluate<LinkInfo[]>(scanLinks)
+      .then((ls) => ls.find((l) => l.text === text && !l.footer)?.mark ?? null)
+      .catch(() => null);
+
+  /** Save every document link in `found`, by fetching it or clicking it. */
+  const takeDocs = async (found: LinkInfo[]) => {
+    const docs = found.filter((l) => isDocumentLink(l.text, l.href));
+    for (const d of docs) {
+      if (documents.length >= opts.maxDocuments || Date.now() > workDeadline) break;
+      const id = `${d.text}|${d.href}|${d.context}`;
+      if (tried.has(id)) continue;
+      tried.add(id);
+      const label = makeLabel(d);
+      if (d.href && isSafeNavigationUrl(d.href, carrier.siteDomains)) {
+        const got = await fetchInPage(page, d.href);
+        if (got) {
+          const bytes = Buffer.from(got.b64, "base64");
+          if (isPdf(bytes)) {
+            if (addPdf(label, bytes)) opts.log("document-saved-in-memory");
+            continue;
+          }
+        }
+      }
+      const before = await page.url();
+      const clickAt = Date.now();
+      await page.clickMark(d.mark);
+      const until = Date.now() + 15_000;
+      const arrived = () => captured.some((c) => c.at >= clickAt) || pdfUrls.some((u) => u.at >= clickAt);
+      while (Date.now() < until && !arrived()) await sleep(500);
+      await sleep(800);
+      let got = 0;
+      for (const c of captured.filter((c) => c.at >= clickAt)) if (addPdf(label, c.bytes)) got++;
+      if (got === 0) {
+        for (const u of pdfUrls.filter((u) => u.at >= clickAt)) {
+          if (!isSafeNavigationUrl(u.url, carrier.siteDomains)) continue;
+          const again = await fetchInPage(page, u.url);
+          const bytes = again ? Buffer.from(again.b64, "base64") : null;
+          if (bytes && isPdf(bytes) && addPdf(label, bytes)) break;
+        }
+      }
+      // Close tabs the click opened, and return to where we were.
+      for (const p of [...browser.pages.values()]) {
+        if (p !== page) {
+          await browser.send("Target.closeTarget", { targetId: p.targetId }).catch(() => undefined);
+          browser.pages.delete(p.targetId);
+        }
+      }
+      if ((await page.url()) !== before) await page.goto(before).catch(() => undefined);
+    }
+  };
+
   const queue: string[] = [await page.url()];
   const visited = new Set<string>();
   const tried = new Set<string>();
@@ -742,8 +823,7 @@ async function runCarrierInner(
     // Single-page portals swap content in place; let a few safe in-page
     // navigation clicks happen on each page before moving on.
     for (let round = 0; round < 4 && Date.now() < workDeadline; round++) {
-      const settleUntil = Date.now() + 45_000;
-      while (Date.now() < settleUntil && (await page.evaluate<boolean>(pageBusy).catch(() => false))) await sleep(1000);
+      await settle();
       const links = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
       await snap(page, `page-${pagesVisited}-${round}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "" })));
 
@@ -754,58 +834,59 @@ async function runCarrierInner(
         }
       }
 
-      const docs = links.filter((l) => isDocumentLink(l.text, l.href));
-      for (const d of docs) {
-        if (documents.length >= opts.maxDocuments || Date.now() > workDeadline) break;
-        const id = `${d.text}|${d.href}|${d.context}`;
-        if (tried.has(id)) continue;
-        tried.add(id);
-        const label = makeLabel(d);
-        if (d.href && isSafeNavigationUrl(d.href, carrier.siteDomains)) {
-          const got = await fetchInPage(page, d.href);
-          if (got) {
-            const bytes = Buffer.from(got.b64, "base64");
-            if (isPdf(bytes)) {
-              if (addPdf(label, bytes)) opts.log("document-saved-in-memory");
-              continue;
-            }
-          }
-        }
-        const before = await page.url();
-        const clickAt = Date.now();
-        await page.clickMark(d.mark);
-        const until = Date.now() + 15_000;
-        const arrived = () => captured.some((c) => c.at >= clickAt) || pdfUrls.some((u) => u.at >= clickAt);
-        while (Date.now() < until && !arrived()) await sleep(500);
-        await sleep(800);
-        let got = 0;
-        for (const c of captured.filter((c) => c.at >= clickAt)) if (addPdf(label, c.bytes)) got++;
-        if (got === 0) {
-          for (const u of pdfUrls.filter((u) => u.at >= clickAt)) {
-            if (!isSafeNavigationUrl(u.url, carrier.siteDomains)) continue;
-            const again = await fetchInPage(page, u.url);
-            const bytes = again ? Buffer.from(again.b64, "base64") : null;
-            if (bytes && isPdf(bytes) && addPdf(label, bytes)) break;
-          }
-        }
-        // Close tabs the click opened, and return to where we were.
-        for (const p of [...browser.pages.values()]) {
-          if (p !== page) {
-            await browser.send("Target.closeTarget", { targetId: p.targetId }).catch(() => undefined);
-            browser.pages.delete(p.targetId);
-          }
-        }
-        if ((await page.url()) !== before) await page.goto(before).catch(() => undefined);
-      }
+      await takeDocs(links);
 
-      const navButtons = links.filter((l) => !l.href && isNavigationLink(l.text) && !tried.has(`nav|${l.text}`));
+      const here = await page.url();
+      const pageKey = here.split("#")[0];
+      const navButtons = links.filter(
+        (l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`),
+      );
       if (navButtons.length === 0) break;
       const nb = navButtons[0];
-      tried.add(`nav|${nb.text}`);
+      tried.add(`nav|${pageKey}|${nb.text}`);
+      const shownBefore = new Set(links.map((l) => l.text));
       await page.clickMark(nb.mark);
-      await page.waitForLoad(15_000);
+      await settle(15_000);
       const now = await page.url();
-      if (!visited.has(now.split("#")[0])) visited.add(now.split("#")[0]);
+      if (now !== here) {
+        // The button moved to another page; the next round reads it.
+        visited.add(now.split("#")[0]);
+        continue;
+      }
+      // Same page: the button may have opened a menu (Foremost's "Policies"
+      // lists each policy). Visit every new, safe item it showed.
+      const shown = (await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).filter(
+        (l) => !shownBefore.has(l.text) && !l.footer && l.text.length <= 80 && !isDangerous(l.text),
+      );
+      await snap(page, `menu-${pagesVisited}-${round}`, shown.map((l) => l.text));
+      // Documents the click revealed (a "Documents" tab) are saved right here;
+      // the rest are places to visit (a "Policies" menu).
+      await takeDocs(shown);
+      const opened = shown.filter((l) => !isDocumentLink(l.text, l.href));
+      for (const item of opened.slice(0, 10)) {
+        if (Date.now() > workDeadline) break;
+        if (tried.has(`item|${item.text}`)) continue;
+        tried.add(`item|${item.text}`);
+        let m = await markByText(item.text);
+        if (!m) {
+          const reopen = await markByText(nb.text);
+          if (reopen) await page.clickMark(reopen);
+          await sleep(1000);
+          m = await markByText(item.text);
+        }
+        if (!m) continue;
+        await page.clickMark(m);
+        await settle(20_000);
+        const went = await page.url();
+        if (went !== here) {
+          const k = went.split("#")[0];
+          if (!visited.has(k) && !queue.includes(went) && !/\.pdf(?:$|[?#])/i.test(went) && isSafeNavigationUrl(went, carrier.siteDomains)) {
+            queue.push(went);
+          }
+          await page.goto(here).catch(() => undefined);
+          await settle(20_000);
+        }
+      }
     }
   }
 

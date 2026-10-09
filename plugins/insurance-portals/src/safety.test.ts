@@ -143,3 +143,12 @@ test("real carrier senders pass; look-alikes of them fail", () => {
   // A carrier's domain is never accepted for another carrier.
   assert.equal(senderAllowed("AccountVerification@underwritingalerts.selective.com", liberty), false);
 });
+
+test("Foremost's policy menu counts as navigation; icon words are ignored", () => {
+  assert.equal(isNavigationLink("Policies Select policy from dropdown"), true);
+  assert.equal(isNavigationLink("Policies"), true);
+  assert.equal(isNavigationLink("Select a policy"), true);
+  assert.equal(isNavigationLink("Payments"), false);
+  assert.equal(isNavigationLink("Policy change request"), false);
+  assert.equal(isNavigationLink("My profile"), false);
+});

@@ -516,3 +516,65 @@ test("clicks 'Trust this browser' (not 'Not now') when offered after the code", 
     server.close();
   }
 });
+
+test("Foremost-style dashboard: opens the Policies menu and fetches each policy's declarations", { skip: !chrome, timeout: 200_000 }, async () => {
+  const hits: string[] = [];
+  const app = `<header><nav>
+      <button id="home">Homepage</button>
+      <button id="pol">Policies <span class="material-icons">chevron_right</span> Select policy from dropdown</button>
+      <button>Payments</button><button>Claims</button><button>My profile</button><button>Sign out</button>
+      <div id="menu" style="display:none"><button onclick="go('/policy/1')">Landlord H-111</button><button onclick="go('/policy/2')">Landlord H-222</button></div>
+    </nav></header>
+    <main id="main"></main>
+    <footer><a href="#">Homepage</a><a href="#">Policies</a><a href="#">Payments</a></footer>
+    <script>
+      document.getElementById('pol').onclick=()=>{document.getElementById('menu').style.display='block'};
+      function go(p){history.pushState({},'',p);render()}
+      function render(){
+        const m=document.getElementById('main'); m.innerHTML='';
+        document.getElementById('menu').style.display='none';
+        const p=location.pathname;
+        setTimeout(()=>{
+          if(p==='/home'){m.innerHTML='<h1>Welcome back</h1><p>Your policies are listed under Policies.</p>';return}
+          const n=p.split('/').pop();
+          m.innerHTML='<h1>Policy H-'+n+n+n+'</h1><button id="docs">Documents</button><div id="list"></div>';
+          document.getElementById('docs').onclick=()=>{document.getElementById('list').innerHTML='<a href="/docs/dec-'+n+'.pdf">Declarations page</a> <a href="/pay">Make a payment</a>'};
+        },3000);
+      }
+      render();
+    </script>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(url.pathname);
+    if (url.pathname === "/login") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(`<form action="/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`));
+    }
+    if (url.pathname === "/home" || url.pathname.startsWith("/policy/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(app));
+    }
+    const doc = /^\/docs\/dec-(\d)\.pdf$/.exec(url.pathname);
+    if (doc) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`dec-${doc[1]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 190_000, maxDocuments: 10, debugDir: process.env.PC_DEBUG_DIR ?? null, log: (x) => process.env.PC_TRACE && console.log(Date.now() % 1000000, "step", x) },
+    );
+    const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
+    assert.deepEqual(tags, ["% dec-1", "% dec-2"], `hits: ${hits.join(", ")}`);
+    assert.ok(!hits.includes("/pay"), "never opened the payment page");
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
