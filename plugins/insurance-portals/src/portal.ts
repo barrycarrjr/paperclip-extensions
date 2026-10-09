@@ -1339,7 +1339,8 @@ async function runCarrierInner(
     await readPage(pageContext.get(k) ?? "");
   }
 
-  if (documents.length === 0) {
+  // Documents skipped as already saved were found too; only say "none" when nothing was.
+  if (documents.length === 0 && skipped.length === 0) {
     notes.push(
       `Signed in to ${carrier.name} but found no policy or declarations PDFs on the pages checked. The portal layout may need tuning; turn on 'Debug screenshots' in the plugin settings and run again.`,
     );
