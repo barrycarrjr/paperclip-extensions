@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.2**: Login codes laid out in an email table (Selective puts the 4-digit code on its own line under "Here is the One-Time Code.") are now read; table bars and line breaks between the word "code" and the number no longer hide it. Phone numbers and dates next to the word "code" are still never taken for the code. On the first real Selective run the email arrived within seconds but the code was not recognised, so the run waited out its two minutes.
 - **v0.6.1**: New setting **Private-details list**. After each run, the policy and account numbers and street addresses the portal showed are appended to a list of details that must never be published (for example the list a pre-push check reads), if not already listed. Blank uses `~/.config/private-push-guard/patterns.txt` only if it exists; `off` turns it off. The plugin only appends, never removes, and never logs the values.
 - **v0.6.0**: Prepared for Liberty Mutual and Selective from their sign-in pages and public help, with a full rehearsal of each in tests.
   - Policy numbers with letters and dashes ("H37-291-123456-40") are recognised; phone numbers, dates and card endings are not policy numbers.

@@ -196,3 +196,17 @@ test("policy numbers with letters and dashes; phones and dates are not policy nu
   assert.equal(policyNumberIn("Card ending •••• 0000"), null);
   assert.deepEqual(policyAddresses(["Homeowners policy H37-291-123456-40 at 12 Oak St"]), { "H37-291-123456-40": "12 Oak St" });
 });
+
+test("Selective's table-style code email (made-up code)", () => {
+  const body = [
+    "| |", "| MySelective Password Reset |", "| |", "| MySelective |", "| One-Time Code |", "| |", "|   |",
+    "| Here is the One-Time Code. |", "|   |", "| 7302 |", "|   |",
+    "| This is a single use code that expires in 10 minutes. |", "|   |",
+    "| If you did not request this code, please contact us immediately at 800-555-0100 [](18005550100) . |",
+    "| Copyright 2025 Example Ins. Group, Inc., 1 Main Ave., Springfield, NJ 07000. |",
+  ].join("\n");
+  assert.equal(extractLoginCode("Here is Your MySelective One Time-Code", body), "7302");
+  // A phone number or a year near the word "code" is never taken as the code.
+  assert.equal(extractLoginCode("Code request", "If you did not request this code, call 800-555-0100."), null);
+  assert.equal(extractLoginCode("Your code", "Code valid until 2026-05-14 only."), null);
+});

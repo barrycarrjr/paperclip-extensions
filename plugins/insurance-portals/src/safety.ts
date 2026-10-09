@@ -93,9 +93,12 @@ export function senderAllowed(address: string, domains: readonly string[]): bool
  * Returns null rather than guessing between several candidates.
  */
 export function extractLoginCode(subject: string, body: string): string | null {
-  const text = `${subject}\n${body}`.replace(/ /g, " ");
+  // Emails laid out as tables put the code on its own line ("Here is the
+  // One-Time Code." | | "1234", as Selective does): table bars, non-breaking
+  // spaces and line breaks are flattened so the code is "near" the word again.
+  const text = `${subject}\n${body}`.replace(/[|\u00a0]/g, " ").replace(/\s+/g, " ");
   const near =
-    /(?:code|passcode|pass code|pin|verification|one[- ]time|security|otp)[^0-9\n]{0,60}?(?:is|:)?\s*\b(\d{4,8})\b/i.exec(text);
+    /(?:code|passcode|pass code|pin|verification|one[- ]time|security|otp)[^0-9]{0,60}?(?:is|:)?\s*\b(\d{4,8})\b(?![-./]\d)/i.exec(text);
   if (near) return near[1];
   const sixes = [...text.matchAll(/(?<![\d$.,/-])\b(\d{6})\b(?![\d,/-]|\.\d)/g)].map((m) => m[1]);
   const unique = [...new Set(sixes)];
