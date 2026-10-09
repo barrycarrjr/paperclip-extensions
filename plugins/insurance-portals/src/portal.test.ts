@@ -1264,3 +1264,44 @@ test("code boxes that jump back on Backspace and forward on typing get the right
     server.close();
   }
 });
+
+test("Liberty Mutual style: waits for 'Loading documents...' under a full menu", { skip: !chrome, timeout: 120_000 }, async () => {
+  const nav = `<header><a href="/account/homepage">Home</a><a href="/account/homepage">Policies</a><a href="/account/homepage">Billing</a>
+    <a href="/account/homepage">Claims</a><a href="/account/documents">Documents</a><a href="/account/homepage">Profile</a><button>Support</button><button>Log out</button></header>`;
+  const foot = `<footer>${["Privacy policy", "Security policy", "Member information", "Underwriting companies"].map((t) => `<a href="/x">${t}</a>`).join("")}</footer>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") return html(`<form action="/account/homepage" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/account/homepage") {
+      return html(`${nav}<main id="m"><div class="spin"><div style="width:60px;height:60px;border:4px solid teal;border-radius:50%"></div><p>Loading</p></div></main>${foot}
+        <script>setTimeout(()=>{document.getElementById('m').innerHTML='<h1>Welcome</h1><p>Your policies</p>'},6000)</script>`);
+    }
+    if (url.pathname === "/account/documents") {
+      return html(`${nav}<main id="m"><h1>My documents</h1><div><p>Loading documents...</p></div></main>${foot}
+        <script>setTimeout(()=>{document.getElementById('m').innerHTML='<h1>My documents</h1><a href="/docs/dec.pdf">Declarations 09/01/2026</a>'},7000)</script>`);
+    }
+    if (url.pathname === "/docs/dec.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("lm-dec"));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 110_000, maxDocuments: 5, debugDir: null, log: () => undefined },
+    );
+    assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% lm-dec"]);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

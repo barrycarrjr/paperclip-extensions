@@ -132,6 +132,16 @@ export function pageBusy(): boolean {
     (el) => !el.closest("footer, [role=contentinfo], [class*=footer], [id*=footer]") && vis(el),
   ).length;
   if (spinner && links < 6) return true;
+  // Words that say the page is still fetching ("Loading documents...",
+  // "Please wait"), or a spinner inside the main area, mean "not ready"
+  // however many menu and footer links are already on screen (Liberty Mutual).
+  const busyWords = /^\s*(loading\b.{0,40}|please wait.{0,40}|one moment.{0,30}|fetching\b.{0,40}|retrieving\b.{0,40})$/i;
+  const saysLoading = [...document.querySelectorAll("main *, [role=main] *, body > * *")].some(
+    (el) => el.children.length === 0 && busyWords.test((el as HTMLElement).innerText || "") && vis(el),
+  );
+  if (saysLoading) return true;
+  const main = document.querySelector("main, [role=main]");
+  if (main && [...main.querySelectorAll('[role=progressbar], [aria-busy=true], [class*=spinner], [class*=Spinner], [class*=loader], [class*=Loader], [class*=loading], [class*=Loading]')].some(vis)) return true;
   // A fixed layer over most of the window (a dimmed "please wait" screen).
   return [...document.querySelectorAll("body *")].some((el) => {
     const st = getComputedStyle(el as HTMLElement);
