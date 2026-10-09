@@ -204,6 +204,7 @@ export async function fetchDocuments(
       files,
       pagesVisited: result.pagesVisited,
       blockedWriteRequests: result.blockedRequests,
+      blockedPaths: result.blockedPaths,
       notes: result.notes,
       debugDir,
       seconds: Math.round((Date.now() - started) / 1000),

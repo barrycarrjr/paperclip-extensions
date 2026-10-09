@@ -16,7 +16,7 @@ const DANGER =
 
 /** Link text that names a policy document worth saving. */
 const DOCUMENT =
-  /(declaration|\bdecs?\b|dec page|policy (?:packet|document|documents|jacket|booklet|contract|form|forms|pdf)|full policy|current policy|insurance (?:card|id)|\bid cards?\b|evidence of (?:insurance|property insurance)|certificate of insurance|\bview pdf\b|\bdownload\b.*\bpolicy\b|\bpolicy\b.*\b(?:download|pdf)\b)/i;
+  /(declaration|\bdecs?\b|dec page|policy (?:packet|jacket|booklet|contract|pdf)|full policy|current policy|insurance (?:card|id)|\bid cards?\b|evidence of (?:insurance|property insurance)|certificate of insurance|\bview pdf\b|\bdownload\b.*\bpolicy\b|\bpolicy\b.*\b(?:download|pdf)\b)/i;
 
 /** Link text that leads toward documents or a policy's own page. */
 const NAVIGATE =
@@ -29,8 +29,12 @@ export function isDangerous(label: string): boolean {
   return DANGER.test(label);
 }
 
-/** True for a link/button worth saving as a document. */
-export function isDocumentLink(label: string, href = ""): boolean {
+/**
+ * True for a link/button worth saving as a document. `pdfHint` means the
+ * page marks the link as a PDF (a PDF icon, "PDF" in its label), as
+ * Foremost's document list does for entries named only "RENEWAL 06/29/2026".
+ */
+export function isDocumentLink(label: string, href = "", pdfHint = false): boolean {
   const text = label.trim();
   if (!text && !href) return false;
   if (NOT_CURRENT.test(text)) return false;
@@ -38,8 +42,9 @@ export function isDocumentLink(label: string, href = ""): boolean {
   // a document but is a settings change. Only the visible text is judged; an
   // address may carry "pay" in an id ("payplan.pdf") without meaning it.
   if (text && isDangerous(text)) return false;
-  if (/(bill|invoice|payment|statement)/i.test(text)) return false;
+  if (/(bill|invoice|payment|statement|receipt)/i.test(text)) return false;
   if (DOCUMENT.test(text)) return true;
+  if (pdfHint && !/\bdocuments\b/i.test(text)) return true;
   return /\.pdf(?:$|[?#])/i.test(href) && /(polic|declar|\bdec|idcard|id-card)/i.test(href);
 }
 
@@ -134,4 +139,50 @@ export function isSafeNavigationUrl(href: string, siteDomains: readonly string[]
   return !/(pay|billing|autopay|cancel|log-?out|sign-?out|logoff|claim|quote|enroll|paperless|preference|profile|setting|change|update|delete|remove)/i.test(
     u.pathname + u.search,
   );
+}
+
+/** Parse the first US (MM/DD/YYYY) or ISO date in `text`, as YYYY-MM-DD. */
+export function findDate(text: string): string | null {
+  const us = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/.exec(text);
+  if (us) return `${us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
+  const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(text);
+  return iso ? `${iso[1]}-${iso[2]}-${iso[3]}` : null;
+}
+
+/**
+ * From one policy's document list, keep the current term: everything posted
+ * on or after the newest renewal / new-business / declarations document (or,
+ * if none is named that way, only the newest). Undated entries are kept.
+ */
+export function currentTerm<T extends { text: string }>(docs: T[]): T[] {
+  const dated = docs.map((d) => ({ d, date: findDate(d.text) }));
+  const withDates = dated.filter((x) => x.date);
+  if (withDates.length < 2) return docs;
+  const starts = withDates.filter((x) => /\b(renewal|new business|declarations?|dec page|rewrite|reinstatement)\b/i.test(x.d.text));
+  const pool = starts.length ? starts : withDates;
+  const cutoff = pool.map((x) => x.date!).sort().at(-1)!;
+  return dated.filter((x) => !x.date || x.date >= cutoff).map((x) => x.d);
+}
+
+/**
+ * Map each policy number seen on a page to the street address shown with it,
+ * e.g. "Managed policies 12 Oak St policy number 1234567" gives
+ * { "1234567": "12 Oak St" }.
+ */
+export function policyAddresses(texts: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const street =
+    /\b(\d{1,6} [A-Za-z0-9.' ]{1,40}? (?:St|Street|Pl|Place|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Sq|Square|Trl|Trail|Pike|Row|Aly|Alley)\b\.?)/;
+  for (const t of texts) {
+    const addr = street.exec(t)?.[1];
+    if (!addr) continue;
+    for (const n of t.match(/\d{7,}/g) ?? []) out[n] ??= addr.replace(/\.$/, "").trim();
+  }
+  return out;
+}
+
+/** The longest policy-looking number (7+ digits) in `text`, if any. */
+export function policyNumberIn(text: string): string | null {
+  const all = text.match(/\d{7,}/g);
+  return all ? all.sort((a, b) => b.length - a.length)[0] : null;
 }

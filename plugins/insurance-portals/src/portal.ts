@@ -15,10 +15,14 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Browser, Page, sleep } from "./cdp.js";
 import {
+  currentTerm,
+  findDate,
   isDangerous,
   isDocumentLink,
   isNavigationLink,
   isSafeNavigationUrl,
+  policyAddresses,
+  policyNumberIn,
   shouldBlockRequest,
 } from "./safety.js";
 
@@ -82,6 +86,8 @@ export interface RunResult {
   documents: CapturedPdf[];
   pagesVisited: number;
   blockedRequests: number;
+  /** Method and address (no query) of each blocked request, for checking the guard. */
+  blockedPaths: string[];
   notes: string[];
 }
 
@@ -310,6 +316,10 @@ interface LinkInfo {
   context: string;
   /** Inside the page footer: never used for navigation. */
   footer: boolean;
+  /** The words shown on screen (no screen-reader text), icon names removed. */
+  shown: string;
+  /** The page marks it as a PDF (a PDF icon, "PDF" in its label or address). */
+  pdfHint: boolean;
 }
 
 function scanLinks(): LinkInfo[] {
@@ -325,11 +335,14 @@ function scanLinks(): LinkInfo[] {
   for (const el of els) {
     if (!visible(el)) continue;
     const h = el as HTMLAnchorElement;
+    const raw = [h.innerText, h.getAttribute("aria-label"), h.getAttribute("title"), h.getAttribute("href")].join(" ");
+    const pdfHint = /picture_as_pdf|\bpdf\b|\.pdf\b/i.test(raw);
+    // Icon-font ligatures are snake_case words ("chevron_right", "picture_as_pdf").
+    const shown = (h.innerText || "").replace(/\b[a-z]+(?:_[a-z]+)+\b/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
     const text = [h.innerText, (h as unknown as HTMLInputElement).value, h.getAttribute("aria-label"), h.getAttribute("title")]
       .filter((x) => typeof x === "string" && x.trim())
       .join(" ")
-      // Icon-font ligatures read as words ("chevron_right", "open_in_new").
-      .replace(/\b(?:chevron|expand|keyboard_arrow|arrow|open_in|navigate|arrow_drop)_[a-z_]+\b/g, " ")
+      .replace(/\b[a-z]+(?:_[a-z]+)+\b/g, " ")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 120);
@@ -343,7 +356,7 @@ function scanLinks(): LinkInfo[] {
     const box = el.closest("tr, li, article, section, [class*=card], [class*=Card], [class*=row], [class*=policy], [class*=Policy]");
     const context = box ? (box as HTMLElement).innerText.replace(/\s+/g, " ").trim().slice(0, 140) : "";
     const footer = !!el.closest("footer, [role=contentinfo], [class*=footer], [class*=Footer], [id*=footer]");
-    out.push({ mark: m, text, href, context, footer });
+    out.push({ mark: m, text, href, context, footer, shown, pdfHint });
   }
   (window as any).__pcipN = n;
   return out;
@@ -705,11 +718,18 @@ async function runCarrierInner(
 
   // ---------------- read-only from here ----------------
   let blockedRequests = 0;
+  const blockedPaths: string[] = [];
   const guard = async (p: Page) => {
     p.on("Fetch.requestPaused", (e) => {
       const req = e.request as { method: string; url: string };
       if (shouldBlockRequest(req.method, req.url)) {
         blockedRequests++;
+        try {
+          const u = new URL(req.url);
+          if (blockedPaths.length < 50) blockedPaths.push(`${req.method} ${u.hostname}${u.pathname}`);
+        } catch {
+          // keep the count only
+        }
         opts.log("blocked-write-request", { method: req.method });
         void p.send("Fetch.failRequest", { requestId: e.requestId, errorReason: "BlockedByClient" }).catch(() => undefined);
       } else {
@@ -759,15 +779,45 @@ async function runCarrierInner(
       .then((ls) => ls.find((l) => l.text === text && !l.footer)?.mark ?? null)
       .catch(() => null);
 
-  /** Save every document link in `found`, by fetching it or clicking it. */
-  const takeDocs = async (found: LinkInfo[]) => {
-    const docs = found.filter((l) => isDocumentLink(l.text, l.href));
+  // What each page is about ("12 Oak St Policy 1234567"), learnt from the
+  // button that led there; used to name the files saved from it.
+  const pageContext = new Map<string, string>();
+  const addresses: Record<string, string> = {};
+  const contextFor = (text: string, fallback = ""): string => {
+    const n = policyNumberIn(text);
+    if (!n) return fallback;
+    return [addresses[n], `Policy ${n}`].filter(Boolean).join(" - ");
+  };
+  const keyOf = (u: string) => u.split("#")[0];
+
+  const queue: string[] = [];
+  const visited = new Set<string>();
+  const tried = new Set<string>();
+  let pagesVisited = 0;
+  const workDeadline = opts.deadline - 25_000;
+  const enqueue = (u: string, ctx: string) => {
+    const k = keyOf(u);
+    if (visited.has(k) || queue.some((q) => keyOf(q) === k)) return;
+    if (/\.pdf(?:$|[?#])/i.test(u) || !isSafeNavigationUrl(u, carrier.siteDomains)) return;
+    queue.push(u);
+    if (ctx && !pageContext.has(k)) pageContext.set(k, ctx);
+  };
+
+  /**
+   * Save the document links in `found`. On a list of dated PDFs only the
+   * current term is kept. A link that turns out to open a page rather than
+   * a PDF is queued as a page to read instead.
+   */
+  const takeDocs = async (found: LinkInfo[], ctx: string) => {
+    const docs = currentTerm(
+      found.filter((l) => !l.footer && isDocumentLink(l.text, l.href, l.pdfHint)).map((l) => ({ ...l, text: l.text })),
+    );
     for (const d of docs) {
       if (documents.length >= opts.maxDocuments || Date.now() > workDeadline) break;
-      const id = `${d.text}|${d.href}|${d.context}`;
+      const id = `${ctx}|${d.text}|${d.href}`;
       if (tried.has(id)) continue;
       tried.add(id);
-      const label = makeLabel(d);
+      const label = makeLabel(d, contextFor(d.text, ctx));
       if (d.href && isSafeNavigationUrl(d.href, carrier.siteDomains)) {
         const got = await fetchInPage(page, d.href);
         if (got) {
@@ -781,9 +831,14 @@ async function runCarrierInner(
       const before = await page.url();
       const clickAt = Date.now();
       await page.clickMark(d.mark);
-      const until = Date.now() + 15_000;
       const arrived = () => captured.some((c) => c.at >= clickAt) || pdfUrls.some((u) => u.at >= clickAt);
-      while (Date.now() < until && !arrived()) await sleep(500);
+      // A PDF usually shows up within seconds. If the click moved to another
+      // page instead, stop waiting early and read that page later.
+      const until = Date.now() + 15_000;
+      while (Date.now() < until && !arrived()) {
+        await sleep(500);
+        if (Date.now() - clickAt > 5_000 && (await page.url()) !== before && !arrived()) break;
+      }
       await sleep(800);
       let got = 0;
       for (const c of captured.filter((c) => c.at >= clickAt)) if (addPdf(label, c.bytes)) got++;
@@ -792,9 +847,13 @@ async function runCarrierInner(
           if (!isSafeNavigationUrl(u.url, carrier.siteDomains)) continue;
           const again = await fetchInPage(page, u.url);
           const bytes = again ? Buffer.from(again.b64, "base64") : null;
-          if (bytes && isPdf(bytes) && addPdf(label, bytes)) break;
+          if (bytes && isPdf(bytes) && addPdf(label, bytes)) {
+            got++;
+            break;
+          }
         }
       }
+      if (got > 0) opts.log("document-saved-in-memory");
       // Close tabs the click opened, and return to where we were.
       for (const p of [...browser.pages.values()]) {
         if (p !== page) {
@@ -802,92 +861,94 @@ async function runCarrierInner(
           browser.pages.delete(p.targetId);
         }
       }
-      if ((await page.url()) !== before) await page.goto(before).catch(() => undefined);
+      const now = await page.url();
+      if (now !== before) {
+        if (got === 0) enqueue(now, contextFor(d.text, ctx));
+        await page.goto(before).catch(() => undefined);
+        await settle(20_000);
+      }
     }
   };
 
-  const queue: string[] = [await page.url()];
-  const visited = new Set<string>();
-  const tried = new Set<string>();
-  let pagesVisited = 0;
-  const workDeadline = opts.deadline - 25_000;
+  /** Read one page: save its documents, then follow its navigation buttons. */
+  const readPage = async (ctx: string) => {
+    await settle();
+    const here = await page.url();
+    const pageKey = keyOf(here);
+    const links = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
+    Object.assign(addresses, policyAddresses(links.map((l) => l.text)), addresses);
+    await snap(page, `page-${pagesVisited}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "", pdf: l.pdfHint })));
 
-  while (queue.length && pagesVisited < 10 && Date.now() < workDeadline && documents.length < opts.maxDocuments) {
-    const url = queue.shift()!;
-    const key = url.split("#")[0];
-    if (visited.has(key) && pagesVisited > 0) continue;
-    visited.add(key);
-    if ((await page.url()) !== url) await page.goto(url).catch(() => undefined);
-    pagesVisited++;
+    for (const l of links) {
+      if (l.href && !l.footer && isNavigationLink(l.text)) enqueue(l.href, contextFor(l.text, ctx));
+    }
+    await takeDocs(links, ctx);
 
-    // Single-page portals swap content in place; let a few safe in-page
-    // navigation clicks happen on each page before moving on.
-    for (let round = 0; round < 4 && Date.now() < workDeadline; round++) {
-      await settle();
-      const links = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
-      await snap(page, `page-${pagesVisited}-${round}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "" })));
-
-      for (const l of links) {
-        if (l.href && isNavigationLink(l.text) && isSafeNavigationUrl(l.href, carrier.siteDomains)) {
-          const k = l.href.split("#")[0];
-          if (!visited.has(k) && !queue.includes(l.href)) queue.push(l.href);
-        }
-      }
-
-      await takeDocs(links);
-
-      const here = await page.url();
-      const pageKey = here.split("#")[0];
-      const navButtons = links.filter(
-        (l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`),
-      );
-      if (navButtons.length === 0) break;
-      const nb = navButtons[0];
+    // Navigation buttons with no address. When a page offers "documents"
+    // buttons (one per policy on Foremost's home page), follow only those.
+    const navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`));
+    const docNavs = navs.filter((l) => /\bdocuments?\b/i.test(l.text));
+    for (const nb of (docNavs.length ? docNavs : navs).slice(0, 12)) {
+      if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
       tried.add(`nav|${pageKey}|${nb.text}`);
-      const shownBefore = new Set(links.map((l) => l.text));
-      await page.clickMark(nb.mark);
+      const shownBefore = new Set((await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).map((l) => l.text));
+      const m = await markByText(nb.text);
+      if (!m) continue;
+      await page.clickMark(m);
       await settle(15_000);
       const now = await page.url();
-      if (now !== here) {
-        // The button moved to another page; the next round reads it.
-        visited.add(now.split("#")[0]);
+      const navCtx = contextFor(nb.text, ctx);
+      if (keyOf(now) !== pageKey) {
+        // It moved to another page: read that one later, come back here.
+        enqueue(now, navCtx);
+        await page.goto(here).catch(() => undefined);
+        await settle(20_000);
         continue;
       }
-      // Same page: the button may have opened a menu (Foremost's "Policies"
-      // lists each policy). Visit every new, safe item it showed.
+      // Same page: it opened a menu or a tab. Save documents it revealed,
+      // then visit the safe items it showed (Foremost's "Policies" menu).
       const shown = (await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[])).filter(
-        (l) => !shownBefore.has(l.text) && !l.footer && l.text.length <= 80 && !isDangerous(l.text),
+        (l) => !shownBefore.has(l.text) && !l.footer && l.text.length <= 100 && !isDangerous(l.text),
       );
-      await snap(page, `menu-${pagesVisited}-${round}`, shown.map((l) => l.text));
-      // Documents the click revealed (a "Documents" tab) are saved right here;
-      // the rest are places to visit (a "Policies" menu).
-      await takeDocs(shown);
-      const opened = shown.filter((l) => !isDocumentLink(l.text, l.href));
-      for (const item of opened.slice(0, 10)) {
+      Object.assign(addresses, policyAddresses(shown.map((l) => l.text)), addresses);
+      await snap(page, `opened-${pagesVisited}`, shown.map((l) => l.text));
+      await takeDocs(shown, navCtx);
+      for (const item of shown.filter((l) => !isDocumentLink(l.text, l.href, l.pdfHint)).slice(0, 10)) {
         if (Date.now() > workDeadline) break;
-        if (tried.has(`item|${item.text}`)) continue;
-        tried.add(`item|${item.text}`);
-        let m = await markByText(item.text);
-        if (!m) {
+        if (tried.has(`item|${pageKey}|${item.text}`)) continue;
+        tried.add(`item|${pageKey}|${item.text}`);
+        let im = await markByText(item.text);
+        if (!im) {
           const reopen = await markByText(nb.text);
           if (reopen) await page.clickMark(reopen);
           await sleep(1000);
-          m = await markByText(item.text);
+          im = await markByText(item.text);
         }
-        if (!m) continue;
-        await page.clickMark(m);
+        if (!im) continue;
+        await page.clickMark(im);
         await settle(20_000);
         const went = await page.url();
-        if (went !== here) {
-          const k = went.split("#")[0];
-          if (!visited.has(k) && !queue.includes(went) && !/\.pdf(?:$|[?#])/i.test(went) && isSafeNavigationUrl(went, carrier.siteDomains)) {
-            queue.push(went);
-          }
+        if (keyOf(went) !== pageKey) {
+          enqueue(went, contextFor(item.text, navCtx));
           await page.goto(here).catch(() => undefined);
           await settle(20_000);
         }
       }
     }
+  };
+
+  const start = await page.url();
+  visited.add(keyOf(start));
+  pagesVisited++;
+  await readPage("");
+  while (queue.length && pagesVisited < 15 && Date.now() < workDeadline && documents.length < opts.maxDocuments) {
+    const url = queue.shift()!;
+    const k = keyOf(url);
+    if (visited.has(k)) continue;
+    visited.add(k);
+    await page.goto(url).catch(() => undefined);
+    pagesVisited++;
+    await readPage(pageContext.get(k) ?? "");
   }
 
   if (documents.length === 0) {
@@ -897,15 +958,23 @@ async function runCarrierInner(
   }
   if (documents.length >= opts.maxDocuments) notes.push(`Stopped at the limit of ${opts.maxDocuments} documents.`);
   if (Date.now() >= workDeadline) notes.push("Stopped early to stay inside the 5-minute tool limit; some documents may be missing.");
-  return { documents, pagesVisited, blockedRequests, notes };
+  if (opts.debugDir) {
+    await writeFile(join(opts.debugDir, "blocked-requests.json"), JSON.stringify(blockedPaths, null, 2)).catch(() => undefined);
+  }
+  return { documents, pagesVisited, blockedRequests, blockedPaths, notes };
 }
 
-function makeLabel(l: LinkInfo): string {
-  const text = l.text.replace(/\s+/g, " ").trim();
+function makeLabel(l: LinkInfo, ctx = ""): string {
+  // Prefer the words on screen; screen-reader text often repeats them.
+  let text = (l.shown || l.text).replace(/\s+/g, " ").trim();
+  // The posted date may be only in the screen-reader text; keep it in the name.
+  if (!findDate(text)) {
+    const d = findDate(l.text);
+    if (d) text = `${text} ${d}`;
+  }
+  text = text.replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (_m, mo, d, y) => `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`);
   const generic = /^(view|download|open|pdf|view pdf|download pdf|print|view document|document)$/i.test(text) || text.length < 6;
   let label = text;
-  if (generic && l.context) {
-    label = `${l.context.replace(text, "").trim()} ${text}`.trim();
-  }
-  return label.slice(0, 80) || "Document";
+  if (generic && l.context) label = `${l.context.replace(text, "").trim()} ${text}`.trim();
+  return [ctx, label.slice(0, 80)].filter(Boolean).join(" - ") || "Document";
 }

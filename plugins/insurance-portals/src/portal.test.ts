@@ -103,7 +103,7 @@ test("signs in, uses the emailed code, saves documents and trips no trap", { ski
           200,
           page(`<section><h2>Home policy H-1</h2>
           <a href="/docs/dec.pdf">Declarations Page</a>
-          <button onclick="fetch('/docs/packet.pdf').then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='packet.pdf';document.body.appendChild(a);a.click()})">Policy Documents</button>
+          <button onclick="fetch('/docs/packet.pdf').then(r=>r.blob()).then(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='packet.pdf';document.body.appendChild(a);a.click()})">Policy packet (PDF)</button>
           <button onclick="fetch('/api/preferences/paperless',{method:'POST'})">Change paperless policy documents</button>
           <a href="/pay">Pay now</a></section>
           <table><tr><td>Umbrella policy U-9</td><td><button onclick="window.open('/docs/umbrella.pdf')">View PDF</button></td></tr></table>`),
@@ -573,6 +573,75 @@ test("Foremost-style dashboard: opens the Policies menu and fetches each policy'
     const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
     assert.deepEqual(tags, ["% dec-1", "% dec-2"], `hits: ${hits.join(", ")}`);
     assert.ok(!hits.includes("/pay"), "never opened the payment page");
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("Foremost layout: one 'Policy documents' button per policy, current term only, named by address", { skip: !chrome, timeout: 240_000 }, async () => {
+  const hits: string[] = [];
+  const policies = [
+    { n: "1234567", addr: "12 Oak St" },
+    { n: "7654321", addr: "900 Elm Ave" },
+  ];
+  const home = `<header><nav><button>Homepage</button><button>Policies <span>chevron_right</span> Select policy from dropdown</button><button>Payments</button><button>Sign out</button></nav></header>
+    <main id="main"></main><footer><a href="#">Policies</a></footer>
+    <script>
+      setTimeout(()=>{document.getElementById('main').innerHTML=${JSON.stringify(
+        policies
+          .map(
+            (p) => `<section><h3>#100 - ${p.n} Specialty Dwelling</h3>
+              <button aria-label="pay bill for policy ${p.n}" onclick="fetch('/pay',{method:'POST'})">Pay bill</button>
+              <button aria-label="set up autopay for policy ${p.n}">Set up autopay</button>
+              <button aria-label="policy documents for policy ${p.n}" onclick="history.pushState({},'','/policy/documents?p=${p.n}');render()">Policy documents</button></section>`,
+          )
+          .join("") +
+          `<button>Paperless settings</button><ul>` +
+          policies.map((p) => `<li><a href="#" onclick="return false">#100 - ${p.n} Managed policies ${p.addr} policy number ${p.n}</a></li>`).join("") +
+          `</ul>`,
+      )};},1500);
+      function render(){
+        const n=new URLSearchParams(location.search).get('p');
+        const m=document.getElementById('main'); m.innerHTML='';
+        setTimeout(()=>{m.innerHTML='<div role=tablist><button role=tab>DETAILS</button><button role=tab>DOCUMENTS</button></div><h1>Policy documents</h1><table>'+
+          [['RENEWAL','06/29/2026'],['RENEWAL','06/27/2025'],['NEW BUSINESS','09/05/2024']].map((d,i)=>
+            '<tr><td><button aria-label="'+d[0]+' for document '+(i+1)+' posted date '+d[1]+'; opens in a new tab" onclick="window.open(\\'/docs/'+n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> '+d[0]+'</button></td><td>'+d[1]+'</td></tr>').join('')+'</table>'},1500);
+      }
+      if (location.pathname.startsWith('/policy')) render();
+    </script>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(`${req.method} ${url.pathname}${url.search}`);
+    if (url.pathname === "/login") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(`<form action="/app/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`));
+    }
+    if (url.pathname === "/app/home" || url.pathname.startsWith("/policy/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(home));
+    }
+    const doc = /^\/docs\/(\d+)-(\d)\.pdf$/.exec(url.pathname);
+    if (doc) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`${doc[1]}-${doc[2]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+    );
+    const tags = result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]).sort();
+    assert.deepEqual(tags, ["% 1234567-0", "% 7654321-0"], `current renewal only; hits: ${hits.join(", ")}`);
+    const labels = result.documents.map((d) => d.label).sort();
+    assert.deepEqual(labels, ["12 Oak St - Policy 1234567 - RENEWAL 2026-06-29", "900 Elm Ave - Policy 7654321 - RENEWAL 2026-06-29"].map((x) => x), `labels: ${labels.join(" | ")}`);
+    assert.ok(!hits.some((h) => h.startsWith("POST /pay")), "never paid");
   } finally {
     await browser.close();
     server.close();

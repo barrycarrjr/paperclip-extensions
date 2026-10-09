@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  currentTerm,
   emailDomain,
+  findDate,
+  policyAddresses,
+  policyNumberIn,
   extractLoginCode,
   isDangerous,
   isDocumentLink,
@@ -18,7 +22,6 @@ test("document links: declarations and policy documents are picked", () => {
     "Declarations Page",
     "View declarations",
     "Download Dec Page",
-    "Policy Documents",
     "Full policy packet",
     "View PDF",
     "Auto ID Cards",
@@ -53,6 +56,8 @@ test("document links: a PDF address alone counts only when it names a policy", (
 
 test("navigation links stay away from danger", () => {
   assert.equal(isNavigationLink("Documents"), true);
+  assert.equal(isNavigationLink("Policy documents policy documents for policy 1234567"), true);
+  assert.equal(isDocumentLink("Policy documents policy documents for policy 1234567"), false, "a list page, not a document");
   assert.equal(isNavigationLink("Policy details"), true);
   assert.equal(isNavigationLink("My Policies"), true);
   assert.equal(isNavigationLink("Make a payment"), false);
@@ -151,4 +156,32 @@ test("Foremost's policy menu counts as navigation; icon words are ignored", () =
   assert.equal(isNavigationLink("Payments"), false);
   assert.equal(isNavigationLink("Policy change request"), false);
   assert.equal(isNavigationLink("My profile"), false);
+});
+
+test("PDF-marked list entries are documents; current term is kept", () => {
+  assert.equal(isDocumentLink("RENEWAL 06/29/2026", "", true), true);
+  assert.equal(isDocumentLink("RENEWAL 06/29/2026", "", false), false);
+  assert.equal(isDocumentLink("Pay bill", "", true), false);
+  assert.equal(isDocumentLink("View policy documents", "", true), false);
+  const docs = [
+    { text: "RENEWAL 06/29/2026" },
+    { text: "RENEWAL 06/27/2025" },
+    { text: "NEW BUSINESS 09/05/2024" },
+    { text: "ENDORSEMENT 08/01/2026" },
+    { text: "ENDORSEMENT 01/10/2026" },
+  ];
+  assert.deepEqual(currentTerm(docs).map((d) => d.text), ["RENEWAL 06/29/2026", "ENDORSEMENT 08/01/2026"]);
+  assert.deepEqual(currentTerm([{ text: "NOTICE 01/02/2026" }, { text: "NOTICE 03/04/2026" }]).map((d) => d.text), ["NOTICE 03/04/2026"]);
+  assert.equal(findDate("posted 6/9/2026"), "2026-06-09");
+});
+
+test("policy numbers are matched to the address shown with them", () => {
+  const map = policyAddresses([
+    "#100 - 1234567 Managed policies 12 Oak St policy number 1234567",
+    "#100 - 7654321 Managed policies 900 W Elm Avenue policy number 7654321",
+    "Pay bill for policy 1234567",
+  ]);
+  assert.deepEqual(map, { "1234567": "12 Oak St", "7654321": "900 W Elm Avenue" });
+  assert.equal(policyNumberIn("policy documents for policy 1234567"), "1234567");
+  assert.equal(policyNumberIn("Homepage"), null);
 });
