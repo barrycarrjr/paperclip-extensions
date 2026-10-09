@@ -196,9 +196,19 @@ export function scanLogin(): LoginScan {
   };
   const label = (el: Element): string => {
     const h = el as HTMLInputElement;
-    const parts = [h.innerText, h.value, h.getAttribute("aria-label"), h.getAttribute("title")];
-    return parts.filter((x) => typeof x === "string" && x.trim()).join(" ").replace(/\s+/g, " ").trim();
+    const parts = [h.innerText, h.value, h.getAttribute("aria-label"), h.getAttribute("title")]
+      .filter((x): x is string => typeof x === "string" && !!x.trim())
+      .map((x) => x.replace(/\s+/g, " ").trim());
+    // A button often repeats its text as a hover tip ("Next" + title "Next"):
+    // keep each wording once, so it still reads "Next".
+    const seen = new Set<string>();
+    return parts.filter((x) => !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase())).join(" ");
   };
+  // Cookie and privacy banners are never part of signing in.
+  const isConsent = (el: Element) =>
+    /onetrust|cookie|consent|privacy/i.test(`${el.id} ${(el as HTMLElement).className}`) ||
+    !!el.closest('#onetrust-consent-sdk, #onetrust-banner-sdk, [id*=cookie], [class*=cookie], [id*=consent], [class*=consent]') ||
+    /\b(cookies?|privacy|consent|preferences?)\b/i.test(label(el));
   const describe = (el: HTMLInputElement): string => {
     const lab = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
     return [el.name, el.id, el.placeholder, el.getAttribute("aria-label"), el.autocomplete, lab?.textContent]
@@ -228,11 +238,12 @@ export function scanLogin(): LoginScan {
         !/search/.test(describe(i)),
     ) ?? null;
 
-  const clickables = [
+  const allClickables = [
     ...document.querySelectorAll('button, input[type=submit], input[type=button], a, [role=button], label, [role=radio], input[type=radio]'),
     // Plain boxes acting as buttons (Selective's "Log Out" is one).
     ...[...document.querySelectorAll('[onclick], [tabindex="0"], [kwidgettype]')].filter((e) => getComputedStyle(e as HTMLElement).cursor === "pointer" && !e.querySelector("a, button, input, [onclick]")),
   ].filter(visible);
+  const clickables = allClickables.filter((c) => !isConsent(c));
 
   // Look for the submit control near the field first (the field's own form,
   // dialog or login panel), then anywhere on the page.
@@ -298,7 +309,7 @@ export function scanLogin(): LoginScan {
 
   const cookieReject =
     (document.querySelector("#onetrust-reject-all-handler") as Element | null) ??
-    clickables.find((c) => /^(reject all|reject|decline|decline all|necessary only)$/i.test(label(c))) ??
+    allClickables.find((c) => /^(reject all|reject|decline|decline all|necessary only)$/i.test(label(c))) ??
     null;
 
   const errEls = [...document.querySelectorAll('[role=alert], [class*=error], [class*=Error], [id*=error], [id*=Error], [class*=invalid]')].filter(visible);

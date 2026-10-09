@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.5**: A button whose text is repeated in its hover tip (Selective's "Next") is recognised, and cookie, privacy and consent controls are never used as a sign-in or code "submit" button. On the real Selective run the code was read and typed, but "Cookies Settings" on the cookie banner was pressed instead of "Next" (it only opened the settings window; nothing was accepted).
 - **v0.6.4**: Login-code emails whose plain-text part is empty (Selective sends an empty one beside the HTML) are read from the HTML, which is now turned into text properly: style blocks dropped, each table cell on its own line, character codes such as `&#8201;` decoded so they cannot be taken for the code. On the real Selective runs the code email arrived within seconds but the empty plain-text part was read, so no code was found.
 - **v0.6.3**: The policy number and property address of every document downloaded (or found already saved) are always added to the private-details list, in addition to the numbers and addresses read from the pages.
 - **v0.6.2**: Login codes laid out in an email table (Selective puts the 4-digit code on its own line under "Here is the One-Time Code.") are now read; table bars and line breaks between the word "code" and the number no longer hide it. Phone numbers and dates next to the word "code" are still never taken for the code. On the first real Selective run the email arrived within seconds but the code was not recognised, so the run waited out its two minutes.

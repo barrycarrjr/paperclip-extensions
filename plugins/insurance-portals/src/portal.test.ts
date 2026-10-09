@@ -1068,8 +1068,11 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
           <input type="button" id="frmLogin_btnSendText" value="Send Text" onclick="fetch('/send-text',{method:'POST'})"></div>
         <div id="codes" style="display:none"><p>Enter the code we emailed you.</p>
           <input id="frmLogin_txtCode1" maxlength="1"><input id="frmLogin_txtCode2" maxlength="1"><input id="frmLogin_txtCode3" maxlength="1"><input id="frmLogin_txtCode4" maxlength="1">
-          <input type="button" id="frmLogin_btnNextStep" value="Next" onclick="const c=[1,2,3,4].map(i=>document.getElementById('frmLogin_txtCode'+i).value).join('');location.href='/apps/SelectiveWeb/home?c='+c"></div>
-        </div>`);
+          <input type="button" id="frmLogin_btnNextStep" value="Next" title="Next" onclick="const c=[1,2,3,4].map(i=>document.getElementById('frmLogin_txtCode'+i).value).join('');location.href='/apps/SelectiveWeb/home?c='+c"></div>
+        </div>
+        <div id="onetrust-banner-sdk"><p>We use cookies.</p>
+          <button type="submit" id="onetrust-pc-btn-handler" onclick="fetch('/cookie-settings',{method:'POST'})">Cookies Settings</button>
+          <button type="submit" id="onetrust-accept-btn-handler" onclick="fetch('/cookie-accept',{method:'POST'})">Accept Cookies</button></div>`);
     }
     if (url.pathname === "/apps/SelectiveWeb/home") {
       if (url.searchParams.get("c") !== "5521") return html("bad code");
@@ -1102,6 +1105,7 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
     assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% selective-policy"], `hits: ${hits.join(", ")}`);
     assert.ok(hits.includes("POST /send-email") && !hits.includes("POST /send-text"), "email, never text");
     assert.ok(!hits.includes("POST /claim") && !hits.includes("POST /pay"), "no claim, no payment");
+    assert.ok(!hits.includes("POST /cookie-settings") && !hits.includes("POST /cookie-accept"), "cookie banner left alone");
   } finally {
     await browser.close();
     server.close();
