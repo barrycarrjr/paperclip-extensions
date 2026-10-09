@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.2.1**: Operator lane for running without an agent: `start-fetch` (params `carrier`, `destination`; company from the request) starts a run in the background and returns a `jobId`; `fetch-status` (`jobId`) returns its state and result. Needed because plugin actions are cut off after 30 seconds. Board-only and gated by Allowed companies like the tool. The result now includes `debugDir` when Debug screenshots is on.
 - **v0.2.0**: New **Save to** setting (`auto` / `local` / `google-drive`) and **Local folder**. `auto` (the default) saves into a folder on this computer whenever the three Google fields are empty; with **Local folder** blank it finds the Google Drive for desktop "My Drive" folder by itself (only when exactly one account is signed in), so files sync to Drive with no Google keys. Same rules as Drive: folders created as needed, identical files skipped, nothing overwritten or deleted, and nothing written outside the folder (links that point outside are refused). Author changed to Bryon Stout.
 - **v0.1.0**: First release. One agent tool, `insurance_fetch_documents`. Portal credentials, the code mailbox app password and the Google Drive OAuth secrets are all plugin secrets; agents never see them or the login codes.
 
@@ -69,7 +70,7 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 
 All secrets must belong to the company that calls the tool.
 
-An operator action, `check-setup` (`POST /api/plugins/:id/actions/check-setup`), starts Chrome, reads each configured secret, signs in to the mailbox read-only, and opens the save location (local folder, or a Drive sign-in). It does not sign in to any carrier.
+Operator actions `start-fetch` / `fetch-status` run the same fetch without an agent (see Recent changes). An operator action, `check-setup` (`POST /api/plugins/:id/actions/check-setup`), starts Chrome, reads each configured secret, signs in to the mailbox read-only, and opens the save location (local folder, or a Drive sign-in). It does not sign in to any carrier.
 
 ## Error codes
 

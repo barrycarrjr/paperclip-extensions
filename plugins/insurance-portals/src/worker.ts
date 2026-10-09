@@ -5,6 +5,7 @@ import {
   type ToolResult,
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertCompanyAccess } from "./companyAccess.js";
@@ -194,6 +195,7 @@ export async function fetchDocuments(
       pagesVisited: result.pagesVisited,
       blockedWriteRequests: result.blockedRequests,
       notes: result.notes,
+      debugDir,
       seconds: Math.round((Date.now() - started) / 1000),
     },
   };
@@ -231,6 +233,49 @@ const plugin = definePlugin({
         }
       },
     );
+
+    // Operator lane. Board-only (the host checks), company-gated like the
+    // tool. A run outlasts the 30-second action limit, so `start-fetch` starts
+    // it in the background and `fetch-status` reports on it. Jobs live in
+    // memory only and are dropped after an hour.
+    const jobs = new Map<string, { status: "running" | "done" | "failed"; startedAt: string; result?: ToolResult; error?: string }>();
+    ctx.actions.register("start-fetch", async (params) => {
+      const scope = (params.hostScope ?? {}) as { companyId?: string | null };
+      const companyId = scope.companyId ?? null;
+      if (!companyId) throw new Error("[EINVALID_INPUT] Pick a company (companyId) to run under.");
+      const cfg = (await ctx.config.get()) as InstanceConfig;
+      assertCompanyAccess(ctx, {
+        tool: "start-fetch",
+        resourceLabel: "insurance-portals",
+        resourceKey: "instance",
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      const jobId = randomUUID();
+      const job: { status: "running" | "done" | "failed"; startedAt: string; result?: ToolResult; error?: string } = {
+        status: "running",
+        startedAt: new Date().toISOString(),
+      };
+      jobs.set(jobId, job);
+      void serialize(() => fetchDocuments(ctx, cfg, params as Record<string, unknown>, companyId))
+        .then((result) => {
+          job.result = result;
+          job.status = result.error ? "failed" : "done";
+          if (result.error) job.error = result.error;
+        })
+        .catch((err) => {
+          job.status = "failed";
+          job.error = err instanceof Error ? err.message : String(err);
+          ctx.logger.warn("insurance-portals: operator run failed", { error: job.error });
+        })
+        .finally(() => setTimeout(() => jobs.delete(jobId), 3_600_000).unref?.());
+      return { jobId, status: job.status };
+    });
+    ctx.actions.register("fetch-status", async (params) => {
+      const job = jobs.get(String(params.jobId ?? ""));
+      if (!job) throw new Error("[ENOT_FOUND] No run with that id (runs are kept for an hour).");
+      return job;
+    });
 
     // Operator check (no carrier sign-in): Chrome found, secrets readable,
     // mailbox opens read-only, Drive signs in.
