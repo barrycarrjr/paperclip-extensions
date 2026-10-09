@@ -13,6 +13,7 @@ import { Browser, findChrome } from "./cdp.js";
 import { Drive, type SavedFile } from "./drive.js";
 import { LocalFolder } from "./localFolder.js";
 import { profileDirFor } from "./profiles.js";
+import { addPrivateItems, privateListPath } from "./privateList.js";
 import { pdfText } from "./pdfText.js";
 import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
@@ -43,6 +44,7 @@ interface InstanceConfig {
   debugScreenshots?: boolean;
   maxDocuments?: number;
   defaultTerms?: "all" | "current";
+  privateListFile?: string;
 }
 
 const CREDENTIAL_FIELDS: Record<CarrierKey, [keyof InstanceConfig, keyof InstanceConfig]> = {
@@ -214,6 +216,17 @@ export async function fetchDocuments(
     result.notes.push(
       `${noTerm} document(s) had no readable policy period, so they are named by posted date and marked current or prior from the posted dates.`,
     );
+  }
+
+  // Keep the operator's private-details list current (only if it exists).
+  const listPath = privateListPath(cfg.privateListFile);
+  if (listPath && result.identifiers.length) {
+    try {
+      const added = await addPrivateItems(listPath, carrier.name, result.identifiers, today());
+      if (added) result.notes.push(`Added ${added} new policy/account number(s) or address(es) to the private-details list.`);
+    } catch {
+      result.notes.push("Could not update the private-details list.");
+    }
   }
 
   const saved = files.filter((f) => f.status === "saved").length;

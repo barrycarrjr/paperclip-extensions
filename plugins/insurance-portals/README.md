@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.1**: New setting **Private-details list**. After each run, the policy and account numbers and street addresses the portal showed are appended to a list of details that must never be published (for example the list a pre-push check reads), if not already listed. Blank uses `~/.config/private-push-guard/patterns.txt` only if it exists; `off` turns it off. The plugin only appends, never removes, and never logs the values.
 - **v0.6.0**: Prepared for Liberty Mutual and Selective from their sign-in pages and public help, with a full rehearsal of each in tests.
   - Policy numbers with letters and dashes ("H37-291-123456-40") are recognised; phone numbers, dates and card endings are not policy numbers.
   - A code sent by text by default is switched to email through "Try another method" and similar; if the portal offers no way to switch, the run stops with `ECODE_BY_TEXT` explaining what to change.
@@ -97,6 +98,7 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 | Browser profiles folder | optional path; blank = `~/.paperclip/insurance-portals/profiles`; synced folders refused |
 | Show the browser window | boolean |
 | Debug screenshots | boolean: saves a PNG per step to a temp folder named in the plugin log. Stays on the machine; can show policy details. |
+| Private-details list | optional path; blank = `~/.config/private-push-guard/patterns.txt` if it exists; `off` = never |
 | Terms to fetch by default | `all` (default) or `current` |
 | Most documents per run | 1 to 50, default 20 |
 

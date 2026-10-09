@@ -208,3 +208,10 @@ export function policyNumberIn(text: string): string | null {
   const score = (t: string) => t.replace(/\D/g, "").length;
   return all.sort((a, b) => score(b) - score(a))[0];
 }
+
+/** Street addresses written in `text` ("12 Oak St", "900 W Elm Avenue"). */
+export function streetAddressesIn(text: string): string[] {
+  const street =
+    /(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:St|Street|Pl|Place|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Sq|Square|Trl|Trail|Pike|Row|Aly|Alley)\b)/g;
+  return [...text.matchAll(street)].map((m) => m[1].trim());
+}

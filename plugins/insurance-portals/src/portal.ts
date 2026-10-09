@@ -22,6 +22,8 @@ import {
   isSafeNavigationUrl,
   policyAddresses,
   policyNumberIn,
+  policyNumbersIn,
+  streetAddressesIn,
   shouldBlockRequest,
 } from "./safety.js";
 
@@ -98,6 +100,8 @@ export interface RunResult {
   blockedRequests: number;
   /** Method and address (no query) of each blocked request, for checking the guard. */
   blockedPaths: string[];
+  /** Policy/account numbers and street addresses shown after sign-in, for an operator's private list. */
+  identifiers: string[];
   /** Documents not downloaded because a file for them is already saved. */
   skipped: Array<{ policy: string; title: string; posted: string | null; label: string; existingName: string }>;
   notes: string[];
@@ -971,6 +975,7 @@ async function runCarrierInner(
 
   const documents: CapturedPdf[] = [];
   const skipped: RunResult["skipped"] = [];
+  const identifiers = new Set<string>();
   const seen = new Set<string>();
   const addPdf = (meta: DocMeta, bytes: Buffer) => {
     const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -1277,7 +1282,13 @@ async function runCarrierInner(
     for (const l of links) {
       if (l.href && !l.footer && isNav(l)) enqueue(l.href, contextFor(l.text, ctx));
     }
-    const docsPage = /\bdocuments?\b/i.test((await mainText()).slice(0, 400));
+    const pageText = await mainText();
+    // Remember the account's own numbers and addresses (for the private list).
+    for (const t of [...links.map((l) => l.text), pageText]) {
+      for (const n of policyNumbersIn(t)) identifiers.add(n);
+      for (const a of streetAddressesIn(t)) identifiers.add(a);
+    }
+    const docsPage = /\bdocuments?\b/i.test(pageText.slice(0, 400));
     await takeDocs(links, ctx, docsPage);
     if (depth >= 2) return;
 
@@ -1447,7 +1458,7 @@ async function runCarrierInner(
     await writeFile(join(opts.debugDir, "pdf-capture-log.json"), JSON.stringify(captureLog, null, 2)).catch(() => undefined);
     await writeFile(join(opts.debugDir, "nav-log.json"), JSON.stringify(navEvents, null, 2)).catch(() => undefined);
   }
-  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, notes };
+  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, identifiers: [...identifiers], notes };
 }
 
 function docMeta(l: LinkInfo, ctx: string): DocMeta {

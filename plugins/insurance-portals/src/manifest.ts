@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.6.0";
+const PLUGIN_VERSION = "0.6.1";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -136,6 +136,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       "debugScreenshots",
       "maxDocuments",
       "defaultTerms",
+      "privateListFile",
     ],
     properties: {
       allowedCompanies: {
@@ -230,6 +231,12 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         title: "Terms to fetch by default",
         description:
           "'all' = every term the portal shows (current and prior), each named with its term dates. 'current' = only the current term (for regular monthly runs). An agent can override this per call with the 'terms' parameter.",
+      },
+      privateListFile: {
+        type: "string",
+        title: "Private-details list (optional)",
+        description:
+          "A text file listing private details that must never be published (one per line), for example the list a pre-push check reads. After each run, policy and account numbers and street addresses shown on the portal are appended if not already listed. Blank = ~/.config/private-push-guard/patterns.txt, used only if it exists. 'off' = never. The plugin only appends; it never removes a line.",
       },
       maxDocuments: {
         type: "integer",

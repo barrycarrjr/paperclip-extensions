@@ -657,6 +657,7 @@ test("Foremost layout: one 'Policy documents' button per policy, every term, tag
     assert.deepEqual(tags, ["% 1234567-0", "% 1234567-2", "% 7654321-0", "% 7654321-1", "% 7654321-2"], `every term but the saved one; hits: ${hits.join(", ")}`);
     assert.ok(!hits.some((h) => h.includes("/docs/1234567-1.pdf")), "the saved document was not downloaded again");
     assert.equal(result.skipped.length, 1);
+    for (const id of ["1234567", "7654321", "12 Oak St", "900 Elm Ave"]) assert.ok(result.identifiers.includes(id), `noted ${id}`);
     const meta = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted}`).sort();
     assert.deepEqual(meta, [
       "12 Oak St - Policy 1234567 | NEW BUSINESS | 2024-07-20",
