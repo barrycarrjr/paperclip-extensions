@@ -894,3 +894,71 @@ test("Liberty-style: a 'Log out' button on the sign-in pages does not end sign-i
     server.close();
   }
 });
+
+for (const buttonsOnce of [false, true])
+test(`every policy's documents at the same address (policy kept out of the URL)${buttonsOnce ? ", later ones via the header menu" : ""}`, { skip: !chrome, timeout: 240_000 }, async () => {
+  const hits: string[] = [];
+  const pols = [
+    { n: "1234567", addr: "12 Oak St" },
+    { n: "7654321", addr: "900 Elm Ave" },
+    { n: "5555555", addr: "3 Pine Rd" },
+  ];
+  const app = `<header><nav><button>Homepage</button>
+      <button onclick="document.getElementById('menu').style.display='block'">Policies <span>expand_more</span> Select policy from dropdown</button>
+      <div id="menu" style="display:none">${pols.map((p) => `<button onclick="pick('${p.n}','details')">${p.addr} Specialty Dwelling policy #100-${p.n}</button>`).join("")}</div>
+      <button>Sign out</button></nav></header><main id="main"></main>
+    <script>
+      const P=${JSON.stringify(pols)}; let cur=null, tab='details', homeVisits=0; const ONCE=${buttonsOnce};
+      function pick(n,t){cur=P.find(p=>p.n===n);tab=t;document.getElementById('menu').style.display='none';if(location.pathname!=='/app/policy')history.pushState({},'','/app/policy');render()}
+      window.onpopstate=render;
+      function render(){
+        const m=document.getElementById('main');
+        if(location.pathname==='/app/home'){const showButtons=!ONCE||homeVisits++===0; m.innerHTML=P.map(p=>'<section><h3>'+p.addr+'</h3><button aria-label="view bill for policy '+p.n+'">View bill</button>'+(showButtons?'<button aria-label="policy documents for policy '+p.n+'" onclick="pick(\\''+p.n+'\\',\\'documents\\')">Policy documents</button>':'')+'</section>').join('')+P.map(p=>'<a href="#" onclick="return false">#100 - '+p.n+' Managed policies '+p.addr+' policy number '+p.n+'</a>').join('');return}
+        if(!cur){m.innerHTML='<p>Select a policy.</p>';return}
+        const tabs='<div><button role=tab onclick="tab=\\'details\\';render()">DETAILS</button><button role=tab onclick="tab=\\'documents\\';render()">DOCUMENTS</button></div><h1>'+cur.addr+' Specialty Dwelling policy '+(tab==='documents'?'documents':'details')+'</h1>';
+        if(tab==='details'){m.innerHTML=tabs+'<p>Coverage summary</p>';return}
+        m.innerHTML=tabs+['06/29/2026','06/27/2025'].map((d,i)=>'<button onclick="window.open(\\'/docs/'+cur.n+'-'+i+'.pdf\\')"><span>picture_as_pdf</span> RENEWAL '+d+'</button>').join('');
+      }
+      render();
+    </script>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    hits.push(url.pathname + url.search);
+    if (url.pathname === "/login") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(`<form action="/app/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`));
+    }
+    if (url.pathname.startsWith("/app/")) {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(page(app));
+    }
+    const doc = /^\/docs\/(\d+)-(\d)\.pdf$/.exec(url.pathname);
+    if (doc) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`${doc[1]}-${doc[2]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
+    );
+    const got = result.documents.map((d) => `${d.policy} | ${d.bytes.toString("latin1").split("\n")[1]}`).sort();
+    assert.deepEqual(got, [
+      "12 Oak St - Policy 1234567 | % 1234567-0",
+      "12 Oak St - Policy 1234567 | % 1234567-1",
+      "3 Pine Rd - Policy 5555555 | % 5555555-0",
+      "3 Pine Rd - Policy 5555555 | % 5555555-1",
+      "900 Elm Ave - Policy 7654321 | % 7654321-0",
+      "900 Elm Ave - Policy 7654321 | % 7654321-1",
+    ], `each PDF under its own policy; hits: ${hits.join(", ")}`);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

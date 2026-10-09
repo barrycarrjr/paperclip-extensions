@@ -1089,6 +1089,17 @@ async function runCarrierInner(
     const ls = (await visibleLinks()).filter((l) => !l.footer && l.text.includes(n) && notMoney(l.text) && !exclude.has(l.mark));
     return (ls.find((l) => /\bdocuments?\b/i.test(l.text)) ?? ls.find((l) => /polic/i.test(l.text)) ?? ls[0])?.mark ?? null;
   };
+  /** The page's main text, without header and footer. */
+  const mainText = () =>
+    page
+      .evaluate<string>(() => {
+        const m = document.querySelector("main, [role=main]") as HTMLElement | null;
+        if (m) return m.innerText;
+        const b = document.body.cloneNode(true) as HTMLElement;
+        b.querySelectorAll("header, footer, nav, [role=banner], [role=contentinfo]").forEach((x) => x.remove());
+        return b.innerText;
+      })
+      .catch(() => "");
   const hasPdfList = async () => (await visibleLinks()).some((l) => l.pdfHint && isDocumentLink(l.text, l.href, l.pdfHint));
 
   /**
@@ -1099,10 +1110,11 @@ async function runCarrierInner(
    */
   const openPolicyDocs = async (n: string, home: string): Promise<boolean> => {
     const tag = n.slice(-4); // only the last digits go in the debug log
-    const arrived = async (how: string, from: string) => {
+    const arrived = async (how: string, from: string, textBefore: string) => {
       await settle(15_000);
       const now = keyOf(await page.url());
-      const ok = now !== from || (await hasPdfList());
+      // Same address is normal here; the content must have changed.
+      const ok = now !== from || (await mainText()) !== textBefore;
       navLog("open-policy", { policy: `...${tag}`, how, ok, path: pathOf(now) });
       return ok;
     };
@@ -1110,19 +1122,21 @@ async function runCarrierInner(
     let from = keyOf(await page.url());
     let m = await waitMark(() => markByPolicyDocs(n), from === keyOf(home) ? 20_000 : 2_000);
     if (m) {
+      const tb = await mainText();
       await page.clickMark(m);
-      if (await arrived("own-button", from)) return true;
+      if (await arrived("own-button", from, tb)) return true;
     }
     // 2. The Policies menu in the header (present on every Foremost page).
     from = keyOf(await page.url());
     const menu = (await visibleLinks()).find((l) => !l.footer && /^polic(?:y|ies)\b/i.test(l.text));
     if (menu) {
+      const tb = await mainText();
       await page.clickMark(menu.mark);
       await sleep(1500);
       const item = await waitMark(() => markPolicyItem(n, new Set([menu.mark])), 4_000);
       if (item) {
         await page.clickMark(item);
-        if (await arrived("header-menu", from)) return true;
+        if (await arrived("header-menu", from, tb)) return true;
       } else {
         navLog("open-policy", { policy: `...${tag}`, how: "header-menu", ok: false, why: "no item" });
         await page.pressEscape().catch(() => undefined);
@@ -1136,18 +1150,20 @@ async function runCarrierInner(
     from = keyOf(await page.url());
     m = await waitMark(() => markByPolicyDocs(n), 20_000);
     if (m) {
+      const tb = await mainText();
       await page.clickMark(m);
-      if (await arrived("home-button", from)) return true;
+      if (await arrived("home-button", from, tb)) return true;
     }
     // 4. A general documents picker ("View policy documents").
     const general = (await visibleLinks()).find((l) => !l.footer && /\bdocuments?\b/i.test(l.text) && !policyNumberIn(l.text) && notMoney(l.text));
     if (general) {
+      const tb = await mainText();
       await page.clickMark(general.mark);
       await sleep(1500);
       const item = await waitMark(() => markPolicyItem(n, new Set([general.mark])), 5_000);
       if (item) {
         await page.clickMark(item);
-        if (await arrived("picker", from)) return true;
+        if (await arrived("picker", from, tb)) return true;
       }
     }
     navLog("policy-unreachable", { policy: `...${tag}` });
@@ -1180,7 +1196,7 @@ async function runCarrierInner(
     // Navigation buttons with no address. When a page offers "documents"
     // buttons, follow only those; when some name a policy (Foremost's home
     // page has one per policy), follow only those and skip the general one.
-    let navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${pageKey}|${l.text}`));
+    let navs = links.filter((l) => !l.href && !l.footer && isNavigationLink(l.text) && !tried.has(`nav|${ctx}|${pageKey}|${l.text}`));
     const docNavs = navs.filter((l) => /\bdocuments?\b/i.test(l.text));
     // General "documents" buttons (no policy named), kept as a fallback for
     // policies whose own button cannot be found again.
@@ -1200,8 +1216,17 @@ async function runCarrierInner(
         if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
         if (policiesRead.has(n)) continue;
         if (await openPolicyDocs(n, here)) {
-          const k = keyOf(await page.url());
-          visited.add(k);
+          // Make sure the page is about policy n before naming files after it:
+          // it must not mention another policy unless it also mentions n.
+          const t = await mainText();
+          const mentions = (x: string) => t.includes(x) || (!!addresses[x] && t.includes(addresses[x]));
+          const others = perPolicyNumbers.filter((o) => o !== n && mentions(o));
+          if (others.length && !mentions(n)) {
+            navLog("wrong-policy-page", { policy: `...${n.slice(-4)}` });
+            await snap(page, `wrong-policy-${n.slice(-4)}`);
+            continue;
+          }
+          visited.add(`${contextFor(`policy ${n}`)}|${keyOf(await page.url())}`);
           pagesVisited++;
           await readPage(contextFor(`policy ${n}`), 1);
           policiesRead.add(n);
@@ -1216,7 +1241,7 @@ async function runCarrierInner(
       // the next policy is opened from wherever the run ends up.
       const needBack = depth === 0 || idx < toFollow.length - 1;
       if (Date.now() > workDeadline || documents.length >= opts.maxDocuments) break;
-      tried.add(`nav|${pageKey}|${nb.text}`);
+      tried.add(`nav|${ctx}|${pageKey}|${nb.text}`);
       const n = policyNumberIn(nb.text);
       if (n && policiesRead.has(n)) continue;
       // The general picker only matters if a policy's own button went missing.
@@ -1244,8 +1269,11 @@ async function runCarrierInner(
       const navCtx = contextFor(nb.text, ctx);
       if (keyOf(now) !== pageKey) {
         // It moved to another page: read it now, then step back if needed.
-        if (!visited.has(keyOf(now))) {
-          visited.add(keyOf(now));
+        // The same address can show a different policy (Foremost keeps the
+        // chosen policy out of the address), so "read already" is per policy.
+        const vk = `${navCtx}|${keyOf(now)}`;
+        if (!visited.has(vk)) {
+          visited.add(vk);
           pagesVisited++;
           await readPage(navCtx, depth + 1);
         }
@@ -1265,8 +1293,8 @@ async function runCarrierInner(
         const itemPolicy = policyNumberIn(item.text);
         if (itemPolicy && policiesRead.has(itemPolicy)) continue;
         if (/^(close|cancel|dismiss|back)\b/i.test(item.text)) continue;
-        if (tried.has(`item|${pageKey}|${item.text}`)) continue;
-        tried.add(`item|${pageKey}|${item.text}`);
+        if (tried.has(`item|${ctx}|${pageKey}|${item.text}`)) continue;
+        tried.add(`item|${ctx}|${pageKey}|${item.text}`);
         let im = await markByText(item.text, 3_000);
         if (!im) {
           const reopen = await markByText(nb.text);
@@ -1279,8 +1307,9 @@ async function runCarrierInner(
         await settle(20_000);
         const went = await page.url();
         if (keyOf(went) !== pageKey) {
-          if (!visited.has(keyOf(went))) {
-            visited.add(keyOf(went));
+          const vk = `${contextFor(item.text, navCtx)}|${keyOf(went)}`;
+          if (!visited.has(vk)) {
+            visited.add(vk);
             pagesVisited++;
             await readPage(contextFor(item.text, navCtx), depth + 1);
           }
