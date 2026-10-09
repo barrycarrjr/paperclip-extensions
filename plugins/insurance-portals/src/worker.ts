@@ -54,6 +54,11 @@ const CREDENTIAL_FIELDS: Record<CarrierKey, [keyof InstanceConfig, keyof Instanc
 };
 
 const TOOL_BUDGET_MS = 290_000;
+/**
+ * A run started by the operator in the background is not held to the
+ * 5-minute tool limit; an account with many policies needs longer.
+ */
+const OPERATOR_BUDGET_MS = 900_000;
 /** How long to wait for a code email once the portal has asked for it. */
 const CODE_WAIT_MS = 120_000;
 
@@ -123,6 +128,7 @@ export async function fetchDocuments(
   cfg: InstanceConfig,
   params: { carrier?: unknown; destination?: unknown; terms?: unknown },
   companyId: string,
+  budgetMs = TOOL_BUDGET_MS,
 ): Promise<ToolResult> {
   const started = Date.now();
   const carrierKey = String(params.carrier ?? "") as CarrierKey;
@@ -168,7 +174,7 @@ export async function fetchDocuments(
       username,
       password,
       getCode,
-      deadline: started + TOOL_BUDGET_MS,
+      deadline: started + budgetMs,
       maxDocuments: Math.max(1, Math.min(50, cfg.maxDocuments ?? 20)),
       alreadyHave: (d) => existingFileFor(alreadyThere, carrier.name, d),
       debugDir,
@@ -324,7 +330,7 @@ const plugin = definePlugin({
         startedAt: new Date().toISOString(),
       };
       jobs.set(jobId, job);
-      void serialize(() => fetchDocuments(ctx, cfg, params as Record<string, unknown>, companyId))
+      void serialize(() => fetchDocuments(ctx, cfg, params as Record<string, unknown>, companyId, OPERATOR_BUDGET_MS))
         .then((result) => {
           job.result = result;
           job.status = result.error ? "failed" : "done";

@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Browser, findChrome } from "./cdp.js";
-import { runCarrier, type CarrierProfile } from "./portal.js";
+import { pagePolicy, runCarrier, type CarrierProfile } from "./portal.js";
 
 function pdf(tag: string): Buffer {
   return Buffer.from(`%PDF-1.4\n% ${tag}\n${"x".repeat(200)}\n%%EOF\n`, "latin1");
@@ -1306,4 +1306,113 @@ test("Liberty Mutual style: waits for 'Loading documents...' under a full menu",
     await browser.close();
     server.close();
   }
+});
+
+test("Liberty Mutual documents page: every policy through 'Select another policy', each file named by policy, nothing changed", { skip: !chrome, timeout: 300_000 }, async () => {
+  // Made-up policies. The portal keeps the chosen policy in the page only,
+  // so a reload shows the first policy again, as the real one does.
+  const policies = [
+    { n: "OK0000001", addr: "12 TEST AVE" },
+    { n: "OK0000002", addr: "34 SAMPLE ST" },
+    { n: "OK0000003", addr: "56 EXAMPLE RD" },
+  ];
+  const hits: string[] = [];
+  const nav = `<header><a href="/account/homepage">Home</a><a href="/account/homepage">Policies</a><a href="/account/homepage">Billing</a>
+    <a href="/account/documents">Documents</a><button>Log out</button></header>`;
+  const agent = `<aside>My agent <a href="tel:15555550100">1-555-555-0100</a> <a href="mailto:agent@example.com">Email</a></aside>`;
+  const feedback = `<div>Was this helpful? <button onclick="fetch('/trap/yes')">Yes</button><button onclick="fetch('/trap/no')">No</button></div>`;
+  const cards = policies
+    .map(
+      (p) => `<section class="card"><h3>Landlord</h3>
+        <button onclick="location='/trap/edit'">Edit current policy</button>
+        <button onclick="window.open('/docs/${p.n}-dec.pdf')">Policy declarations</button>
+        <button onclick="location='/account/documents'">View all documents</button></section>`,
+    )
+    .join("");
+  const docsScript = `<script>
+    const P = ${JSON.stringify(policies)};
+    let cur = 0;
+    const row = (p, kind, date, file) => '<div class="row"><span>' + kind + '</span> <span>' + date + '</span> <button aria-label="Open your ' + kind + ' document in a new tab" onclick="window.open(\\'/docs/' + p.n + '-' + file + '.pdf\\')">View / print</button></div>';
+    function show() {
+      const p = P[cur];
+      document.getElementById('m').innerHTML =
+        '<h1>My landlord documents</h1><button id="sel">Select another policy</button>' +
+        '<p>Policy ' + p.n + '</p><p><b>' + p.addr + '</b></p>' +
+        '<a href="/trap/paperless">Paperless settings</a>' +
+        '<section class="card"><h3>Policy declarations</h3><button aria-label="Open proof of insurance for current policy period" onclick="window.open(\\'/docs/' + p.n + '-dec.pdf\\')">View / print</button></section>' +
+        '<button aria-expanded="true" id="acc">Policy documents</button>' +
+        '<div id="rows">' + row(p, 'Renewal', '08/01/2026', 'ren26') + row(p, 'Policy change', '03/12/2026', 'chg26') + '</div>' +
+        '<button id="more">View more policy documents</button>' +
+        '<button onclick="location=\\'/trap/billing\\'">Billing statements</button>';
+      document.getElementById('sel').onclick = list;
+      document.getElementById('acc').onclick = () => { document.getElementById('rows').innerHTML = ''; };
+      document.getElementById('more').onclick = () => {
+        document.getElementById('rows').innerHTML += row(p, 'Renewal', '08/01/2025', 'ren25');
+        document.getElementById('more').textContent = 'View less';
+      };
+    }
+    function list() {
+      document.getElementById('m').innerHTML = '<h1>Select a policy</h1>' + P.map((p, i) => '<button data-i="' + i + '">Policy ' + p.n + ' ' + p.addr + '</button>').join('');
+      document.querySelectorAll('[data-i]').forEach((b) => b.onclick = () => { cur = +b.dataset.i; setTimeout(show, 800); });
+    }
+    setTimeout(show, 1500);
+  </script>`;
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname.startsWith("/trap/")) {
+      hits.push(url.pathname);
+      return html("trap");
+    }
+    if (url.pathname === "/login") return html(`<form action="/account/homepage" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/account/homepage") return html(`${nav}<main id="m"><h1>Hi there</h1><p>Billing account 70000000001 12 TEST AVE</p>${agent}${cards}${feedback}</main>`);
+    if (url.pathname === "/account/documents") return html(`${nav}<main id="m"><p>Loading documents...</p></main>${agent}${feedback}${docsScript}`);
+    const m = /^\/docs\/(OK\d+)-(\w+)\.pdf$/.exec(url.pathname);
+    if (m) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`${m[1]}-${m[2]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "liberty_mutual", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 280_000, maxDocuments: 50, debugDir: null, log: () => undefined },
+    );
+    assert.deepEqual(hits, [], `trap pages opened: ${hits.join(", ")}`);
+    const got = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted ?? ""} | ${d.bytes.toString("latin1").split("\n")[1]}`).sort();
+    const want = policies
+      .flatMap((p) => [
+        `${p.addr} - Policy ${p.n} | Policy change | 2026-03-12 | % ${p.n}-chg26`,
+        `${p.addr} - Policy ${p.n} | Proof of insurance |  | % ${p.n}-dec`,
+        `${p.addr} - Policy ${p.n} | Renewal | 2025-08-01 | % ${p.n}-ren25`,
+        `${p.addr} - Policy ${p.n} | Renewal | 2026-08-01 | % ${p.n}-ren26`,
+      ])
+      .sort();
+    assert.deepEqual(got, want);
+    // The policies and their addresses go on the private list.
+    for (const p of policies) {
+      assert.ok(result.identifiers.includes(p.n), p.n);
+      assert.ok(result.identifiers.includes(p.addr), p.addr);
+    }
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("the policy a page is about comes from 'Policy <number>' near its top, not a billing account", () => {
+  assert.deepEqual(pagePolicy("My landlord documents\nSelect another policy\nPolicy OK0000001\n12 TEST AVE\nPaperless settings"), {
+    number: "OK0000001",
+    address: "12 TEST AVE",
+  });
+  assert.equal(pagePolicy("Hi there\nBilling account 70000000001\n12 TEST AVE"), null);
+  assert.equal(pagePolicy("Policy OK0000001 12 TEST AVE\nPolicy OK0000002 34 SAMPLE ST"), null);
 });

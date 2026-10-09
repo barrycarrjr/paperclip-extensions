@@ -8,6 +8,16 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.11**: Liberty Mutual documents, from the first real run's screens.
+  - Goes through every policy in Liberty Mutual's "Select another policy" list, one at a time, and reads each policy's documents page. Never a "change" or "switch" wording.
+  - "View / print" buttons are saved as documents and named from their screen-reader words ("Renewal", "Policy change", "Proof of insurance") with the date on their row.
+  - Each file is named after the policy and address shown at the top of its page. A button repeated on every policy card with no way to tell which policy it is for is left to each policy's own page.
+  - Several buttons with the same words ("View / print" on every row) are each fetched, not just the first.
+  - A section that is already open ("Policy documents") is not clicked shut. If a reload shows a different policy, its files are never named after the wrong one.
+  - The agent's "Email" link (a mailto link) is never taken for the "email me a code" choice, which is only looked for on the code step.
+  - Street addresses in capitals ("12 TEST AVE") are recognised.
+  - A PDF opened by a menu entry is kept instead of lost.
+  - A run started from the operator action may take up to 15 minutes (agent tool calls keep the 5-minute limit). A run cut short carries on next time.
 - **v0.6.10**: A "remember me" switch that is covered by a pop-up (a sign-in form under a code window) is never clicked through it. With Debug screenshots on, the code step is captured right after the code is typed and right after the button is pressed. On two real Selective runs the code window returned to the sign-in form shortly after appearing; the cause is not yet known.
 - **v0.6.9**: A page that still says "Loading…", "Loading documents…" or "Please wait", or shows a spinner in its main area, is waited for however many menu and footer links are already on screen. On the real Liberty Mutual account the sign-in and emailed code worked, but the home and documents pages were read while still loading, so no documents were found.
 - **v0.6.8**: Codes split across several boxes are typed the way a person types them: each box is emptied without pressing Backspace and filled with real key presses, and the boxes are checked to hold the code before the button is pressed (filled directly if not). On many code screens Backspace in an empty box jumps back and clears the previous box, which scrambles the code; on the real Selective account two codes in a row were refused as invalid.
@@ -136,7 +146,7 @@ Operator actions `start-fetch` / `fetch-status` run the same fetch without an ag
 ## Limits
 
 - Portals change. Sign-in steps were checked against each carrier's current login page. Finding documents after sign-in uses link-text rules and may need tuning per carrier once run against a real account; **Debug screenshots** exist for that.
-- A run must finish inside the host's 5-minute tool limit, including the wait for the code email.
+- A run started by an agent must finish inside the host's 5-minute tool limit, including the wait for the code email. A run started from the operator action (`start-fetch`) may take up to 15 minutes. Either way, a run cut short carries on next time: documents already saved are skipped.
 - One run at a time per Paperclip instance.
 
 ## Tests

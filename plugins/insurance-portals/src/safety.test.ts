@@ -10,7 +10,10 @@ import {
   isDangerous,
   isDocumentLink,
   isNavigationLink,
+  isPolicySelector,
   isSafeNavigationUrl,
+  namedDocument,
+  streetAddressesIn,
   safeFileName,
   senderAllowed,
   shouldBlockRequest,
@@ -209,4 +212,33 @@ test("Selective's table-style code email (made-up code)", () => {
   // A phone number or a year near the word "code" is never taken as the code.
   assert.equal(extractLoginCode("Code request", "If you did not request this code, call 800-555-0100."), null);
   assert.equal(extractLoginCode("Your code", "Code valid until 2026-05-14 only."), null);
+});
+
+test("Liberty Mutual 'View / print' buttons: named documents, never a settings change", () => {
+  assert.equal(isDocumentLink("View / print Open your Renewal document in a new tab"), true);
+  assert.equal(isDocumentLink("View / print Open your Policy change document in a new tab"), true);
+  assert.equal(isDocumentLink("View / print Open proof of insurance for current policy period"), true);
+  assert.equal(isDocumentLink("View / print"), false);
+  assert.equal(isDocumentLink("Change how policy documents are sent"), false);
+  assert.equal(isDocumentLink("Paperless settings Go to paperless settings"), false);
+  assert.equal(isDocumentLink("Open your Renewal document and pay now in a new tab"), false);
+  assert.equal(namedDocument("View / print Open your Policy change document in a new tab"), "Policy change");
+  assert.equal(namedDocument("View / print Open proof of insurance for current policy period"), "Proof of insurance");
+  assert.equal(namedDocument("View policy info"), null);
+});
+
+test("policy list control: 'Select another policy' yes, change or switch wording never", () => {
+  assert.equal(isPolicySelector("Select another policy"), true);
+  assert.equal(isPolicySelector("< Select another policy"), true);
+  assert.equal(isPolicySelector("Choose a different policy"), true);
+  assert.equal(isPolicySelector("Change policy"), false);
+  assert.equal(isPolicySelector("Switch policy"), false);
+  assert.equal(isPolicySelector("Select another policy to cancel"), false);
+});
+
+test("street addresses in capitals are recognised, lower-case words are not", () => {
+  assert.deepEqual(streetAddressesIn("Policy OK0000001 12 TEST AVE"), ["12 TEST AVE"]);
+  assert.deepEqual(streetAddressesIn("Billing account 70000000001 34 W 5TH ST"), ["34 W 5TH ST"]);
+  assert.deepEqual(streetAddressesIn("call 3 times a day st"), []);
+  assert.deepEqual(policyAddresses(["Policy OK0000002 34 SAMPLE ST"]), { OK0000002: "34 SAMPLE ST" });
 });

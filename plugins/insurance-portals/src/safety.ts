@@ -10,6 +10,12 @@
  *      POSTs whose address looks like a payment, change or submission.
  */
 
+/** Street-type words, as written ("St") or in capitals ("ST"), never lower case. */
+const STREET_SUFFIX = ((): string => {
+  const words = ["St", "Street", "Pl", "Place", "Ave", "Avenue", "Rd", "Road", "Dr", "Drive", "Ln", "Lane", "Ct", "Court", "Way", "Blvd", "Boulevard", "Ter", "Terrace", "Cir", "Circle", "Pkwy", "Parkway", "Hwy", "Highway", "Sq", "Square", "Trl", "Trail", "Pike", "Row", "Aly", "Alley"];
+  return [...words, ...words.map((w) => w.toUpperCase())].join("|");
+})();
+
 /** Words that mark a control as one that pays, changes, submits or signs out. */
 const DANGER =
   /\b(pay|paying|payment|payments|autopay|auto-pay|bill ?pay|make a|submit|cancel|change|changes|update|edit|delete|remove|add|enroll|enrol|sign ?up|register|claim|claims|quote|purchase|buy|renew|reinstate|transfer|withdraw|confirm|accept|agree|log ?out|sign ?out|logoff|log off|settings|profile|preferences|paperless|e-?sign|esign|request|refer|chat|contact|feedback|survey|upgrade|switch|bundle|discount offer|apply)\b/i;
@@ -21,6 +27,26 @@ const DOCUMENT =
 /** Link text that leads toward documents or a policy's own page. */
 const NAVIGATE =
   /(\bdocuments?\b|\bpolicy (?:details|summary|overview|information|info)\b|\bview (?:policy|details|documents)\b|\bmy polic(?:y|ies)\b|^\s*polic(?:y|ies)\b|\bselect (?:a |your )?polic(?:y|ies)\b|\bcoverages?\b|\bid cards?\b)/i;
+
+/** Liberty Mutual's screen-reader wording for a button that opens one document. */
+const VIEW_NAMED_DOC = /^(?:view|print|view ?\/ ?print|download)\s+open (?:your|the) [a-z][a-z ]{1,40}? document in a new (?:tab|window)$/i;
+
+/** The document a "View / print" button opens, from its screen-reader words ("Renewal", "Proof of insurance"). */
+export function namedDocument(text: string): string | null {
+  const m = /\bopen (?:your|the) ([a-z][a-z ]{1,40}?) document\b/i.exec(text);
+  if (m) return m[1].trim().replace(/^./, (c) => c.toUpperCase());
+  if (/\bproof of insurance\b/i.test(text)) return "Proof of insurance";
+  return null;
+}
+
+/**
+ * The control that lists the account's other policies ("Select another
+ * policy"). Never a "change" or "switch" wording: those can mean changing
+ * the policy itself.
+ */
+export function isPolicySelector(label: string): boolean {
+  return /^[<‹\s]*(?:select|choose|pick) (?:another|a different|other|a|your)? ?polic(?:y|ies)$/i.test(label.trim());
+}
 
 /** Words that mark an older document we were not asked for. */
 const NOT_CURRENT = /\b(prior|previous|expired|archived?|history|historical|cancell?ed|old)\b/i;
@@ -38,12 +64,20 @@ export function isDocumentLink(label: string, href = "", pdfHint = false): boole
   const text = label.trim();
   if (!text && !href) return false;
   if (NOT_CURRENT.test(text)) return false;
+  // "View / print — Open your Policy change document in a new tab": the
+  // words say it only opens a named document for reading, so the "change"
+  // in the document's name does not make it a change.
+  if (VIEW_NAMED_DOC.test(text)) return true;
   // Danger wins over everything: "Change how policy documents are sent" names
   // a document but is a settings change. Only the visible text is judged; an
   // address may carry "pay" in an id ("payplan.pdf") without meaning it.
   if (text && isDangerous(text)) return false;
   if (/(bill|invoice|payment|statement|receipt)/i.test(text)) return false;
   if (DOCUMENT.test(text)) return true;
+  // "View / print — Open your Renewal document in a new tab" (Liberty Mutual):
+  // one named document, not a list ("documents").
+  if (/\b(?:your|this)\s+[a-z][a-z /-]{1,40}?\s+document\b(?!s)/i.test(text) && /\b(view|print|open|download)\b/i.test(text)) return true;
+  if (/\bproof of insurance\b/i.test(text) && /\b(view|print|open|download)\b/i.test(text)) return true;
   if (pdfHint && !/\bdocuments\b/i.test(text)) return true;
   return /\.pdf(?:$|[?#])/i.test(href) && /(polic|declar|\bdec|idcard|id-card)/i.test(href);
 }
@@ -174,8 +208,7 @@ export function currentTerm<T extends { text: string }>(docs: T[]): T[] {
  */
 export function policyAddresses(texts: string[]): Record<string, string> {
   const out: Record<string, string> = {};
-  const street =
-    /(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:St|Street|Pl|Place|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Sq|Square|Trl|Trail|Pike|Row|Aly|Alley)\b\.?)/;
+  const street = new RegExp(String.raw`(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:${STREET_SUFFIX})\b\.?)`);
   for (const t of texts) {
     const addr = street.exec(t)?.[1];
     if (!addr) continue;
@@ -212,9 +245,8 @@ export function policyNumberIn(text: string): string | null {
   return all.sort((a, b) => score(b) - score(a))[0];
 }
 
-/** Street addresses written in `text` ("12 Oak St", "900 W Elm Avenue"). */
+/** Street addresses written in `text` ("12 Oak St", "900 W Elm Avenue", "929 W 3RD ST"). */
 export function streetAddressesIn(text: string): string[] {
-  const street =
-    /(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:St|Street|Pl|Place|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Way|Blvd|Boulevard|Ter|Terrace|Cir|Circle|Pkwy|Parkway|Hwy|Highway|Sq|Square|Trl|Trail|Pike|Row|Aly|Alley)\b)/g;
+  const street = new RegExp(String.raw`(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:${STREET_SUFFIX})\b)`, "g");
   return [...text.matchAll(street)].map((m) => m[1].trim());
 }
