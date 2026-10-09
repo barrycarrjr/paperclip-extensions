@@ -109,15 +109,6 @@
       ]
     },
     {
-      "id": "amazon-tools",
-      "displayName": "Amazon Seller Tools",
-      "description": "Amazon Seller / Vendor Central operations — orders, inventory, listings, FBA. Closes the revenue/inventory gap stripe-tools and revenuecat-tools don't cover.",
-      "categories": [
-        "automation",
-        "connector"
-      ]
-    },
-    {
       "id": "weather-tools",
       "displayName": "Weather Tools",
       "description": "Weather data for scheduling outdoor home projects, travel planning, and flagging weather-sensitive business decisions.",
