@@ -350,8 +350,8 @@ packages:
     os: [win32]
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-fX+KyPM3c5kSGnDuXLlkor97mrHmnGIIp40es86uOKpVcNeXh+uv2KnPm1383yy4dIrIDIk7umsnZshHegN65g==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
-    version: 1.0.0
+    resolution: {integrity: sha512-uN4GSKqoBWqgf7LA8QweLdqF1Q9NaYDhNykPEvqNldh/6h/EcVka4rAtN7as01KepgzcsPJADqf/n1XDqz3apQ==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    version: 1.0.0-vendor.0f984983682a
     hasBin: true
     peerDependencies:
       react: '>=18'
@@ -360,8 +360,8 @@ packages:
         optional: true
 
   '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
-    resolution: {integrity: sha512-OP5PhwTv57qMxJ9ITHbCcPGFOFiPUvmVufVeXFk0NFIOuwkfAGQE5fcU6xN/DC+VxNkry/kACCK4YqLzdXuthA==, tarball: file:../../vendor/sdk/shared.tgz}
-    version: 0.3.1
+    resolution: {integrity: sha512-mCotIF7rdzRq1HS/ZC+H2+nAkErgnCc854aS1CaIhOaeh/IoG+dVE2zoCaI/slFzQggySlBtUma0b/PCA0/bEw==, tarball: file:../../vendor/sdk/shared.tgz}
+    version: 0.3.1-vendor.ea7fc86369ca
 
   '@slack/logger@4.0.1':
     resolution: {integrity: sha512-6cmdPrV/RYfd2U0mDGiMK8S7OJqpCTm7enMLRR3edccsPX8j7zXTLnaEF4fhxxJJTAIOil6+qZrnUPTuaLvwrQ==}

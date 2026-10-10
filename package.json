@@ -5,7 +5,9 @@
   "description": "First-party Paperclip plugins. Each plugin under plugins/ is its own self-contained pnpm package; this root package only exists to host the multi-plugin pack and release-prep scripts.",
   "scripts": {
     "build:all": "node scripts/build-all.mjs",
-    "pack:all": "node scripts/pack-all.mjs"
+    "pack:all": "node scripts/pack-all.mjs",
+    "test": "node --test scripts/*.test.mjs",
+    "vendor:sdk": "node scripts/vendor-sdk.mjs"
   },
   "devDependencies": {
     "js-yaml": "^4.1.0",

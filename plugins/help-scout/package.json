@@ -12,7 +12,7 @@
     "worker": "./dist/worker.js"
   },
   "scripts": {
-    "build": "node esbuild.config.mjs",
+    "build": "node ../../scripts/check-vendored-sdk.mjs && node esbuild.config.mjs",
     "clean": "rimraf dist",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx \"src/**/*.test.ts\""
