@@ -2,6 +2,7 @@ import {
   definePlugin,
   runWorker,
   type PluginChannelIdentity,
+  type PluginChatTurnResult,
   type PluginContext,
   type ToolResult,
   type ToolRunContext,
@@ -27,9 +28,18 @@ import {
   extractOperatorDm,
   slackLocalTime,
   withAttachmentNote,
+  type DmFile,
   type OperatorDm,
   type PendingApprovalSummary,
 } from "./socketMode.js";
+import {
+  DM_IMAGE_LIMITS,
+  MAX_DM_IMAGES,
+  fetchDmImage,
+  isDmImage,
+  type DmImage,
+  type DmImageLimits,
+} from "./dmImages.js";
 import { consumeDelivery, deliveryEvent, selectSupportAccount } from "../../../lib/support-delivery.js";
 
 /**
@@ -112,6 +122,20 @@ export function slackChatTitle(text: string): string {
   return `Slack: ${capped}`;
 }
 
+export interface InboundDmOptions {
+  /** Downloads a file from Slack; tests pass a fake. */
+  fetchFile?: typeof fetch;
+  /** Size caps on a message's images; Paperclip's own by default. */
+  imageLimits?: DmImageLimits;
+}
+
+/** A DM's files sorted for Clippy: images it is sent, images that failed, and the rest. */
+interface DmAttachments {
+  images: DmImage[];
+  failed: Array<{ name: string; reason: string }>;
+  otherFiles: DmFile[];
+}
+
 export class InboundDmBridges {
   private connections: SocketModeConnection[] = [];
   private readonly seen: string[] = [];
@@ -122,8 +146,8 @@ export class InboundDmBridges {
   private readonly queues = new Map<string, Promise<void>>();
   /** Approvals shown with buttons, so a decision can be written back in words. */
   private readonly approvalsShown = new Map<string, PendingApprovalSummary>();
-  /** Reaction failures already logged, one entry per workspace and cause. */
-  private readonly reactionFailuresLogged = new Set<string>();
+  /** Failures already logged, one entry per workspace, kind and cause. */
+  private readonly failuresLogged = new Set<string>();
 
   constructor(
     private readonly ctx: PluginContext,
@@ -137,6 +161,7 @@ export class InboundDmBridges {
         false,
         true,
       ),
+    private readonly options: InboundDmOptions = {},
   ) {}
 
   async start(config: InstanceConfig): Promise<void> {
@@ -261,18 +286,78 @@ export class InboundDmBridges {
   }
 
   /**
-   * Logs why the 👀 or ✅ on a DM could not be set, once per cause: without
-   * it a missing Slack permission looks exactly like a bot that never tried,
-   * and logging every message would bury the log.
+   * Logs a failure once per workspace and cause: without it a missing Slack
+   * permission looks exactly like a bot that never tried, and logging every
+   * message would bury the log.
    */
+  private logOncePerCause(workspaceKey: string, what: string, cause: string): void {
+    const key = `${workspaceKey}:${what}:${cause}`;
+    if (this.failuresLogged.has(key)) return;
+    this.failuresLogged.add(key);
+    this.ctx.logger.warn(`slack-tools inbound [${workspaceKey}]: ${what} (logged once per cause): ${cause}`);
+  }
+
+  /** Why the 👀 or ✅ on a DM could not be set. */
   private noteReactionFailure(workspaceKey: string, err: unknown): void {
-    const reason = wrapSlackError(err);
-    const key = `${workspaceKey}:${reason}`;
-    if (this.reactionFailuresLogged.has(key)) return;
-    this.reactionFailuresLogged.add(key);
-    this.ctx.logger.warn(
-      `slack-tools inbound [${workspaceKey}]: could not set a reaction on a DM (logged once per cause): ${reason}`,
-    );
+    this.logOncePerCause(workspaceKey, "could not set a reaction on a DM", wrapSlackError(err));
+  }
+
+  /**
+   * Sorts a DM's files for Clippy and downloads the images, within the limits
+   * Paperclip applies to them. An image that cannot be opened is noted with
+   * why, and Slack's reason is logged once per cause: a missing files:read
+   * scope otherwise looks exactly like Clippy ignoring the image.
+   */
+  private async dmAttachments(ws: InboundWorkspace, slack: ResolvedWorkspace, files: DmFile[]): Promise<DmAttachments> {
+    const result: DmAttachments = { images: [], failed: [], otherFiles: [] };
+    const limits = this.options.imageLimits ?? DM_IMAGE_LIMITS;
+    let usedBase64Bytes = 0;
+    let tried = 0;
+    for (const file of files) {
+      if (!isDmImage(file)) {
+        result.otherFiles.push(file);
+        continue;
+      }
+      tried += 1;
+      if (tried > MAX_DM_IMAGES) {
+        result.failed.push({ name: file.name, reason: `only the first ${MAX_DM_IMAGES} images in a message can be shown` });
+        continue;
+      }
+      const fetched = await fetchDmImage(slack, file, {
+        limits,
+        usedBase64Bytes,
+        fetchFile: this.options.fetchFile ?? ((input, init) => fetch(input, init)),
+      });
+      if (fetched.ok) {
+        result.images.push(fetched.image);
+        usedBase64Bytes += fetched.base64Bytes;
+        continue;
+      }
+      result.failed.push({ name: file.name, reason: fetched.reason });
+      if (fetched.cause) this.logOncePerCause(ws.key, "could not open an image sent in a DM", fetched.cause);
+    }
+    return result;
+  }
+
+  /**
+   * Logs images Paperclip did not put in front of Clippy. A server older than
+   * images in chat turns drops them all without a word, which otherwise looks
+   * exactly like images working; the note in the message covers the turn.
+   */
+  private noteImagesLeftOut(ws: InboundWorkspace, turn: PluginChatTurnResult): void {
+    if (turn.skippedImages === undefined) {
+      this.logOncePerCause(
+        ws.key,
+        "could not show Clippy an image sent in a DM",
+        "this Paperclip server does not take images with a chat turn; update Paperclip",
+      );
+      return;
+    }
+    for (const skipped of turn.skippedImages) {
+      this.ctx.logger.warn(
+        `slack-tools inbound [${ws.key}]: Paperclip left an image sent in a DM out of the turn (${skipped.name}): ${skipped.reason}`,
+      );
+    }
   }
 
   /**
@@ -342,8 +427,13 @@ export class InboundDmBridges {
         return;
       }
 
-      const text = withThreadContext(withAttachmentNote(dm.text, dm.files), await this.threadParent(slack, dm));
-      const turn = await this.runClippyTurn(ws, dm, text);
+      const attachments = await this.dmAttachments(ws, slack, dm.files);
+      const text = withThreadContext(
+        withAttachmentNote(dm.text, attachments.otherFiles, { sent: attachments.images, failed: attachments.failed }),
+        await this.threadParent(slack, dm),
+      );
+      const turn = await this.runClippyTurn(ws, dm, text, attachments.images);
+      if (attachments.images.length > 0) this.noteImagesLeftOut(ws, turn);
       const reply = turn.replyText.trim();
       if (reply) {
         for (const chunk of chunkText(reply)) await post(chunk);
@@ -395,7 +485,7 @@ export class InboundDmBridges {
    * continue it. Paperclip starts a new session itself when the saved one was
    * deleted in the app, so the id it returns is always the one to keep.
    */
-  private async runClippyTurn(ws: InboundWorkspace, dm: OperatorDm, text: string) {
+  private async runClippyTurn(ws: InboundWorkspace, dm: OperatorDm, text: string, images: DmImage[]) {
     const threadTs = dm.threadTs ?? dm.ts;
     const existing = await this.loadSession(ws.key, dm.channelId, threadTs);
     const turn = await this.ctx.chat.turn({
@@ -404,6 +494,7 @@ export class InboundDmBridges {
       sessionId: existing?.chatSessionId ?? null,
       title: slackChatTitle(dm.text),
       text,
+      ...(images.length > 0 ? { images } : {}),
     });
     await this.saveSession(ws.key, dm.channelId, threadTs, dm.userId, turn.sessionId, dm.ts);
     return turn;

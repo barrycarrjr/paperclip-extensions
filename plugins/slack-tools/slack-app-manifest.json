@@ -64,6 +64,7 @@
         "mpim:history",
         "reactions:read",
         "reactions:write",
+        "files:read",
         "files:write",
         "pins:read",
         "pins:write",

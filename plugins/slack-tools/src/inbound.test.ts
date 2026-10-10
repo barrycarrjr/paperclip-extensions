@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createTestHarness, type TestHarnessOptions } from "@paperclipai/plugin-sdk/testing";
+import type { PluginChatTurnInput, PluginChatTurnResult } from "@paperclipai/plugin-sdk";
 import manifest from "./manifest.js";
 import type { ResolvedWorkspace } from "./slackClient.js";
 import { APPROVE_ACTION_ID } from "./socketMode.js";
+import { MAX_DM_IMAGES } from "./dmImages.js";
 import {
   InboundDmBridges,
   MAX_SLACK_CHAT_TITLE_CHARS,
@@ -12,6 +14,7 @@ import {
   slackChatTitle,
   slackIdentity,
   withThreadContext,
+  type InboundDmOptions,
   type InboundWorkspace,
 } from "./worker.js";
 
@@ -43,12 +46,30 @@ function dmPayload(text: string, ts = "1760000000.000100", threadTs?: string) {
 /**
  * `threadParent`: the message conversations.replies returns first, or an
  * error it throws. `reactionError`: what every reaction call throws.
+ * `fileInfo`: what files.info says about each file id, or the error it throws.
  */
-function fakeSlack(options: { threadParent?: Record<string, unknown> | Error; reactionError?: Error } = {}) {
+function fakeSlack(
+  options: {
+    threadParent?: Record<string, unknown> | Error;
+    reactionError?: Error;
+    fileInfo?: Record<string, Record<string, unknown> | Error>;
+  } = {},
+) {
   const posted: Array<{ text: string; blocks?: unknown[]; threadTs?: string }> = [];
   const updated: Array<{ text: string; blocks?: unknown[] }> = [];
   const reactions: string[] = [];
+  const fileInfoCalls: string[] = [];
   const client = {
+    token: "xoxb-test",
+    files: {
+      info: async (args: { file: string }) => {
+        fileInfoCalls.push(args.file);
+        const info = options.fileInfo?.[args.file];
+        if (info instanceof Error) throw info;
+        if (!info) throw new Error(`no fake file ${args.file}`);
+        return { ok: true, file: info };
+      },
+    },
     chat: {
       postMessage: async (args: { text: string; blocks?: unknown[]; thread_ts?: string }) => {
         posted.push({ text: args.text, blocks: args.blocks, threadTs: args.thread_ts });
@@ -81,13 +102,17 @@ function fakeSlack(options: { threadParent?: Record<string, unknown> | Error; re
       },
     },
   };
-  return { posted, updated, reactions, workspace: { client } as unknown as ResolvedWorkspace };
+  return { posted, updated, reactions, fileInfoCalls, workspace: { client } as unknown as ResolvedWorkspace };
 }
 
-function bridgesWith(options: Partial<TestHarnessOptions>, slackOptions: Parameters<typeof fakeSlack>[0] = {}) {
+function bridgesWith(
+  options: Partial<TestHarnessOptions>,
+  slackOptions: Parameters<typeof fakeSlack>[0] = {},
+  inboundOptions: InboundDmOptions = {},
+) {
   const harness = createTestHarness({ manifest, ...options });
   const slack = fakeSlack(slackOptions);
-  const bridges = new InboundDmBridges(harness.ctx, async () => slack.workspace);
+  const bridges = new InboundDmBridges(harness.ctx, async () => slack.workspace, inboundOptions);
   // The handlers are private; tests drive them the way a Socket Mode envelope would.
   const handlers = bridges as unknown as {
     onDm(ws: InboundWorkspace, payload: Record<string, unknown>): Promise<void>;
@@ -412,5 +437,376 @@ describe("inbound DMs to Clippy", () => {
       pairingInstructions({ code: "K7QF-3MZD", profileUrl: "https://pc.example.com/instance/settings/profile" }),
       /<https:\/\/pc\.example\.com\/instance\/settings\/profile\|your Paperclip profile>/,
     );
+  });
+});
+
+/**
+ * Images in a DM. The plugin downloads each with the bot token, within the
+ * app composer's limits, and hands them to Clippy with the turn; anything it
+ * cannot open stays a note in the message.
+ */
+describe("images in inbound DMs", () => {
+  // The first bytes of each type; what the plugin checks before sending.
+  const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
+  const JPEG = Buffer.from("ffd8ffe000104a46494600", "hex");
+
+  const urlOf = (id: string, name: string) => `https://files.slack.com/files-pri/T0TEST-${id}/download/${name}`;
+
+  /** What files.info says about a file. */
+  function slackFile(id: string, name: string, size: number, mimetype = "image/png") {
+    return { id, name, mimetype, size, url_private_download: urlOf(id, name) };
+  }
+
+  /** A DM carrying files, as the message event lists them. */
+  function fileDm(files: Array<{ id: string; name: string; mimetype: string }>, text = "", ts = "1760000000.000800") {
+    return {
+      event_id: `Ev${ts}`,
+      event: {
+        type: "message",
+        subtype: "file_share",
+        channel_type: "im",
+        channel: "D0TESTDM001",
+        user: PAT,
+        text,
+        ts,
+        files,
+      },
+    };
+  }
+
+  /** Answers each download from `responses` by URL, and records who asked for what. */
+  function fakeDownloads(responses: Record<string, () => Response>) {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const fetchFile = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+      const respond = responses[url];
+      return respond ? respond() : new Response("not found", { status: 404 });
+    }) as typeof fetch;
+    return { fetchFile, requests };
+  }
+
+  const imageResponse = (bytes: Buffer, contentType = "image/png") =>
+    new Response(new Uint8Array(bytes), { status: 200, headers: { "content-type": contentType } });
+
+  /** Records each turn's input; `result` overrides the answer. */
+  function recording(turns: PluginChatTurnInput[], result: Partial<PluginChatTurnResult> = {}): Partial<TestHarnessOptions> {
+    return {
+      pairedChannelUsers: [{ workspace: "main", externalUserId: PAT }],
+      chatTurn: (input) => {
+        turns.push(input);
+        return {
+          sessionId: "chat-session-1",
+          replyText: "Sent.",
+          stopReason: "end_turn",
+          pendingApprovals: [],
+          needsConfirmation: [],
+          toolCalls: [],
+          error: null,
+          skippedImages: [],
+          ...result,
+        };
+      },
+    };
+  }
+
+  const missingFilesRead = () =>
+    Object.assign(new Error("An API error occurred: missing_scope"), {
+      code: "slack_webapi_platform_error",
+      data: { ok: false, error: "missing_scope", needed: "files:read", provided: "chat:write,im:history" },
+    });
+
+  it("shows Clippy an image sent in a DM, downloaded with the bot token", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({ [urlOf("F0IMG1", "screenshot.png")]: () => imageResponse(PNG) });
+    const { slack, handlers } = bridgesWith(
+      recording(turns),
+      { fileInfo: { F0IMG1: slackFile("F0IMG1", "screenshot.png", PNG.length) } },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG1", name: "screenshot.png", mimetype: "image/png" }], "what is this error?"));
+
+    assert.deepEqual(turns[0]?.images, [{ name: "screenshot.png", mediaType: "image/png", base64: PNG.toString("base64") }]);
+    // Named in the text as well, for a Paperclip server too old to take images.
+    assert.equal(
+      turns[0]?.text,
+      "what is this error?\n\n[Slack: the sender also attached an image (screenshot.png), sent with this message. If you cannot see it, say so and ask what it shows.]",
+    );
+    assert.deepEqual(downloads.requests, [{ url: urlOf("F0IMG1", "screenshot.png"), authorization: "Bearer xoxb-test" }]);
+    assert.deepEqual(slack.posted.map((post) => post.text), ["Sent."]);
+  });
+
+  it("keeps the plain note for a file Clippy cannot be shown, and downloads nothing", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({});
+    const { slack, handlers } = bridgesWith(recording(turns), {}, { fetchFile: downloads.fetchFile });
+    await handlers.onDm(
+      WS,
+      fileDm(
+        [
+          { id: "F0PDF1", name: "invoice.pdf", mimetype: "application/pdf" },
+          { id: "F0HEIC1", name: "photo.heic", mimetype: "image/heic" },
+        ],
+        "file these",
+      ),
+    );
+
+    assert.equal(turns[0]?.images, undefined);
+    assert.equal(
+      turns[0]?.text,
+      "file these\n\n[Slack: the sender also attached 2 files (invoice.pdf, photo.heic), which cannot be opened from Slack. If it matters, say so and ask what it shows.]",
+    );
+    assert.deepEqual(slack.fileInfoCalls, []);
+    assert.deepEqual(downloads.requests, []);
+  });
+
+  it("says an image could not be opened when the Slack app lacks files:read, and logs Slack's reason once", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({});
+    const { harness, slack, handlers } = bridgesWith(
+      recording(turns),
+      { fileInfo: { F0IMG1: missingFilesRead(), F0IMG2: missingFilesRead() } },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG1", name: "screenshot.png", mimetype: "image/png" }], "look", "1760000000.000810"));
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG2", name: "photo.jpg", mimetype: "image/jpeg" }], "", "1760000000.000820"));
+
+    assert.equal(turns[0]?.images, undefined);
+    assert.equal(
+      turns[0]?.text,
+      "look\n\n[Slack: the sender also attached an image (screenshot.png), which could not be opened: the Slack app is missing the files:read permission. If it matters, say so and ask what it shows.]",
+    );
+    assert.match(turns[1]!.text, /^\[Slack: the sender also attached an image \(photo\.jpg\), which could not be opened/);
+    // Both messages were still answered, and nothing was downloaded.
+    assert.equal(slack.posted.length, 2);
+    assert.deepEqual(downloads.requests, []);
+    const warnings = harness.logs.filter((entry) => entry.level === "warn" && entry.message.includes("could not open an image"));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!.message, /missing scope \(needed=files:read/);
+  });
+
+  it("says an image could not be opened when its download fails, and logs Slack's answer once per cause", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({
+      [urlOf("F0IMG1", "a.png")]: () => new Response("no", { status: 403 }),
+      [urlOf("F0IMG2", "b.png")]: () => imageResponse(Buffer.from("<html>Sign in to Slack</html>"), "text/html; charset=utf-8"),
+      [urlOf("F0IMG3", "c.png")]: () => new Response("no", { status: 403 }),
+    });
+    const { harness, handlers } = bridgesWith(
+      recording(turns),
+      {
+        fileInfo: {
+          F0IMG1: slackFile("F0IMG1", "a.png", 16),
+          F0IMG2: slackFile("F0IMG2", "b.png", 16),
+          F0IMG3: slackFile("F0IMG3", "c.png", 16),
+        },
+      },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG1", name: "a.png", mimetype: "image/png" }], "", "1760000000.000810"));
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG2", name: "b.png", mimetype: "image/png" }], "", "1760000000.000820"));
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG3", name: "c.png", mimetype: "image/png" }], "", "1760000000.000830"));
+
+    assert.deepEqual(turns.map((turn) => turn.images), [undefined, undefined, undefined]);
+    for (const turn of turns) assert.match(turn.text, /which could not be opened: the download from Slack failed\./);
+    const warnings = harness.logs
+      .filter((entry) => entry.level === "warn" && entry.message.includes("could not open an image"))
+      .map((entry) => entry.message);
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0]!, /HTTP 403/);
+    assert.match(warnings[1]!, /web page instead of the file/);
+  });
+
+  it("keeps to Paperclip's size caps for each image and for the message's images, before downloading", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({
+      [urlOf("F0TEXT", "fake.png")]: () => imageResponse(Buffer.from("hello")),
+      [urlOf("F0A", "a.png")]: () => imageResponse(PNG),
+      [urlOf("F0B", "b.jpg")]: () => imageResponse(JPEG, "image/jpeg"),
+      [urlOf("F0C", "c.png")]: () => imageResponse(PNG),
+    });
+    const { handlers } = bridgesWith(
+      recording(turns),
+      {
+        fileInfo: {
+          F0BIG: slackFile("F0BIG", "big.png", 41),
+          F0TEXT: slackFile("F0TEXT", "fake.png", 5),
+          F0A: slackFile("F0A", "a.png", PNG.length),
+          F0B: slackFile("F0B", "b.jpg", JPEG.length, "image/jpeg"),
+          F0C: slackFile("F0C", "c.png", PNG.length),
+        },
+      },
+      // As base64 the PNG takes 24 bytes and the JPEG 16. These caps stand in
+      // for 10 MB an image and 24 MB a message: a 30 byte file, 36 in all.
+      { fetchFile: downloads.fetchFile, imageLimits: { perImageBase64Bytes: 40, totalBase64Bytes: 48 } },
+    );
+    await handlers.onDm(
+      WS,
+      fileDm([
+        { id: "F0BIG", name: "big.png", mimetype: "image/png" },
+        { id: "F0TEXT", name: "fake.png", mimetype: "image/png" },
+        { id: "F0A", name: "a.png", mimetype: "image/png" },
+        { id: "F0B", name: "b.jpg", mimetype: "image/jpeg" },
+        { id: "F0C", name: "c.png", mimetype: "image/png" },
+      ]),
+    );
+
+    assert.deepEqual(turns[0]?.images, [
+      { name: "a.png", mediaType: "image/png", base64: PNG.toString("base64") },
+      { name: "b.jpg", mediaType: "image/jpeg", base64: JPEG.toString("base64") },
+    ]);
+    assert.equal(
+      turns[0]?.text,
+      [
+        "[Slack: the sender also attached an image (big.png), which could not be opened: it is over the 30 B limit for one image. If it matters, say so and ask what it shows.]",
+        "[Slack: the sender also attached an image (fake.png), which could not be opened: it is not a PNG, JPEG, GIF or WebP image. If it matters, say so and ask what it shows.]",
+        "[Slack: the sender also attached an image (c.png), which could not be opened: with the other images in the message it is over the 36 B limit for all of them. If it matters, say so and ask what it shows.]",
+        "[Slack: the sender also attached 2 images (a.png, b.jpg), sent with this message. If you cannot see them, say so and ask what they show.]",
+      ].join("\n"),
+    );
+    // Slack said big.png and c.png were too large, so neither was downloaded.
+    assert.deepEqual(
+      downloads.requests.map((request) => request.url),
+      [urlOf("F0TEXT", "fake.png"), urlOf("F0A", "a.png"), urlOf("F0B", "b.jpg")],
+    );
+  });
+
+  it("caps an image at 7.5 MB of file, 10 MB as base64, by default, and does not download a larger one", async () => {
+    const FULL = 7.5 * 1024 * 1024;
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({
+      [urlOf("F0FITS", "fits.png")]: () => imageResponse(Buffer.concat([PNG, Buffer.alloc(FULL - PNG.length)])),
+    });
+    const { handlers } = bridgesWith(
+      recording(turns),
+      {
+        fileInfo: {
+          F0OVER: slackFile("F0OVER", "over.png", FULL + 1),
+          F0FITS: slackFile("F0FITS", "fits.png", FULL),
+        },
+      },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(
+      WS,
+      fileDm([
+        { id: "F0OVER", name: "over.png", mimetype: "image/png" },
+        { id: "F0FITS", name: "fits.png", mimetype: "image/png" },
+      ]),
+    );
+
+    assert.deepEqual(downloads.requests.map((request) => request.url), [urlOf("F0FITS", "fits.png")]);
+    assert.deepEqual(turns[0]?.images?.map((image) => image.name), ["fits.png"]);
+    assert.match(turns[0]!.text, /\(over\.png\), which could not be opened: it is over the 7\.5 MB limit for one image\./);
+  });
+
+  it("never sends the bot token anywhere but Slack", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({});
+    const { harness, handlers } = bridgesWith(
+      recording(turns),
+      {
+        fileInfo: {
+          // A host that only looks like Slack's, and Slack's own over plain http.
+          F0LOOKALIKE: { ...slackFile("F0LOOKALIKE", "a.png", 16), url_private_download: "https://files.slack.com.example.net/a.png" },
+          F0PLAIN: { ...slackFile("F0PLAIN", "b.png", 16), url_private_download: "http://files.slack.com/b.png" },
+        },
+      },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(
+      WS,
+      fileDm(
+        [
+          { id: "F0LOOKALIKE", name: "a.png", mimetype: "image/png" },
+          { id: "F0PLAIN", name: "b.png", mimetype: "image/png" },
+        ],
+        "look",
+      ),
+    );
+
+    assert.deepEqual(downloads.requests, []);
+    assert.equal(turns[0]?.images, undefined);
+    assert.match(turns[0]!.text, /2 images \(a\.png, b\.png\), which could not be opened: Slack would not give it to the bot\./);
+    const warnings = harness.logs.filter((entry) => entry.level === "warn" && entry.message.includes("could not open an image"));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!.message, /no Slack download address/);
+  });
+
+  it(`hands Clippy at most ${MAX_DM_IMAGES} images from one message, as the app's composer does`, async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const names = Array.from({ length: MAX_DM_IMAGES + 2 }, (_, index) => `shot-${index + 1}.png`);
+    const downloads = fakeDownloads(Object.fromEntries(names.map((name) => [urlOf(`F0${name}`, name), () => imageResponse(PNG)])));
+    const { handlers } = bridgesWith(
+      recording(turns),
+      { fileInfo: Object.fromEntries(names.map((name) => [`F0${name}`, slackFile(`F0${name}`, name, PNG.length)])) },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(WS, fileDm(names.map((name) => ({ id: `F0${name}`, name, mimetype: "image/png" }))));
+
+    assert.deepEqual(
+      turns[0]?.images?.map((image) => image.name),
+      names.slice(0, MAX_DM_IMAGES),
+    );
+    assert.equal(downloads.requests.length, MAX_DM_IMAGES);
+    assert.match(
+      turns[0]!.text,
+      /attached 2 images \(shot-9\.png, shot-10\.png\), which could not be opened: only the first 8 images in a message can be shown\./,
+    );
+  });
+
+  it("still tells Clippy an image came with the message when Paperclip is too old to take images, and logs it once", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    // An older server's answer has no skippedImages: it dropped the images without a word.
+    const olderServer: PluginChatTurnResult = {
+      sessionId: "chat-session-1",
+      replyText: "I cannot see an image. What does it show?",
+      stopReason: "end_turn",
+      pendingApprovals: [],
+      needsConfirmation: [],
+      toolCalls: [],
+      error: null,
+    };
+    const downloads = fakeDownloads({
+      [urlOf("F0IMG1", "a.png")]: () => imageResponse(PNG),
+      [urlOf("F0IMG2", "b.png")]: () => imageResponse(PNG),
+    });
+    const { harness, slack, handlers } = bridgesWith(
+      {
+        pairedChannelUsers: [{ workspace: "main", externalUserId: PAT }],
+        chatTurn: (input) => {
+          turns.push(input);
+          return olderServer;
+        },
+      },
+      { fileInfo: { F0IMG1: slackFile("F0IMG1", "a.png", PNG.length), F0IMG2: slackFile("F0IMG2", "b.png", PNG.length) } },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG1", name: "a.png", mimetype: "image/png" }], "", "1760000000.000810"));
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG2", name: "b.png", mimetype: "image/png" }], "", "1760000000.000820"));
+
+    for (const turn of turns) {
+      assert.match(turn.text, /sent with this message\. If you cannot see it, say so and ask what it shows\.\]$/);
+    }
+    assert.deepEqual(slack.posted.map((post) => post.text), [olderServer.replyText, olderServer.replyText]);
+    const warnings = harness.logs.filter((entry) => entry.level === "warn" && entry.message.includes("does not take images"));
+    assert.equal(warnings.length, 1);
+  });
+
+  it("logs an image Paperclip left out of the turn, with its reason", async () => {
+    const turns: PluginChatTurnInput[] = [];
+    const downloads = fakeDownloads({ [urlOf("F0IMG1", "a.png")]: () => imageResponse(PNG) });
+    const { harness, handlers } = bridgesWith(
+      recording(turns, {
+        skippedImages: [{ name: "a.png", reason: "Unsupported attachment type: image/png" }],
+      }),
+      { fileInfo: { F0IMG1: slackFile("F0IMG1", "a.png", PNG.length) } },
+      { fetchFile: downloads.fetchFile },
+    );
+    await handlers.onDm(WS, fileDm([{ id: "F0IMG1", name: "a.png", mimetype: "image/png" }], "see this"));
+
+    const warnings = harness.logs.filter((entry) => entry.level === "warn" && entry.message.includes("left an image"));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!.message, /\(a\.png\): Unsupported attachment type: image\/png$/);
   });
 });

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "slack-tools";
-const PLUGIN_VERSION = "0.6.1";
+const PLUGIN_VERSION = "0.6.2";
 
 const workspaceItemSchema = {
   type: "object",
@@ -77,7 +77,7 @@ const workspaceItemSchema = {
       format: "secret-ref",
       title: "App-level token (xapp-...) for inbound DMs",
       description:
-        "Optional. The secret holding an app-level token with the connections:write scope. When set, the plugin keeps a Socket Mode connection open and every DM an allowed sender sends the bot is answered within seconds: by Clippy, Paperclip's assistant, acting as the Paperclip user who paired that Slack account (default), or by waking one agent. Generate it under Basic Information, App-Level Tokens; the Slack app also needs Socket Mode, the message.im bot event, Interactivity, the App Home messages tab and the bot scopes im:history, chat:write, reactions:write and users:read (checklist in section 6a of the setup notes). After picking it here, click Save.",
+        "Optional. The secret holding an app-level token with the connections:write scope. When set, the plugin keeps a Socket Mode connection open and every DM an allowed sender sends the bot is answered within seconds: by Clippy, Paperclip's assistant, acting as the Paperclip user who paired that Slack account (default), or by waking one agent. Generate it under Basic Information, App-Level Tokens; the Slack app also needs Socket Mode, the message.im bot event, Interactivity, the App Home messages tab and the bot scopes im:history, chat:write, reactions:write, users:read and files:read (checklist in section 6a of the setup notes). After picking it here, click Save.",
     },
     inboundDmTarget: {
       type: "string",
@@ -198,7 +198,7 @@ An app created from the current \`slack-app-manifest.json\` already has all of t
 | **Event Subscriptions** | Enabled, with the bot event \`message.im\` | The bot never hears your DMs. |
 | **Interactivity & Shortcuts** | Enabled (no request URL is needed with Socket Mode) | **Approve** and **Reject** do nothing. |
 | **App Home**, **Show Tabs** | **Messages Tab** on, and "Allow users to send Slash commands and messages from the messages tab" ticked | Slack says "Sending messages to this app has been turned off". |
-| **OAuth & Permissions**, **Bot Token Scopes** | \`im:history\`, \`chat:write\`, \`reactions:write\`, \`users:read\` | Without \`im:history\` no DMs arrive and a reply in a thread loses the message above it; without \`chat:write\` no answers; without \`reactions:write\` no 👀 or ✅; without \`users:read\` the pairing code cannot name your account. |
+| **OAuth & Permissions**, **Bot Token Scopes** | \`im:history\`, \`chat:write\`, \`reactions:write\`, \`users:read\`, \`files:read\` | Without \`im:history\` no DMs arrive and a reply in a thread loses the message above it; without \`chat:write\` no answers; without \`reactions:write\` no 👀 or ✅; without \`users:read\` the pairing code cannot name your account; without \`files:read\` the bot cannot download the images you send, so Clippy cannot see them. |
 
 After adding a scope, Slack asks you to **reinstall the app** to the workspace. Do it, then compare the tokens on **OAuth & Permissions** with the secrets you saved in step 3 and update any that changed.
 
@@ -219,7 +219,7 @@ Send the bot a DM. The first time, it replies with a pairing code that works for
 - 👀 on your message while Clippy works, then ✅ when it has answered (❌ if it stopped part way).
 - The answer comes in a thread under your message. Replies you write in that thread carry on the same conversation. A new message (not a reply) starts a new conversation, listed in Clippy's chat history under its first line.
 - Reply in a thread under one of the bot's own messages (an agent's alert, say) and Clippy is given that message as context.
-- Clippy cannot open files sent in Slack. A message with a file is still answered, and Clippy is told a file came with it.
+- Clippy sees the images you send: PNG, JPEG, GIF or WebP, up to 8 in a message, each up to 7.5 MB and about 18 MB in all. A larger image is not downloaded, and Clippy is told it could not be opened and why. It cannot open other files, but a message with one is still answered, and Clippy is told a file came with it.
 - Anything outbound that Clippy drafts waits for **Approve**. Times on the result are shown in each reader's own time zone.
 
 Choose **agent** instead of clippy to have one agent woken with each DM as its prompt; that agent then answers with \`slack_send_dm\`.
@@ -244,7 +244,7 @@ Default = bot token (announce/notify identity). Send / reaction tools opt into t
 ## Required scopes (already in the bundled manifest)
 
 The shipped \`slack-app-manifest.json\` declares everything every current tool needs, including:
-- Bot: \`chat:write\`, \`chat:write.public\`, \`im:write\`, \`channels:read\`, \`groups:read\`, \`channels:history\`, \`groups:history\`, \`im:history\`, \`mpim:history\`, \`reactions:read\`, \`reactions:write\`, \`files:write\`, \`pins:read\`, \`pins:write\`, \`users:read\`, \`users:read.email\`.
+- Bot: \`chat:write\`, \`chat:write.public\`, \`im:write\`, \`channels:read\`, \`groups:read\`, \`channels:history\`, \`groups:history\`, \`im:history\`, \`mpim:history\`, \`reactions:read\`, \`reactions:write\`, \`files:read\`, \`files:write\`, \`pins:read\`, \`pins:write\`, \`users:read\`, \`users:read.email\`.
 - User: \`search:read\`, \`reactions:write\`, \`users.profile:write\`, plus the rest of the act-as-me set (chat, files, im/groups/channels history, etc.).
 
 If your app was created from an older manifest, **re-import the current one** at api.slack.com/apps (App Manifest, Edit, paste the new JSON), then **reinstall the app to your workspace**. Afterwards compare the tokens on **OAuth & Permissions** with your \`SLACK_BOT_TOKEN_*\` and \`SLACK_USER_TOKEN_*\` secrets and update any that changed. Section 6a lists what talking to Clippy from Slack needs on top.
@@ -259,6 +259,7 @@ If your app was created from an older manifest, **re-import the current one** at
 - **\`[ECONFIG] ... no userTokenRef configured\`**: a tool needs the user token but you didn't set one. Save the \`xoxp-\` token on the Secrets page, then pick it in the workspace's User token dropdown.
 - **The bot never answers a DM**: the App-level token is not picked (and saved) on the Configuration tab, Socket Mode or the \`message.im\` event is off, or you are not in **Inbound DM senders** (or the Default DM target). The server log says \`listening for DMs\` and \`connected\` once it is set up (section 6b).
 - **No 👀 or ✅ on your messages**: the bot token lacks \`reactions:write\`. The server log says \`could not set a reaction on a DM ... missing scope (needed=reactions:write ...)\`. Add the scope and reinstall the app.
+- **Clippy says it cannot open an image you sent**: the bot token lacks \`files:read\`. The server log says \`could not open an image sent in a DM ... missing scope (needed=files:read ...)\`. Add the scope and reinstall the app. If the log says instead that this Paperclip server does not take images, update Paperclip.
 - **Approve and Reject do nothing**: Interactivity is off in the Slack app.
 - **Slack says "Sending messages to this app has been turned off"**: turn on the Messages Tab under App Home.
 - **A reply in a thread is answered as if Clippy cannot see the message above it**: the bot token lacks \`im:history\`.

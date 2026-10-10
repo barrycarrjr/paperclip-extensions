@@ -14,6 +14,15 @@
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import manifest from "./manifest.js";
 
+/** A file attached to a DM, as the message event describes it. */
+export interface DmFile {
+  name: string;
+  /** Slack's id for the file; null when the event did not carry one. */
+  id: string | null;
+  /** What Slack says the file is, e.g. "image/png"; null when it did not say. */
+  mimetype: string | null;
+}
+
 export interface OperatorDm {
   workspaceKey: string;
   userId: string;
@@ -22,8 +31,8 @@ export interface OperatorDm {
   threadTs: string | null;
   /** Empty when the message is only files. */
   text: string;
-  /** Files attached to the message, by name. */
-  files: Array<{ name: string }>;
+  /** Files attached to the message. */
+  files: DmFile[];
   eventId: string | null;
 }
 
@@ -413,9 +422,13 @@ export function extractOperatorDm(
   const userId = typeof event.user === "string" ? event.user : "";
   if (!userId || !opts.fromUserIds.includes(userId)) return null;
   const text = typeof event.text === "string" ? event.text.trim() : "";
-  const files = (Array.isArray(event.files) ? event.files : []).map((file) => {
-    const name = file && typeof file === "object" ? (file as { name?: unknown }).name : null;
-    return { name: typeof name === "string" && name.trim() ? name.trim() : "a file" };
+  const files = (Array.isArray(event.files) ? event.files : []).map((file): DmFile => {
+    const entry = file && typeof file === "object" ? (file as { name?: unknown; id?: unknown; mimetype?: unknown }) : {};
+    return {
+      name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : "a file",
+      id: typeof entry.id === "string" && entry.id ? entry.id : null,
+      mimetype: typeof entry.mimetype === "string" && entry.mimetype ? entry.mimetype.toLowerCase() : null,
+    };
   });
   if (!text && files.length === 0) return null;
   const channelId = typeof event.channel === "string" ? event.channel : "";
@@ -433,15 +446,55 @@ export function extractOperatorDm(
   };
 }
 
+/** Images that went to Clippy with a DM, and ones that could not be opened, with why in plain words. */
+export interface DmImageNotes {
+  sent: Array<{ name: string }>;
+  failed: Array<{ name: string; reason: string }>;
+}
+
+/** "an image (a.png)" or "2 images (a.png, b.png)". */
+function namedList(items: Array<{ name: string }>, one: string, many: string): string {
+  return items.length === 1
+    ? `${one} (${items[0]!.name})`
+    : `${items.length} ${many} (${items.map((item) => item.name).join(", ")})`;
+}
+
 /**
- * The message with a note that files came with it. Nothing here can open a
- * file sent in Slack, and without the note a message that was only a
- * screenshot would go unanswered.
+ * The message with a note on what came with it. A file Clippy cannot be
+ * shown is named, so a message that was only a file is still answered rather
+ * than ignored. Images that were sent are named too: a Paperclip server too
+ * old to take them drops them without a word, and the note is then all
+ * Clippy has.
  */
-export function withAttachmentNote(text: string, files: Array<{ name: string }>): string {
-  if (files.length === 0) return text;
-  const what = files.length === 1 ? `a file (${files[0]!.name})` : `${files.length} files (${files.map((file) => file.name).join(", ")})`;
-  const note = `[Slack: the sender also attached ${what}, which cannot be opened from Slack. If it matters, say so and ask what it shows.]`;
+export function withAttachmentNote(
+  text: string,
+  files: Array<{ name: string }>,
+  images: DmImageNotes = { sent: [], failed: [] },
+): string {
+  const notes: string[] = [];
+  if (files.length > 0) {
+    notes.push(
+      `[Slack: the sender also attached ${namedList(files, "a file", "files")}, which cannot be opened from Slack. If it matters, say so and ask what it shows.]`,
+    );
+  }
+  const failedByReason = new Map<string, Array<{ name: string }>>();
+  for (const image of images.failed) {
+    failedByReason.set(image.reason, [...(failedByReason.get(image.reason) ?? []), image]);
+  }
+  for (const [reason, group] of failedByReason) {
+    const [matters, shows] = group.length === 1 ? ["it matters", "it shows"] : ["they matter", "they show"];
+    notes.push(
+      `[Slack: the sender also attached ${namedList(group, "an image", "images")}, which could not be opened: ${reason}. If ${matters}, say so and ask what ${shows}.]`,
+    );
+  }
+  if (images.sent.length > 0) {
+    const [it, shows] = images.sent.length === 1 ? ["it", "it shows"] : ["them", "they show"];
+    notes.push(
+      `[Slack: the sender also attached ${namedList(images.sent, "an image", "images")}, sent with this message. If you cannot see ${it}, say so and ask what ${shows}.]`,
+    );
+  }
+  if (notes.length === 0) return text;
+  const note = notes.join("\n");
   return text ? `${text}\n\n${note}` : note;
 }
 
