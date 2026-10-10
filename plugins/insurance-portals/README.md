@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.25**: Agent tools for runs longer than the 5-minute tool limit: `insurance_start_fetch` starts a run in the background and returns a job id; `insurance_fetch_status` waits up to 4 minutes and returns the result or "still running". One run per company and carrier at a time: starting a carrier already running returns its job id, so a retry never signs in twice or asks for a second login code. The operator actions `start-fetch` / `fetch-status` share the same jobs. A monthly routine starts each carrier, then checks each job until it is done.
 - **v0.6.24**: A document counts as missing only when no PDF arrived at all. On the first live run with 0.6.23, Liberty Mutual's "Welcome packet" and "Declaration" buttons returned the same file as "Proof of insurance" (already kept) and were wrongly listed as missing. The run record starts afresh (records from 0.6.23 are not read).
 - **v0.6.23**: On/off switch per carrier, a "still missing" list kept between runs, and a plain alert when a carrier looks broken.
   - Three settings, Foremost on / Liberty Mutual on / Selective on, all on by default. A carrier switched off is skipped by `check-setup` and refused with `ECARRIER_OFF`; nothing saved for it is removed.
@@ -110,6 +111,8 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 | Tool | What it does |
 |---|---|
 | `insurance_fetch_documents` | Signs in to one carrier portal, finds the current policy and declarations-page PDFs, and saves them to a Drive folder (local Drive for desktop folder or Drive API). Returns file names and Drive links. Up to 5 minutes (host maximum). |
+| `insurance_start_fetch` | Starts the same fetch in the background and returns a job id at once. If a fetch for that carrier is already running for the company, returns its job id and starts nothing (no second sign-in or login code). |
+| `insurance_fetch_status` | Waits up to 4 minutes (`waitSeconds`) for a job, then returns its result (files, still missing, any `ALERT:`) or "still running". A job id not found (lost on a plugin restart, or over an hour old) means start the carrier again. |
 
 Parameters:
 

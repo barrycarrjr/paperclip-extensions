@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.6.24";
+const PLUGIN_VERSION = "0.6.25";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -276,7 +276,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       name: "insurance_fetch_documents",
       displayName: "Fetch insurance policy documents",
       description:
-        "Sign in to an insurance carrier's customer portal (read-only), download the current policy and declarations-page PDFs, and save them to a Google Drive folder. Never pays, changes or submits anything. Takes 1 to 4 minutes. Files are named '<Carrier> - <address> - Policy <number> - Term <from> to <to> - <document> (posted <date>)'. Returns each file with its policy, term dates, posted date and whether it is the current term (current: true) or a prior one.",
+        "Sign in to an insurance carrier's customer portal (read-only), download the current policy and declarations-page PDFs, and save them to a Google Drive folder. Never pays, changes or submits anything. Stops after 5 minutes; an account with many policies needs longer, so for routine or full runs use insurance_start_fetch and insurance_fetch_status instead. Files are named '<Carrier> - <address> - Policy <number> - Term <from> to <to> - <document> (posted <date>)'. Returns each file with its policy, term dates, posted date and whether it is the current term (current: true) or a prior one.",
       executionTimeoutMs: 300_000,
       writes: true,
       parametersSchema: {
@@ -300,6 +300,48 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
             description:
               "Google Drive folder path under My Drive, e.g. 'Insurance/Liberty Mutual/2026'. Missing folders are created. Files already there are never overwritten.",
           },
+        },
+      },
+    },
+    {
+      name: "insurance_start_fetch",
+      displayName: "Start an insurance document fetch",
+      description:
+        "Start fetching one carrier's policy and declarations PDFs in the background (read-only; same as insurance_fetch_documents) and return a job id at once. A full run takes 5 to 15 minutes; follow it with insurance_fetch_status. Runs for different carriers wait their turn. If a fetch for this carrier is already running for this company, its job id is returned and no second run starts (no second sign-in or login code), so it is safe to call again.",
+      executionTimeoutMs: 30_000,
+      writes: true,
+      parametersSchema: {
+        type: "object",
+        required: ["carrier", "destination"],
+        additionalProperties: false,
+        properties: {
+          carrier: { type: "string", enum: ["foremost", "liberty_mutual", "selective"], description: "Which carrier portal to fetch from." },
+          terms: {
+            type: "string",
+            enum: ["all", "current"],
+            description: "'all' (default unless the settings say otherwise): every term the portal shows. 'current': only the current term.",
+          },
+          destination: {
+            type: "string",
+            description: "Google Drive folder path under My Drive. Missing folders are created. Files already there are never overwritten.",
+          },
+        },
+      },
+    },
+    {
+      name: "insurance_fetch_status",
+      displayName: "Check an insurance document fetch",
+      description:
+        "Wait up to 4 minutes (or waitSeconds) for a fetch started with insurance_start_fetch, then return its result: the files saved, anything still missing, and any line starting 'ALERT:' (sign-in failed, or the carrier found nothing twice in a row, which may mean its website changed). If it says still running, call it again. If the job id is not found (jobs are lost if the plugin restarts), start the carrier again: documents already saved are skipped.",
+      executionTimeoutMs: 300_000,
+      writes: false,
+      parametersSchema: {
+        type: "object",
+        required: ["jobId"],
+        additionalProperties: false,
+        properties: {
+          jobId: { type: "string", description: "The job id insurance_start_fetch returned." },
+          waitSeconds: { type: "integer", minimum: 0, maximum: 240, description: "How long to wait for the run to finish before answering. Default 240." },
         },
       },
     },

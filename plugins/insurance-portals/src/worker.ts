@@ -5,7 +5,6 @@ import {
   type ToolResult,
   type ToolRunContext,
 } from "@paperclipai/plugin-sdk";
-import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertCompanyAccess } from "./companyAccess.js";
@@ -20,6 +19,7 @@ import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { policyNumberIn, policyNamedInPdf, splitDrivePath } from "./safety.js";
 import { asHistory, describeHealth, recordRun, type HealthReport } from "./history.js";
+import { JobStore, jobView } from "./jobs.js";
 
 interface InstanceConfig {
   allowedCompanies?: string[];
@@ -111,6 +111,42 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   const next = running.then(fn, fn);
   running = next.catch(() => undefined);
   return next;
+}
+
+/** Background fetch jobs, shared by the agent tools and the operator actions. */
+const jobs = new JobStore<ToolResult>();
+/** Longest a status call waits, inside the 5-minute tool limit. */
+const STATUS_WAIT_MAX_S = 240;
+
+/** A reason the fetch cannot start, checked before any job is made. */
+function checkFetchParams(cfg: InstanceConfig, params: { carrier?: unknown; destination?: unknown }): string | null {
+  const key = String(params.carrier ?? "") as CarrierKey;
+  if (!CARRIERS[key]) return "[EINVALID_INPUT] carrier must be one of: foremost, liberty_mutual, selective.";
+  if (!carrierOn(cfg, key)) return `[ECARRIER_OFF] ${CARRIERS[key].name} is turned off in the Insurance Portals plugin settings.`;
+  if (typeof params.destination !== "string" || !params.destination.trim()) return "[EINVALID_INPUT] destination (a Drive folder path) is required.";
+  return null;
+}
+
+/** The fetch a background job runs. Tests put a stand-in here (no browser, no sign-in). */
+let runFetch: typeof fetchDocuments = (...args) => fetchDocuments(...args);
+export function setFetchForTests(fn: typeof fetchDocuments | null): void {
+  runFetch = fn ?? ((...args) => fetchDocuments(...args));
+}
+
+/** Start a background fetch, or hand back the one already running for this company and carrier. */
+function startJob(ctx: PluginContext, cfg: InstanceConfig, params: Record<string, unknown>, companyId: string) {
+  const carrier = String(params.carrier ?? "");
+  return jobs.start(
+    companyId,
+    carrier,
+    () =>
+      serialize(() => runFetch(ctx, cfg, params, companyId, OPERATOR_BUDGET_MS)).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.logger.warn("insurance-portals: background run failed", { error: message, companyId });
+        throw err;
+      }),
+    (r) => r.error ?? null,
+  );
 }
 
 function today(): string {
@@ -398,9 +434,8 @@ const plugin = definePlugin({
 
     // Operator lane. Board-only (the host checks), company-gated like the
     // tool. A run outlasts the 30-second action limit, so `start-fetch` starts
-    // it in the background and `fetch-status` reports on it. Jobs live in
-    // memory only and are dropped after an hour.
-    const jobs = new Map<string, { status: "running" | "done" | "failed"; startedAt: string; result?: ToolResult; error?: string }>();
+    // it in the background and `fetch-status` reports on it. It shares the
+    // agents' job store: one run per company and carrier at a time.
     ctx.actions.register("start-fetch", async (params) => {
       const scope = (params.hostScope ?? {}) as { companyId?: string | null };
       const companyId = scope.companyId ?? null;
@@ -413,31 +448,81 @@ const plugin = definePlugin({
         allowedCompanies: cfg.allowedCompanies,
         companyId,
       });
-      const jobId = randomUUID();
-      const job: { status: "running" | "done" | "failed"; startedAt: string; result?: ToolResult; error?: string } = {
-        status: "running",
-        startedAt: new Date().toISOString(),
-      };
-      jobs.set(jobId, job);
-      void serialize(() => fetchDocuments(ctx, cfg, params as Record<string, unknown>, companyId, OPERATOR_BUDGET_MS))
-        .then((result) => {
-          job.result = result;
-          job.status = result.error ? "failed" : "done";
-          if (result.error) job.error = result.error;
-        })
-        .catch((err) => {
-          job.status = "failed";
-          job.error = err instanceof Error ? err.message : String(err);
-          ctx.logger.warn("insurance-portals: operator run failed", { error: job.error });
-        })
-        .finally(() => setTimeout(() => jobs.delete(jobId), 3_600_000).unref?.());
-      return { jobId, status: job.status };
+      const { job, reused } = startJob(ctx, cfg, params as Record<string, unknown>, companyId);
+      return { jobId: job.id, status: job.status, reused };
     });
     ctx.actions.register("fetch-status", async (params) => {
-      const job = jobs.get(String(params.jobId ?? ""));
+      const scope = (params.hostScope ?? {}) as { companyId?: string | null };
+      const id = String(params.jobId ?? "");
+      const job = scope.companyId ? jobs.get(id, scope.companyId) : jobs.getAny(id);
       if (!job) throw new Error("[ENOT_FOUND] No run with that id (runs are kept for an hour).");
-      return job;
+      return jobView(job);
     });
+
+    // Agent lane for long runs: start in the background, then ask how it is
+    // going. Each call fits well inside the 5-minute tool limit.
+    ctx.tools.register(
+      "insurance_start_fetch",
+      {
+        displayName: "Start an insurance document fetch",
+        description: "Start a fetch from one carrier in the background and return its job id at once.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
+        const cfg = (await ctx.config.get()) as InstanceConfig;
+        assertCompanyAccess(ctx, {
+          tool: "insurance_start_fetch",
+          resourceLabel: "insurance-portals",
+          resourceKey: "instance",
+          allowedCompanies: cfg.allowedCompanies,
+          companyId: runCtx.companyId,
+        });
+        const problem = checkFetchParams(cfg, (params ?? {}) as Record<string, unknown>);
+        if (problem) return { error: problem };
+        const { job, reused } = startJob(ctx, cfg, (params ?? {}) as Record<string, unknown>, runCtx.companyId);
+        return {
+          content: reused
+            ? `A ${job.carrier} fetch was already running for this company (job ${job.id}, started ${job.startedAt}). No second run was started. Check it with insurance_fetch_status.`
+            : `Started the ${job.carrier} fetch in the background (job ${job.id}). Check it with insurance_fetch_status; a run takes 5 to 15 minutes.`,
+          data: { jobId: job.id, status: job.status, reused, carrier: job.carrier, startedAt: job.startedAt },
+        };
+      },
+    );
+    ctx.tools.register(
+      "insurance_fetch_status",
+      {
+        displayName: "Check an insurance document fetch",
+        description: "Wait up to about 4 minutes for a background fetch, then return its result or say it is still running.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx: ToolRunContext): Promise<ToolResult> => {
+        const p = (params ?? {}) as { jobId?: unknown; waitSeconds?: unknown };
+        const waitS = Math.max(0, Math.min(STATUS_WAIT_MAX_S, Number(p.waitSeconds ?? STATUS_WAIT_MAX_S) || 0));
+        const job = await jobs.wait(String(p.jobId ?? ""), runCtx.companyId, waitS * 1000);
+        if (!job) {
+          return {
+            error:
+              "[ENOT_FOUND] No fetch with that job id for this company. Jobs are kept for an hour after they finish and are lost if the plugin restarts; start the carrier again (documents already saved are skipped).",
+          };
+        }
+        if (job.status === "running") {
+          return {
+            content: `The ${job.carrier} fetch (job ${job.id}, started ${job.startedAt}) is still running. Call insurance_fetch_status again.`,
+            data: { jobId: job.id, status: job.status, carrier: job.carrier, startedAt: job.startedAt },
+          };
+        }
+        if (job.status === "failed") {
+          return {
+            error: `The ${job.carrier} fetch (job ${job.id}) failed: ${job.error ?? "unknown error"}`,
+          };
+        }
+        const r = job.result!;
+        return {
+          content: `The ${job.carrier} fetch (job ${job.id}) is done.\n${r.content ?? ""}`,
+          data: { jobId: job.id, status: job.status, carrier: job.carrier, startedAt: job.startedAt, finishedAt: job.finishedAt, result: r.data ?? null },
+        };
+      },
+    );
 
     // Operator check (no carrier sign-in): Chrome found, secrets readable,
     // mailbox opens read-only, Drive signs in.
