@@ -20,6 +20,10 @@ import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { policyNumberIn, policyNamedInPdf, splitDrivePath } from "./safety.js";
 import { asHistory, describeHealth, recordRun, type HealthReport } from "./history.js";
 import { JobStore, jobView } from "./jobs.js";
+import { hasKeyFigures, readKeyFigures, type KeyFigures } from "./declarations.js";
+import manifest from "./manifest.js";
+
+const PLUGIN_VERSION_FOR_SUMMARY = `v${manifest.version}`;
 
 interface InstanceConfig {
   allowedCompanies?: string[];
@@ -149,6 +153,39 @@ function startJob(ctx: PluginContext, cfg: InstanceConfig, params: Record<string
   );
 }
 
+/** The summary saved beside a PDF: its key figures as read, and what could not be read. */
+function summaryJson(
+  carrierName: string,
+  pdfName: string,
+  doc: { policy: string; title: string; posted: string | null; term: ReturnType<typeof findTerm> },
+  f: KeyFigures,
+): string {
+  return `${JSON.stringify(
+    {
+      document: pdfName,
+      carrier: carrierName,
+      policy: doc.policy || null,
+      title: doc.title,
+      term: doc.term,
+      posted: doc.posted,
+      policyType: f.policyType,
+      premium: f.premium,
+      dwelling: f.dwelling,
+      dwellingKind: f.dwellingKind,
+      liability: f.liability,
+      liabilityText: f.liabilityText,
+      mortgagee: f.lender,
+      namedInsured: f.namedInsured,
+      notFound: f.notFound,
+      notApplicable: f.notApplicable,
+      note: `Read automatically from the PDF's text by the Insurance Portals plugin ${PLUGIN_VERSION_FOR_SUMMARY}. A figure the page does not show, or does not label clearly, is null and listed under notFound (for a mortgagee, the page may simply have none). Only the loan number's last 4 digits are kept. Check the PDF before acting on a figure.`,
+      readOn: today(),
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -188,6 +225,7 @@ interface Saver {
   ensureFolder(path: string): Promise<string>;
   listNames(folder: string): Promise<string[]>;
   savePdf(folder: string, name: string, bytes: Buffer): Promise<SavedFile>;
+  saveText(folder: string, name: string, text: string): Promise<{ name: string; status: "saved" | "exists" }>;
 }
 
 /** Google Drive API when chosen (or when "auto" and all three Google keys are set); otherwise the local folder. */
@@ -278,7 +316,9 @@ export async function fetchDocuments(
 
   // Read each document's policy period, then sort into current and prior terms.
   const termsWanted = params.terms === "current" || params.terms === "all" ? params.terms : (cfg.defaultTerms ?? "all");
-  const read: Array<(typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; revision?: string | null; existingName?: string }> = [];
+  const read: Array<
+    (typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; revision?: string | null; figures?: KeyFigures | null; existingName?: string }
+  > = [];
   // The account's own policy numbers, to check each PDF is filed under the
   // policy it is about.
   // Only numbers documents were found under: never a billing account.
@@ -305,7 +345,9 @@ export async function fetchDocuments(
     // Two endorsements can be issued the same day; the form's revision code
     // tells them apart in the file name.
     const revision = /\b(endorsement|policy change)\b/i.test(doc.title) ? findRevision(text) : null;
-    read.push({ ...doc, term, revision });
+    // The declarations page's key figures, for a summary beside the PDF.
+    const figures = readKeyFigures(text);
+    read.push({ ...doc, term, revision, figures: hasKeyFigures(figures) ? figures : null });
   }
   // Documents already saved by an earlier run take part in the current/prior
   // sorting (their term is in their file name) and are reported, unchanged.
@@ -320,12 +362,28 @@ export async function fetchDocuments(
     const savedFile = doc.existingName
       ? { name: doc.existingName, id: doc.existingName, link: null, status: "already_saved" as const }
       : await drive.savePdf(folderId, fileNameFor(carrier.name, doc), doc.bytes);
+    // A new PDF with a declarations page gets a small summary beside it.
+    let summary: string | null = null;
+    if (savedFile.status === "saved" && doc.figures) {
+      try {
+        const s = await drive.saveText(
+          folderId,
+          `${savedFile.name.replace(/\.pdf$/i, "")} - summary.json`,
+          summaryJson(carrier.name, savedFile.name, doc, doc.figures),
+        );
+        summary = s.name;
+      } catch (err) {
+        result.notes.push(`Could not save the summary for ${savedFile.name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     files.push({
       ...savedFile,
       policy: doc.policy || null,
       term: doc.term,
       posted: doc.posted,
       current: doc.current,
+      keyFigures: doc.figures ?? null,
+      summary,
     });
   }
   if (keep.length < sorted.length) {
@@ -376,7 +434,8 @@ export async function fetchDocuments(
     .catch(() => undefined);
 
   const lines = files.map(
-    (f) => `- [${f.current ? "current" : "prior"}] ${f.name}${f.status === "already_saved" ? " (already there, unchanged)" : ""}`,
+    (f) =>
+      `- [${f.current ? "current" : "prior"}] ${f.name}${f.status === "already_saved" ? " (already there, unchanged)" : ""}${f.summary ? " (+ summary)" : ""}`,
   );
   return {
     content:

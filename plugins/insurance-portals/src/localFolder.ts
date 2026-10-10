@@ -86,6 +86,21 @@ export class LocalFolder {
     return readdirSync(dir).filter((n) => /\.pdf$/i.test(n));
   }
 
+  /**
+   * Save a small text file (a PDF's summary) under exactly `name`. Never
+   * overwrites: if a file of that name is already there, it is left as it is.
+   */
+  async saveText(dir: string, name: string, text: string): Promise<{ name: string; status: "saved" | "exists" }> {
+    const safe = safeFileName(name);
+    try {
+      await writeFile(join(dir, safe), text, { flag: "wx" });
+      return { name: safe, status: "saved" };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return { name: safe, status: "exists" };
+      throw err;
+    }
+  }
+
   async savePdf(dir: string, wantedName: string, bytes: Buffer): Promise<SavedFile> {
     const sha = createHash("sha256").update(bytes).digest("hex");
     const base = safeFileName(wantedName.replace(/\.pdf$/i, "")) || "document";

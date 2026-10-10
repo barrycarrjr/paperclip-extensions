@@ -104,6 +104,27 @@ export class Drive {
     return files.map((f) => f.name);
   }
 
+  /** Save a small JSON file (a PDF's summary) under exactly `name`; an existing file of that name is left as it is. */
+  async saveText(folderId: string, name: string, text: string): Promise<{ name: string; status: "saved" | "exists" }> {
+    const safe = safeFileName(name);
+    const there = await this.list(`'${folderId}' in parents and trashed = false and name = '${q(safe)}'`, "id,name");
+    if (there.length) return { name: safe, status: "exists" };
+    const boundary = `pc${Date.now().toString(36)}`;
+    const meta = JSON.stringify({ name: safe, parents: [folderId], mimeType: "application/json" });
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\ncontent-type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`),
+      Buffer.from(`--${boundary}\r\ncontent-type: application/json\r\n\r\n`),
+      Buffer.from(text, "utf8"),
+      Buffer.from(`\r\n--${boundary}--`),
+    ]);
+    await this.api("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name", {
+      method: "POST",
+      headers: { "content-type": `multipart/related; boundary=${boundary}` },
+      body,
+    });
+    return { name: safe, status: "saved" };
+  }
+
   async savePdf(folderId: string, wantedName: string, bytes: Buffer): Promise<SavedFile> {
     const md5 = createHash("md5").update(bytes).digest("hex");
     const base = safeFileName(wantedName.replace(/\.pdf$/i, "")) || "document";

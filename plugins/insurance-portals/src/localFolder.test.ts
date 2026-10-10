@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalFolder, findDriveForDesktop } from "./localFolder.js";
@@ -58,4 +58,15 @@ test("finds the Drive for desktop folder only when exactly one account is signed
   assert.equal(findDriveForDesktop(home), one);
   await mkdir(join(home, "Library", "CloudStorage", "GoogleDrive-b@example.com", "My Drive"), { recursive: true });
   assert.equal(findDriveForDesktop(home), null, "two accounts: never guess");
+});
+
+test("a summary is saved beside its PDF and never overwrites a file of the same name", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ip-summary-"));
+  const folder = await LocalFolder.open(dir);
+  const first = await folder.saveText(dir, "Sample - Policy 0000001 - Renewal - summary.json", '{"premium":1}\n');
+  assert.deepEqual(first, { name: "Sample - Policy 0000001 - Renewal - summary.json", status: "saved" });
+  const again = await folder.saveText(dir, "Sample - Policy 0000001 - Renewal - summary.json", '{"premium":2}\n');
+  assert.equal(again.status, "exists");
+  assert.equal(await readFile(join(dir, first.name), "utf8"), '{"premium":1}\n');
+  await rm(dir, { recursive: true, force: true });
 });
