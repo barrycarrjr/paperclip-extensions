@@ -1528,6 +1528,16 @@ test("Selective policy list: every entry, current and expired, its Renewal card'
           document.querySelectorAll('[data-t]').forEach((a) => a.onclick = (ev) => { ev.preventDefault(); setTimeout(() => show(T[+a.dataset.t]), 600); });
           function show(t) {
             document.getElementById('m').innerHTML = '<h1>' + t.kind.toUpperCase() + ' ' + t.label.replace('Policy #', '') + '</h1><p>Other Actions</p><a href="/trap/certificate">Create Certificate of Insurance</a>';
+            // Personal policies keep their documents behind a "Documents" tab,
+            // the same tab on every term's page.
+            if (t.kind === 'Homeowners') {
+              document.getElementById('d').innerHTML = '<button>Details</button><button id="dt">Documents</button><p>Drivers and coverages</p>';
+              document.getElementById('dt').onclick = () => docs(t);
+              return;
+            }
+            docs(t);
+          }
+          function docs(t) {
             // As on the real site, "My Documents" sits outside the main area.
             document.getElementById('d').innerHTML = '<h2>MY DOCUMENTS</h2><section class="docs-card"><div><span>Renewal</span> <a href="#" id="v">View</a></div><div>Effective</div><div>' + t.from + '</div><div>Premium</div><div>$1.00</div>' +
               '<h2>ASSOCIATED BILL ACCOUNT</h2><a href="/trap/bill">Bill Account #000-000-001</a><p>You have no pending bills.</p><button onclick="location=\\'/trap/pay\\'">Pay</button></section>';

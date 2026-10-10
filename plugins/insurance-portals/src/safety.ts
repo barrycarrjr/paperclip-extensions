@@ -286,7 +286,7 @@ export function policyNamedInPdf(named: string, text: string, known: readonly st
   const flat = squash(text);
   if (flat.length <= 200) return named;
   let best = named;
-  let bestAt = flat.includes(squash(named)) ? flat.indexOf(squash(named)) : Infinity;
+  let bestAt = named && flat.includes(squash(named)) ? flat.indexOf(squash(named)) : Infinity;
   for (const k of known) {
     if (squash(k).length < 7) continue;
     const at = flat.indexOf(squash(k));

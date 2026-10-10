@@ -1647,6 +1647,9 @@ async function runCarrierInner(
         if (/^(close|cancel|dismiss|back)\b/i.test(item.text)) continue;
         // A bill account, payment or claim entry is never a way to documents.
         if (!notMoney(item.text)) continue;
+        // A "View" on a document card was taken as a document already;
+        // pressing it again only builds the same PDF a second time.
+        if (GENERIC_BUTTON.test((item.shown || item.text).trim()) && cardDocument(item.docCard || item.context)) continue;
         if (tried.has(`item|${ctx}|${pageKey}|${item.text}`)) continue;
         tried.add(`item|${ctx}|${pageKey}|${item.text}`);
         let im = await markByText(item.text, 3_000);
@@ -1837,7 +1840,11 @@ async function runCarrierInner(
       while (Date.now() < until && (await mainText()) === before) await sleep(500);
       navLog("open-policy", { policy: `...${n.slice(-4)}`, how: "list", term: e.k });
       pagesVisited++;
-      await readPage(contextFor(`policy ${n}`), 1);
+      // Every term of a policy shows at the same address: its tabs
+      // ("Documents") must be opened again for each term.
+      const ctx = contextFor(`policy ${n}`);
+      for (const t of [...tried]) if (t.startsWith(`nav|${ctx}|`) || t.startsWith(`item|${ctx}|`)) tried.delete(t);
+      await readPage(ctx, 1);
       policiesRead.add(n);
     }
   };

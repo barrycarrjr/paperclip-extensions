@@ -292,4 +292,7 @@ test("a PDF is filed under the policy it names, not the one the page was thought
   // An umbrella policy names the policies under it further in: it is still the umbrella's.
   assert.equal(policyNamedInPdf("0000001", `PERSONAL UMBRELLA PCL0000002 ${filler} UNDERLYING AUTO 0000001`, known), "PCL0000002");
   assert.equal(policyNamedInPdf("PCL0000002", `PERSONAL UMBRELLA PCL0000002 ${filler} UNDERLYING AUTO 0000001`, known), "PCL0000002");
+  // A document found with no policy at all gets the one it names.
+  assert.equal(policyNamedInPdf("", `COMMERCIAL PACKAGE S 0000003 ${filler}`, known), "0000003");
+  assert.equal(policyNamedInPdf("", `${filler} nothing`, known), "");
 });

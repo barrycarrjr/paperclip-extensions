@@ -207,10 +207,10 @@ export async function fetchDocuments(
     // another policy's PDF. When the PDF does not mention the policy it was
     // found under but does mention another of the account's policies, file
     // it under that one.
-    const named = policyNumberIn(doc.policy);
-    const actual = named ? policyNamedInPdf(named, text, knownPolicies) : null;
-    if (named && actual && actual !== named) {
-      ctx.logger.info("insurance-portals: document filed under the policy it names", { from: `...${named.slice(-4)}`, to: `...${actual.slice(-4)}` });
+    const named = policyNumberIn(doc.policy) ?? "";
+    const actual = policyNamedInPdf(named, text, knownPolicies);
+    if (actual && actual !== named) {
+      ctx.logger.info("insurance-portals: document filed under the policy it names", { from: named ? `...${named.slice(-4)}` : "none", to: `...${actual.slice(-4)}` });
       doc.policy = `Policy ${actual}`;
     }
     read.push({ ...doc, term });

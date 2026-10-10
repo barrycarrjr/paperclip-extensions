@@ -8,6 +8,10 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.20**: Selective's earlier terms and no second copies.
+  - Each term of a policy is shown at the same address; its "Documents" tab is now opened again for every term, so expired terms' documents are read.
+  - A "View" on a document card is pressed once. Selective builds a slightly different PDF each time, so a second press saved a "(2)" copy.
+  - A document found with no policy is filed under the account policy printed first in it.
 - **v0.6.19**: From the Selective run that saved three policies' renewals.
   - A "My Documents" heading anywhere on the page counts, not only in its main area (Selective puts it outside).
   - Each PDF is filed under the account's policy printed first in it. On the real run, a page that had not yet switched policies handed over the Umbrella renewal while the Auto policy was being read; it is now filed under the Umbrella. Only numbers documents were found under are used, never a billing account.
