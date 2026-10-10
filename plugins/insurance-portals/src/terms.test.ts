@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { pdfText } from "./pdfText.js";
-import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName, toIso } from "./terms.js";
+import { assignTerms, existingFileFor, fileNameFor, findRevision, findTerm, termFromName, toIso } from "./terms.js";
 
 test("finds the policy period in the wordings declarations pages use", () => {
   assert.deepEqual(findTerm("Policy Period: 08/01/2026 to 08/01/2027 12:01 AM standard time"), { from: "2026-08-01", to: "2027-08-01" });
@@ -137,4 +137,20 @@ test("Selective auto and umbrella declarations: dates followed by AGENT:", () =>
     from: "2026-05-02",
     to: "2027-05-02",
   });
+});
+
+test("same-day endorsements are told apart by the form's revision code", () => {
+  assert.equal(findRevision("JANE SAMPLE ANYTOWN, PA 00000 F 0000001 - 01D PA 00-00000-00000 03/30/2024 03/30/2025 AGENT:"), "01D");
+  assert.equal(findRevision("H 0000002 03A PA 00-00000-00000 05/02/2026"), "03A");
+  assert.equal(findRevision("Policy Period: 08/01/2026 to 08/01/2027"), null);
+  const term = { from: "2024-03-30", to: "2025-03-30" };
+  const name = fileNameFor("Selective", { policy: "Policy 0000001", title: "Endorsement", posted: "2024-03-30", term, revision: "01D" });
+  assert.equal(name, "Selective - Policy 0000001 - Term 2024-03-30 to 2025-03-30 - Endorsement 01D (posted 2024-03-30)");
+  // Already saved, with or without the code: not downloaded again.
+  const d = { policy: "Policy 0000001", title: "Endorsement", posted: "2024-03-30" };
+  assert.equal(existingFileFor([`${name}.pdf`], "Selective", d), `${name}.pdf`);
+  const old = "Selective - Policy 0000001 - Term 2024-03-30 to 2025-03-30 - Endorsement (posted 2024-03-30).pdf";
+  assert.equal(existingFileFor([old], "Selective", d), old);
+  // A different document whose title ends the same way is not a match.
+  assert.equal(existingFileFor(["Selective - Policy 0000001 - Term 2024-03-30 to 2025-03-30 - Auto Endorsement (posted 2024-03-30).pdf"], "Selective", d), null);
 });

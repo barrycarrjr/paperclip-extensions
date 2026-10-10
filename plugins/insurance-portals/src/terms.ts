@@ -139,11 +139,25 @@ export function assignTerms<T extends Dated>(docs: T[], today: string): Array<T 
  * "<Carrier> - <address> - Policy <n> - Term <from> to <to> - <document> (posted <date>)".
  * Parts that are unknown are left out.
  */
-export function fileNameFor(carrier: string, d: { policy: string; title: string; posted: string | null; term: Term | null }): string {
+export function fileNameFor(
+  carrier: string,
+  d: { policy: string; title: string; posted: string | null; term: Term | null; revision?: string | null },
+): string {
   const parts = [carrier, d.policy || null];
   if (d.term) parts.push(`Term ${d.term.from} to ${d.term.to}`);
-  parts.push(d.posted ? `${d.title} (posted ${d.posted})` : d.title);
+  const title = d.revision ? `${d.title} ${d.revision}` : d.title;
+  parts.push(d.posted ? `${title} (posted ${d.posted})` : title);
   return safeFileName(parts.filter(Boolean).join(" - "));
+}
+
+/**
+ * The form's revision code ("01D") printed on a Selective declarations header
+ * ("F 0000001 - 01D PA 00-00000-00000"), which tells apart two endorsements
+ * issued the same day. Null when the form has none.
+ */
+export function findRevision(text: string): string | null {
+  const m = /(?:^|\s)(\d{2}[A-Z])\s+[A-Z]{2}\s+\d{2}-\d{5}-\d{5}\b/.exec(text.replace(/\s+/g, " "));
+  return m ? m[1] : null;
 }
 
 /** The term written into a file name by `fileNameFor`, if there is one. */
@@ -161,8 +175,18 @@ export function termFromName(name: string): Term | null {
 export function existingFileFor(names: string[], carrier: string, d: { policy: string; title: string; posted: string | null }): string | null {
   if (!d.posted || !d.policy) return null;
   const head = safeFileName(`${carrier} - ${d.policy} - `);
-  const tail = safeFileName(`${d.title} (posted ${d.posted})`);
+  const title = safeFileName(d.title);
+  const tail = ` ${safeFileName(`(posted ${d.posted})`)}`;
   // Only names that carry term dates count: an older name without them is
-  // fetched again so it can be saved under the full name.
-  return names.find((n) => n.startsWith(head) && termFromName(n) && n.replace(/\.pdf$/i, "").replace(/ \(\d+\)$/, "").endsWith(tail)) ?? null;
+  // fetched again so it can be saved under the full name. A revision code
+  // after the title ("Endorsement 01D") may or may not be there.
+  return (
+    names.find((n) => {
+      if (!n.startsWith(head) || !termFromName(n)) return false;
+      const base = n.replace(/\.pdf$/i, "").replace(/ \(\d+\)$/, "");
+      if (!base.endsWith(tail)) return false;
+      const before = base.slice(0, -tail.length);
+      return before.endsWith(` - ${title}`) || new RegExp(` - ${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\d{2}[A-Z]$`).test(before);
+    }) ?? null
+  );
 }

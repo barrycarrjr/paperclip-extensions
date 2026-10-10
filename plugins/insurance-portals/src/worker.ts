@@ -15,7 +15,7 @@ import { LocalFolder } from "./localFolder.js";
 import { profileDirFor } from "./profiles.js";
 import { addPrivateItems, privateItemsFromPolicies, privateListPath } from "./privateList.js";
 import { pdfText } from "./pdfText.js";
-import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName } from "./terms.js";
+import { assignTerms, existingFileFor, fileNameFor, findRevision, findTerm, termFromName } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { policyNumberIn, policyNamedInPdf, splitDrivePath } from "./safety.js";
@@ -189,7 +189,7 @@ export async function fetchDocuments(
 
   // Read each document's policy period, then sort into current and prior terms.
   const termsWanted = params.terms === "current" || params.terms === "all" ? params.terms : (cfg.defaultTerms ?? "all");
-  const read: Array<(typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; existingName?: string }> = [];
+  const read: Array<(typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; revision?: string | null; existingName?: string }> = [];
   // The account's own policy numbers, to check each PDF is filed under the
   // policy it is about.
   // Only numbers documents were found under: never a billing account.
@@ -213,7 +213,10 @@ export async function fetchDocuments(
       ctx.logger.info("insurance-portals: document filed under the policy it names", { from: named ? `...${named.slice(-4)}` : "none", to: `...${actual.slice(-4)}` });
       doc.policy = `Policy ${actual}`;
     }
-    read.push({ ...doc, term });
+    // Two endorsements can be issued the same day; the form's revision code
+    // tells them apart in the file name.
+    const revision = /\b(endorsement|policy change)\b/i.test(doc.title) ? findRevision(text) : null;
+    read.push({ ...doc, term, revision });
   }
   // Documents already saved by an earlier run take part in the current/prior
   // sorting (their term is in their file name) and are reported, unchanged.

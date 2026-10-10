@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.22**: Endorsements and policy changes carry the form's revision code in their file name ("Endorsement 01D (posted 2024-03-30)"), so two issued the same day are told apart instead of one getting "(2)". A file saved before, with or without the code, still counts as saved.
 - **v0.6.21**: A document card's "View" is waited on for up to 35 seconds from the start (Selective builds the PDF in the page first). 0.6.20 pressed it once only but kept the 15-second wait, so a slow PDF was missed; one rehearsal failed and 0.6.20 should not be used.
 - **v0.6.20**: Selective's earlier terms and no second copies.
   - Each term of a policy is shown at the same address; its "Documents" tab is now opened again for every term, so expired terms' documents are read.
