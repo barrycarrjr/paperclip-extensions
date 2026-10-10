@@ -55,6 +55,10 @@ export function findTerm(text: string): Term | null {
     new RegExp(String.raw`policy\s*period\b.{0,300}?${DATE}\s+(?:to:?\s+)?${DATE}`, "i"),
     new RegExp(String.raw`(?:policy|coverage|insurance)\s*(?:period|term)\b[^0-9A-Z]{0,40}?(?:from\s*)?${DATE}[^0-9A-Za-z]{0,30}?(?:\d{1,2}:\d{2}\s*[AP]\.?M\.?[^0-9A-Za-z]{0,20})?(?:to|through|thru|until|-|–)\s*${DATE}`, "i"),
     new RegExp(String.raw`\bterm\b[^0-9A-Z]{0,20}?${DATE}\s*(?:to|through|thru|-|–)\s*${DATE}`, "i"),
+    // Liberty Mutual (Safeco) new policies: "Coverage begins at the later
+    // of: (1) 12:01 AM on 03/31/2026; or ... Coverage will expire at 12:01 AM
+    // on 03/31/2027."
+    new RegExp(String.raw`coverage begins\b.{0,80}?${DATE}.{0,300}?coverage (?:will )?expires?\b.{0,40}?${DATE}`, "i"),
     new RegExp(String.raw`effective\s*(?:date)?\s*:?\s*${DATE}.{0,80}?expiration\s*(?:date)?\s*:?\s*${DATE}`, "i"),
   ];
   for (const re of patterns) {

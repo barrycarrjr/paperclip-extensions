@@ -191,7 +191,10 @@ export async function fetchDocuments(
   const termsWanted = params.terms === "current" || params.terms === "all" ? params.terms : (cfg.defaultTerms ?? "all");
   const read: Array<(typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; existingName?: string }> = [];
   for (const doc of result.documents) {
-    read.push({ ...doc, term: findTerm(await pdfText(doc.bytes)) });
+    // Most forms print the term on their first pages; a welcome packet can
+    // hold its declarations page 50 pages in, so read on when needed.
+    const term = findTerm(await pdfText(doc.bytes)) ?? findTerm(await pdfText(doc.bytes, 150));
+    read.push({ ...doc, term });
   }
   // Documents already saved by an earlier run take part in the current/prior
   // sorting (their term is in their file name) and are reported, unchanged.

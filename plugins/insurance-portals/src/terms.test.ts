@@ -113,3 +113,12 @@ test("Liberty Mutual declarations: month names in capitals, labels before the da
   assert.equal(toIso("JUNE 30 2026"), "2026-06-30");
   assert.equal(toIso("TERM 30 2026"), null);
 });
+
+test("Liberty Mutual new policy: 'Coverage begins ... Coverage will expire' wording", () => {
+  assert.deepEqual(
+    findTerm(
+      "OCCUPANCY: TENANT POLICY PERIOD: Coverage begins at the later of: (1) 12:01 AM on 05/02/2026; or (2) The time that the application for insurance is submitted and the policy is bound. No coverage is provided prior to the policy being bound. Coverage will expire at 12:01 AM on 05/02/2027. AGENT: EXAMPLE AGENCY",
+    ),
+    { from: "2026-05-02", to: "2027-05-02" },
+  );
+});

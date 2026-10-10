@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.13**: Term dates for Liberty Mutual's newer policies, whose "Proof of insurance" button returns the whole welcome packet with the declarations page about 50 pages in. When the first 40 pages give no term, up to 150 pages are read, and the wording "Coverage begins at ... 12:01 AM on <date> ... Coverage will expire at 12:01 AM on <date>" is recognised.
 - **v0.6.12**: From the first real Liberty Mutual run with 0.6.11.
   - Term dates are read from Liberty Mutual's declarations ("POLICY PERIOD FROM: TO: JUNE 30 2026 JUNE 30 2027", month names in capitals), so its files are named by term again. A stray control character had also disabled the "Policy Period" rule for every carrier; a test now checks the sources for such characters.
   - When Liberty Mutual's own site says "We can't load your policy declaration right now", the policy is tried once more after a pause, and the run's result names the policies the site could not load.
