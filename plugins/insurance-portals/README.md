@@ -8,6 +8,12 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.19**: From the Selective run that saved three policies' renewals.
+  - A "My Documents" heading anywhere on the page counts, not only in its main area (Selective puts it outside).
+  - Each PDF is filed under the account's policy printed first in it. On the real run, a page that had not yet switched policies handed over the Umbrella renewal while the Auto policy was being read; it is now filed under the Umbrella. Only numbers documents were found under are used, never a billing account.
+  - ID cards are not fetched or followed; only policy and declarations documents are wanted. They cost about four minutes a run.
+  - A document already saved is skipped on every path, not only for document links (one renewal was saved twice).
+  - Selective's auto and umbrella declarations (dates followed by "AGENT:") give their term.
 - **v0.6.18**: Every Selective policy and term.
   - Selective lists each policy, current and expired, as a short entry ("Policy #H 0000001"), the same words once per term. Each entry is opened in turn and its "My Documents" cards are read.
   - A plain "View" is named from the smallest block around it that names a document, so a bill box nearby no longer hides the card's name.

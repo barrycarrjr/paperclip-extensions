@@ -18,7 +18,7 @@ import { pdfText } from "./pdfText.js";
 import { assignTerms, existingFileFor, fileNameFor, findTerm, termFromName } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
-import { splitDrivePath } from "./safety.js";
+import { policyNumberIn, policyNamedInPdf, splitDrivePath } from "./safety.js";
 
 interface InstanceConfig {
   allowedCompanies?: string[];
@@ -190,10 +190,29 @@ export async function fetchDocuments(
   // Read each document's policy period, then sort into current and prior terms.
   const termsWanted = params.terms === "current" || params.terms === "all" ? params.terms : (cfg.defaultTerms ?? "all");
   const read: Array<(typeof result.documents)[number] & { term: ReturnType<typeof findTerm>; existingName?: string }> = [];
+  // The account's own policy numbers, to check each PDF is filed under the
+  // policy it is about.
+  // Only numbers documents were found under: never a billing account.
+  const knownPolicies = [...new Set([...result.documents, ...result.skipped].map((d) => policyNumberIn(d.policy)).filter((x): x is string => !!x))];
   for (const doc of result.documents) {
     // Most forms print the term on their first pages; a welcome packet can
     // hold its declarations page 50 pages in, so read on when needed.
-    const term = findTerm(await pdfText(doc.bytes)) ?? findTerm(await pdfText(doc.bytes, 150));
+    let text = await pdfText(doc.bytes);
+    let term = findTerm(text);
+    if (!term) {
+      text = await pdfText(doc.bytes, 150);
+      term = findTerm(text);
+    }
+    // A page that had not yet switched to the policy clicked can hand over
+    // another policy's PDF. When the PDF does not mention the policy it was
+    // found under but does mention another of the account's policies, file
+    // it under that one.
+    const named = policyNumberIn(doc.policy);
+    const actual = named ? policyNamedInPdf(named, text, knownPolicies) : null;
+    if (named && actual && actual !== named) {
+      ctx.logger.info("insurance-portals: document filed under the policy it names", { from: `...${named.slice(-4)}`, to: `...${actual.slice(-4)}` });
+      doc.policy = `Policy ${actual}`;
+    }
     read.push({ ...doc, term });
   }
   // Documents already saved by an earlier run take part in the current/prior

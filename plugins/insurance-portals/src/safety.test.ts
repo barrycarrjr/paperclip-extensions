@@ -14,6 +14,7 @@ import {
   isReadOnlyLookup,
   isSafeNavigationUrl,
   namedDocument,
+  policyNamedInPdf,
   streetAddressesIn,
   safeFileName,
   senderAllowed,
@@ -28,7 +29,6 @@ test("document links: declarations and policy documents are picked", () => {
     "Download Dec Page",
     "Full policy packet",
     "View PDF",
-    "Auto ID Cards",
     "Evidence of Property Insurance",
   ]) {
     assert.equal(isDocumentLink(t), true, t);
@@ -273,4 +273,23 @@ test("never clicks Create, Generate or Order, even for a certificate of insuranc
     assert.equal(isDangerous(t), true, t);
   }
   assert.equal(isDocumentLink("New Business Declarations"), true);
+});
+
+test("ID cards are not fetched or followed: only policy and declarations documents are wanted", () => {
+  for (const t of ["Auto ID Cards", "ID CARDS", "View ID Cards"]) {
+    assert.equal(isDocumentLink(t), false, t);
+    assert.equal(isNavigationLink(t), false, t);
+  }
+});
+
+test("a PDF is filed under the policy it names, not the one the page was thought to show", () => {
+  const filler = "x".repeat(300);
+  const known = ["0000001", "PCL0000002", "0000003"];
+  assert.equal(policyNamedInPdf("0000001", `${filler} PERSONAL UMBRELLA PCL0000002 05/02/2026`, known), "PCL0000002");
+  assert.equal(policyNamedInPdf("0000001", `${filler} HOMEOWNERS H 0000001`, known), "0000001");
+  assert.equal(policyNamedInPdf("0000001", `${filler} no policy number here`, known), "0000001");
+  assert.equal(policyNamedInPdf("0000001", "short", known), "0000001");
+  // An umbrella policy names the policies under it further in: it is still the umbrella's.
+  assert.equal(policyNamedInPdf("0000001", `PERSONAL UMBRELLA PCL0000002 ${filler} UNDERLYING AUTO 0000001`, known), "PCL0000002");
+  assert.equal(policyNamedInPdf("PCL0000002", `PERSONAL UMBRELLA PCL0000002 ${filler} UNDERLYING AUTO 0000001`, known), "PCL0000002");
 });

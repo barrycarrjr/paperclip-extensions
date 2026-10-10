@@ -131,3 +131,10 @@ test("Selective declarations: dates side by side before the certificate's name",
   // Two dates a year apart with no form name nearby are not taken.
   assert.equal(findTerm("Payment history 05/02/2026 05/02/2027 paid in full"), null);
 });
+
+test("Selective auto and umbrella declarations: dates followed by AGENT:", () => {
+  assert.deepEqual(findTerm("JANE SAMPLE ANYTOWN, PA 00000 PCL0000001 03A PA 00-00000-00000 05/02/2026 05/02/2027 AGENT: BILL ACCT. NO.: 000 PERSONAL UMBRELLA POLICY"), {
+    from: "2026-05-02",
+    to: "2027-05-02",
+  });
+});

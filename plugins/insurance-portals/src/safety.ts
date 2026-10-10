@@ -22,11 +22,11 @@ const DANGER =
 
 /** Link text that names a policy document worth saving. */
 const DOCUMENT =
-  /(declaration|\bdecs?\b|dec page|policy (?:packet|jacket|booklet|contract|pdf)|full policy|current policy|insurance (?:card|id)|\bid cards?\b|evidence of (?:insurance|property insurance)|certificate of insurance|\bview pdf\b|\bdownload\b.*\bpolicy\b|\bpolicy\b.*\b(?:download|pdf)\b)/i;
+  /(declaration|\bdecs?\b|dec page|policy (?:packet|jacket|booklet|contract|pdf)|full policy|current policy|evidence of (?:insurance|property insurance)|certificate of insurance|\bview pdf\b|\bdownload\b.*\bpolicy\b|\bpolicy\b.*\b(?:download|pdf)\b)/i;
 
 /** Link text that leads toward documents or a policy's own page. */
 const NAVIGATE =
-  /(\bdocuments?\b|\bpolicy (?:details|summary|overview|information|info)\b|\bview (?:policy|details|documents)\b|\bmy polic(?:y|ies)\b|^\s*polic(?:y|ies)\b|\bselect (?:a |your )?polic(?:y|ies)\b|\bcoverages?\b|\bid cards?\b)/i;
+  /(\bdocuments?\b|\bpolicy (?:details|summary|overview|information|info)\b|\bview (?:policy|details|documents)\b|\bmy polic(?:y|ies)\b|^\s*polic(?:y|ies)\b|\bselect (?:a |your )?polic(?:y|ies)\b|\bcoverages?\b)/i;
 
 /** Liberty Mutual's screen-reader wording for a button that opens one document. */
 const VIEW_NAMED_DOC = /^(?:view|print|view ?\/ ?print|download)\s+open (?:your|the) [a-z][a-z ]{1,40}? document in a new (?:tab|window)$/i;
@@ -273,4 +273,27 @@ export function policyNumberIn(text: string): string | null {
 export function streetAddressesIn(text: string): string[] {
   const street = new RegExp(String.raw`(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:${STREET_SUFFIX})\b)`, "g");
   return [...text.matchAll(street)].map((m) => m[1].trim());
+}
+
+/**
+ * The policy a PDF is about: of the account's policies it mentions, the one
+ * printed first (a declarations page starts with its own number; an umbrella
+ * policy mentions the policies under it further in). `named` when the text
+ * mentions none of them or is too short to tell.
+ */
+export function policyNamedInPdf(named: string, text: string, known: readonly string[]): string {
+  const squash = (x: string) => x.replace(/[\s-]/g, "").toUpperCase();
+  const flat = squash(text);
+  if (flat.length <= 200) return named;
+  let best = named;
+  let bestAt = flat.includes(squash(named)) ? flat.indexOf(squash(named)) : Infinity;
+  for (const k of known) {
+    if (squash(k).length < 7) continue;
+    const at = flat.indexOf(squash(k));
+    if (at >= 0 && at < bestAt) {
+      best = k;
+      bestAt = at;
+    }
+  }
+  return best;
 }

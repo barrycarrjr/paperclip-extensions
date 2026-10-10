@@ -62,7 +62,7 @@ export function findTerm(text: string): Term | null {
     // Selective declarations: the two dates side by side on the header row,
     // shortly before the form's name ("03/30/2026 03/30/2027 AGENT: ...
     // HOMEOWNERS CONTINUOUS RENEWAL CERTIFICATE").
-    new RegExp(String.raw`${DATE}\s+${DATE}(?=.{0,160}?(?:renewal certificate|declarations?\b|dec page))`, "i"),
+    new RegExp(String.raw`${DATE}\s+${DATE}(?=\s+AGENT:|.{0,160}?(?:renewal certificate|declarations?\b|dec page))`, "i"),
     new RegExp(String.raw`effective\s*(?:date)?\s*:?\s*${DATE}.{0,80}?expiration\s*(?:date)?\s*:?\s*${DATE}`, "i"),
   ];
   for (const re of patterns) {

@@ -1401,6 +1401,9 @@ async function runCarrierInner(
     const ls = (await visibleLinks()).filter((l) => !l.footer && l.text.includes(n) && notMoney(l.text) && !exclude.has(l.mark));
     return (ls.find((l) => /\bdocuments?\b/i.test(l.text)) ?? ls.find((l) => /polic/i.test(l.text)) ?? ls[0])?.mark ?? null;
   };
+  /** A "My Documents" heading anywhere on the page, main area or not. */
+  const hasMyDocuments = () =>
+    page.evaluate<boolean>(() => /\bmy documents\b/i.test(document.body.innerText)).catch(() => false);
   /** The page's main text, without header and footer. */
   const mainText = () =>
     page
@@ -1527,7 +1530,8 @@ async function runCarrierInner(
     }
     // A documents page says so near its top, or has a "My Documents" section
     // further down (Selective, under a long list of policies).
-    const docsPage = /\bdocuments?\b/i.test(pageText.slice(0, 400)) || /\bmy documents\b/i.test(pageText);
+    // "My Documents" can sit outside the page's main area (Selective).
+    const docsPage = /\bdocuments?\b/i.test(pageText.slice(0, 400)) || /\bmy documents\b/i.test(pageText) || (await hasMyDocuments());
     await takeDocs(links, ctx, docsPage);
     if (depth >= 2) return;
 
@@ -1635,7 +1639,7 @@ async function runCarrierInner(
       Object.assign(addresses, policyAddresses(shown.map((l) => l.text)), addresses);
       await snap(page, `opened-${pagesVisited}`, shown.map((l) => l.text));
       const shownText = await mainText();
-      await takeDocs(shown, navCtx, /\bdocuments?\b/i.test(shownText.slice(0, 400)) || /\bmy documents\b/i.test(shownText));
+      await takeDocs(shown, navCtx, /\bdocuments?\b/i.test(shownText.slice(0, 400)) || /\bmy documents\b/i.test(shownText) || (await hasMyDocuments()));
       for (const item of shown.filter((l) => !isDocumentLink(l.text, l.href, l.pdfHint)).slice(0, 10)) {
         if (outOfTime()) break;
         const itemPolicy = policyNumberIn(item.text);
@@ -1664,7 +1668,10 @@ async function runCarrierInner(
           if (bytes) opened.push({ at: Date.now(), bytes });
         }
         if (opened.length) {
-          for (const c of opened) if (addPdf(docMeta(item, contextFor(item.text, navCtx)), c.bytes)) opts.log("document-saved-in-memory");
+          const meta = docMeta(item, contextFor(item.text, navCtx));
+          const existing = opts.alreadyHave?.(meta);
+          if (existing) skipped.push({ ...meta, existingName: existing });
+          else for (const c of opened) if (addPdf(meta, c.bytes)) opts.log("document-saved-in-memory");
           await closeOtherTabs();
         }
         const went = await page.url();
