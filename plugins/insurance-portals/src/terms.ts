@@ -27,7 +27,7 @@ export function toIso(s: string): string | null {
     const y = num[3].length === 2 ? `20${num[3]}` : num[3];
     return `${y}-${num[1].padStart(2, "0")}-${num[2].padStart(2, "0")}`;
   }
-  const word = /^([A-Za-z]{3})[a-z]*\.? (\d{1,2}),? (\d{4})$/.exec(s.trim());
+  const word = /^([A-Za-z]{3})[A-Za-z]*\.? (\d{1,2}),? (\d{4})$/.exec(s.trim());
   if (word && MONTHS[word[1].toLowerCase()]) {
     return `${word[3]}-${MONTHS[word[1].toLowerCase()]}-${word[2].padStart(2, "0")}`;
   }
@@ -52,7 +52,7 @@ export function findTerm(text: string): Term | null {
     // the time the term starts ("07/20/26 07/20/27 12:01 A.M. STANDARD TIME"),
     // well after the "POLICY PERIOD" label.
     new RegExp(String.raw`${DATE}\s+${DATE}\s+12:01\s*A\.?\s?M\.?`, "i"),
-    new RegExp(String.raw`policy\s*period.{0,300}?${DATE}\s+(?:to\s+)?${DATE}`, "i"),
+    new RegExp(String.raw`policy\s*period\b.{0,300}?${DATE}\s+(?:to:?\s+)?${DATE}`, "i"),
     new RegExp(String.raw`(?:policy|coverage|insurance)\s*(?:period|term)\b[^0-9A-Z]{0,40}?(?:from\s*)?${DATE}[^0-9A-Za-z]{0,30}?(?:\d{1,2}:\d{2}\s*[AP]\.?M\.?[^0-9A-Za-z]{0,20})?(?:to|through|thru|until|-|–)\s*${DATE}`, "i"),
     new RegExp(String.raw`\bterm\b[^0-9A-Z]{0,20}?${DATE}\s*(?:to|through|thru|-|–)\s*${DATE}`, "i"),
     new RegExp(String.raw`effective\s*(?:date)?\s*:?\s*${DATE}.{0,80}?expiration\s*(?:date)?\s*:?\s*${DATE}`, "i"),

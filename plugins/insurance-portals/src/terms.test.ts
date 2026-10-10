@@ -102,3 +102,14 @@ test("already-saved documents are recognised by policy, document and posted date
   assert.equal(existingFileFor(names, "Foremost", { policy: P, title: "RENEWAL", posted: null }), null, "no posted date: never assume");
   assert.deepEqual(termFromName(names[0]), { from: "2026-07-20", to: "2027-07-20" });
 });
+
+test("Liberty Mutual declarations: month names in capitals, labels before the dates", () => {
+  assert.deepEqual(findTerm("DESCRIBED LOCATION: 12 TEST AVE POLICY PERIOD FROM: TO: MARCH 3 2026 MARCH 3 2027 MORTGAGEE: EXAMPLE BANK"), {
+    from: "2026-03-03",
+    to: "2027-03-03",
+  });
+  assert.deepEqual(findTerm("POLICY PERIOD FROM: MARCH 3 2025 TO: MARCH 3 2026 1ST MORTGAGEE"), { from: "2025-03-03", to: "2026-03-03" });
+  assert.deepEqual(findTerm("POLICY PERIOD FROM: TO: CHANGED AS OF: MARCH 3 2026 MARCH 3 2027 APRIL 9 2026"), { from: "2026-03-03", to: "2027-03-03" });
+  assert.equal(toIso("JUNE 30 2026"), "2026-06-30");
+  assert.equal(toIso("TERM 30 2026"), null);
+});

@@ -1633,36 +1633,69 @@ async function runCarrierInner(
     navLog("selector-policies", { count: all.length, read: all.filter((n) => policiesRead.has(n)).length });
     await snap(page, "policy-list", { count: all.length });
     let listOpen = true;
+    /** Open policy `n` from the list; true when its page is showing. */
+    const openFromList = async (n: string): Promise<boolean> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (!listOpen) {
+          // The second try starts from a fresh load of the page.
+          if (attempt > 0) await page.goto(from).catch(() => undefined);
+          if (attempt > 0) await settle(20_000);
+          else await goFrom();
+          await openSelector();
+        }
+        listOpen = false;
+        const mark = await markPolicyItem(n);
+        if (!mark) continue;
+        await page.clickMark(mark);
+        await settle(20_000);
+        // The list itself names every policy: wait until the page names
+        // only this one at its top.
+        const until = Date.now() + 15_000;
+        for (;;) {
+          if (pagePolicy(await mainText())?.number === n) {
+            await settle(15_000);
+            return true;
+          }
+          if (Date.now() >= until) break;
+          await sleep(700);
+        }
+        navLog("wrong-policy-page", { policy: `...${n.slice(-4)}`, how: "selector" });
+      }
+      return false;
+    };
     for (const n of all) {
       if (policiesRead.has(n)) continue;
       if (outOfTime() || documents.length >= opts.maxDocuments) break;
-      let items = first;
-      if (!listOpen) {
-        await goFrom();
-        items = await openSelector();
-      }
-      listOpen = false;
-      const item = items.find((l) => policyNumberIn(l.text) === n);
-      // Marks can go stale when the list redraws; look for it again by policy.
-      const mark = (await markPolicyItem(n)) ?? item?.mark;
-      if (!mark) {
+      if (!(await openFromList(n))) {
         navLog("policy-unreachable", { policy: `...${n.slice(-4)}`, how: "selector" });
+        await snap(page, `unreachable-${n.slice(-4)}`);
+        unreachable.push(n);
         continue;
       }
-      await page.clickMark(mark);
-      await settle(20_000);
-      const top = (await mainText()).slice(0, 600);
-      if (!top.includes(n)) {
-        navLog("wrong-policy-page", { policy: `...${n.slice(-4)}`, how: "selector" });
-        await snap(page, `wrong-policy-${n.slice(-4)}`);
-        continue;
+      // The portal itself can fail to load a policy ("We can't load your
+      // policy declaration right now"): wait a little and open it once more.
+      if (PORTAL_LOAD_ERROR.test(await mainText())) {
+        navLog("portal-load-error", { policy: `...${n.slice(-4)}`, retry: true });
+        await sleep(8_000);
+        if (await openFromList(n)) {
+          if (PORTAL_LOAD_ERROR.test(await mainText())) portalFailed.push(n);
+        }
       }
       navLog("open-policy", { policy: `...${n.slice(-4)}`, how: "selector", ok: true });
       pagesVisited++;
       await readPage(contextFor(`policy ${n}`), 1);
       policiesRead.add(n);
     }
+    const tail = (ns: string[]) => ns.map((n) => `...${n.slice(-4)}`).join(", ");
+    if (portalFailed.length) {
+      notes.push(
+        `${carrier.name}'s own site said it could not load the documents for ${portalFailed.length} polic${portalFailed.length === 1 ? "y" : "ies"} (${tail(portalFailed)}), even after a second try. Run again later; documents already saved are skipped.`,
+      );
+    }
+    if (unreachable.length) notes.push(`Could not open ${unreachable.length} polic${unreachable.length === 1 ? "y" : "ies"} from the policy list (${tail(unreachable)}).`);
   };
+  const portalFailed: string[] = [];
+  const unreachable: string[] = [];
 
   const start = await page.url();
   visited.add(keyOf(start));
@@ -1670,7 +1703,12 @@ async function runCarrierInner(
   await readPage("");
   // Liberty Mutual shows one policy at a time with a "Select another policy"
   // list: go through that list first, one policy after another.
-  if (selectorPage && !outOfTime() && documents.length < opts.maxDocuments) await readPoliciesFromSelector(selectorPage);
+  if (selectorPage && !outOfTime() && documents.length < opts.maxDocuments) {
+    await readPoliciesFromSelector(selectorPage);
+    // Every policy has been read from its own page; the other pages only
+    // lead back to the same documents.
+    queue.length = 0;
+  }
   while (queue.length && pagesVisited < 15 && !outOfTime() && documents.length < opts.maxDocuments) {
     const url = queue.shift()!;
     const k = keyOf(url);
@@ -1730,6 +1768,9 @@ function docMeta(l: LinkInfo, ctx: string): DocMeta {
   }
   return { label: makeLabel(l, ctx), policy: ctx, title: title.slice(0, 80) || "Document", posted: findDate(l.text) ?? findDate(l.context) };
 }
+
+/** A portal's own message that it failed to load a policy's documents. */
+const PORTAL_LOAD_ERROR = /\bcan(?:no|['’])?t load your polic|unable to load your (?:polic|documents)/i;
 
 /** Button words that say nothing about which document it is. */
 const GENERIC_BUTTON = /^(view|download|open|pdf|view pdf|download pdf|print|view ?\/ ?print|view document|document)?$/i;

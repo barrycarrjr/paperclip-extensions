@@ -242,3 +242,12 @@ test("street addresses in capitals are recognised, lower-case words are not", ()
   assert.deepEqual(streetAddressesIn("call 3 times a day st"), []);
   assert.deepEqual(policyAddresses(["Policy OK0000002 34 SAMPLE ST"]), { OK0000002: "34 SAMPLE ST" });
 });
+
+test("no source file holds a stray control character (a broken '\\b' once disabled a date rule)", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const dir = new URL(".", import.meta.url);
+  for (const f of (await readdir(dir)).filter((x) => x.endsWith(".ts"))) {
+    const text = await readFile(new URL(f, dir), "utf8");
+    assert.equal(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text), false, f);
+  }
+});

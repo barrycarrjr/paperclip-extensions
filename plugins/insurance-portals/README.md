@@ -8,6 +8,12 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.12**: From the first real Liberty Mutual run with 0.6.11.
+  - Term dates are read from Liberty Mutual's declarations ("POLICY PERIOD FROM: TO: JUNE 30 2026 JUNE 30 2027", month names in capitals), so its files are named by term again. A stray control character had also disabled the "Policy Period" rule for every carrier; a test now checks the sources for such characters.
+  - When Liberty Mutual's own site says "We can't load your policy declaration right now", the policy is tried once more after a pause, and the run's result names the policies the site could not load.
+  - A policy chosen from the list counts as open only once the page names that one policy at its top (the list itself names them all).
+  - A policy missing from the list is looked for once more after reloading the page.
+  - Once every policy has been read from the list, the other pages are not visited again.
 - **v0.6.11**: Liberty Mutual documents, from the first real run's screens.
   - Goes through every policy in Liberty Mutual's "Select another policy" list, one at a time, and reads each policy's documents page. Never a "change" or "switch" wording.
   - "View / print" buttons are saved as documents and named from their screen-reader words ("Renewal", "Policy change", "Proof of insurance") with the date on their row.

@@ -1315,6 +1315,8 @@ test("Liberty Mutual documents page: every policy through 'Select another policy
     { n: "OK0000001", addr: "12 TEST AVE" },
     { n: "OK0000002", addr: "34 SAMPLE ST" },
     { n: "OK0000003", addr: "56 EXAMPLE RD" },
+    // The portal's own failure, as seen on the real site.
+    { n: "OK0000004", addr: "78 MADEUP LN", broken: true },
   ];
   const hits: string[] = [];
   const nav = `<header><a href="/account/homepage">Home</a><a href="/account/homepage">Policies</a><a href="/account/homepage">Billing</a>
@@ -1335,6 +1337,11 @@ test("Liberty Mutual documents page: every policy through 'Select another policy
     const row = (p, kind, date, file) => '<div class="row"><span>' + kind + '</span> <span>' + date + '</span> <button aria-label="Open your ' + kind + ' document in a new tab" onclick="window.open(\\'/docs/' + p.n + '-' + file + '.pdf\\')">View / print</button></div>';
     function show() {
       const p = P[cur];
+      if (p.broken) {
+        document.getElementById('m').innerHTML = '<h1>My documents</h1><button id="sel">Select another policy</button><p>Policy ' + p.n + '</p><p><b>' + p.addr + '</b></p><p>Error. We can&rsquo;t load your policy declaration right now. Please check back later.</p>';
+        document.getElementById('sel').onclick = list;
+        return;
+      }
       document.getElementById('m').innerHTML =
         '<h1>My landlord documents</h1><button id="sel">Select another policy</button>' +
         '<p>Policy ' + p.n + '</p><p><b>' + p.addr + '</b></p>' +
@@ -1389,6 +1396,7 @@ test("Liberty Mutual documents page: every policy through 'Select another policy
     assert.deepEqual(hits, [], `trap pages opened: ${hits.join(", ")}`);
     const got = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted ?? ""} | ${d.bytes.toString("latin1").split("\n")[1]}`).sort();
     const want = policies
+      .filter((p) => !("broken" in p))
       .flatMap((p) => [
         `${p.addr} - Policy ${p.n} | Policy change | 2026-03-12 | % ${p.n}-chg26`,
         `${p.addr} - Policy ${p.n} | Proof of insurance |  | % ${p.n}-dec`,
@@ -1397,6 +1405,7 @@ test("Liberty Mutual documents page: every policy through 'Select another policy
       ])
       .sort();
     assert.deepEqual(got, want);
+    assert.ok(result.notes.some((n) => /could not load the documents for 1 policy \(\.\.\.0004\)/.test(n)), result.notes.join(" | "));
     // The policies and their addresses go on the private list.
     for (const p of policies) {
       assert.ok(result.identifiers.includes(p.n), p.n);
