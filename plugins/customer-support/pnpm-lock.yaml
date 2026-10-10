@@ -362,7 +362,7 @@ packages:
     os: [win32]
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-ixI25q49scJl55OYgi1rcRrOAhF6UPTp6zcV6HGDLKlyCBlX2YbyXqpPHuNiaJ+yPGflgJLTGwycMulpV2KFQw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    resolution: {integrity: sha512-fX+KyPM3c5kSGnDuXLlkor97mrHmnGIIp40es86uOKpVcNeXh+uv2KnPm1383yy4dIrIDIk7umsnZshHegN65g==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
     version: 1.0.0
     hasBin: true
     peerDependencies:

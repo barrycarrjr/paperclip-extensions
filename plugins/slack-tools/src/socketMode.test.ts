@@ -67,15 +67,19 @@ describe("extractOperatorDm", () => {
   // A screenshot sent with a question went unanswered when any subtype was dropped.
   it("takes a message with files attached, even one that is only a file", () => {
     const withText = extractOperatorDm(
-      dmEnvelope({ subtype: "file_share", text: "the flowroute alert", files: [{ id: "F01", name: "image.png" }] }),
+      dmEnvelope({
+        subtype: "file_share",
+        text: "the flowroute alert",
+        files: [{ id: "F01", name: "image.png", mimetype: "image/PNG" }],
+      }),
       opts,
     );
     assert.equal(withText?.text, "the flowroute alert");
-    assert.deepEqual(withText?.files, [{ name: "image.png" }]);
+    assert.deepEqual(withText?.files, [{ name: "image.png", id: "F01", mimetype: "image/png" }]);
 
     const fileOnly = extractOperatorDm(dmEnvelope({ subtype: "file_share", text: "", files: [{ id: "F02" }] }), opts);
     assert.equal(fileOnly?.text, "");
-    assert.deepEqual(fileOnly?.files, [{ name: "a file" }]);
+    assert.deepEqual(fileOnly?.files, [{ name: "a file", id: "F02", mimetype: null }]);
   });
 
   it("takes a thread reply that was also sent to the conversation", () => {
@@ -125,6 +129,28 @@ describe("withAttachmentNote", () => {
       "is this right?\n\n[Slack: the sender also attached a file (image.png), which cannot be opened from Slack. If it matters, say so and ask what it shows.]",
     );
     assert.ok(withAttachmentNote("", [{ name: "a.png" }, { name: "b.pdf" }]).startsWith("[Slack: the sender also attached 2 files (a.png, b.pdf)"));
+  });
+
+  it("names the images sent with the message, and the ones that could not be opened, grouped by why", () => {
+    const note = withAttachmentNote("what do you make of these?", [{ name: "notes.pdf" }], {
+      sent: [{ name: "a.png" }, { name: "b.jpg" }],
+      failed: [
+        { name: "c.png", reason: "the Slack app is missing the files:read permission" },
+        { name: "d.png", reason: "it is over the 7.5 MB limit for one image" },
+        { name: "e.png", reason: "the Slack app is missing the files:read permission" },
+      ],
+    });
+    assert.equal(
+      note,
+      [
+        "what do you make of these?",
+        "",
+        "[Slack: the sender also attached a file (notes.pdf), which cannot be opened from Slack. If it matters, say so and ask what it shows.]",
+        "[Slack: the sender also attached 2 images (c.png, e.png), which could not be opened: the Slack app is missing the files:read permission. If they matter, say so and ask what they show.]",
+        "[Slack: the sender also attached an image (d.png), which could not be opened: it is over the 7.5 MB limit for one image. If it matters, say so and ask what it shows.]",
+        "[Slack: the sender also attached 2 images (a.png, b.jpg), sent with this message. If you cannot see them, say so and ask what they show.]",
+      ].join("\n"),
+    );
   });
 });
 
