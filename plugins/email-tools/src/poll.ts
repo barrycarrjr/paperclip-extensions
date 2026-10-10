@@ -15,11 +15,14 @@ import { maybeRequestMailWake } from "./watch.js";
 import { withMailboxLock } from "./mailbox-lock.js";
 import { getAccessToken } from "./oauth.js";
 import { SecretCache } from "./secret-cache.js";
+import { writeSenderRule } from "./sender-rules.js";
+import { withoutAgentMoves } from "./agent-moves.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 
 const STATE_NAMESPACE = "imap";
 const LAST_POLL_KEY = "last-poll-at";
-const TRIAGE_FOLDER = "_paperclip/triage";
+/** Exported so the email_move tool can tell when an agent moves mail here. */
+export const TRIAGE_FOLDER = "_paperclip/triage";
 
 interface MailboxCursor {
   uidValidity: number;
@@ -177,6 +180,7 @@ export async function learnFromTriageFolder(
 ): Promise<number> {
   const key = mailbox.key as string;
   if (!mailbox.ingestCompanyId) return 0; // need a company to scope rules to
+  const companyId = mailbox.ingestCompanyId;
   return withMailboxLock(`${key}:triage-learn`, async () => {
     const rt = await buildMailboxRuntime(ctx, mailbox, key);
     const client = await openConnection(rt);
@@ -218,31 +222,14 @@ export async function learnFromTriageFolder(
       if (newUids.length === 0) return 0;
 
       const headers = await fetchHeaders(client, TRIAGE_FOLDER, newUids);
-      const senders = new Set<string>();
-      for (const h of headers) {
-        const addr = extractEmailFromHeader(h.from);
-        if (addr) senders.add(addr);
-      }
-
-      let inserted = 0;
-      for (const sender of senders) {
-        try {
-          const result = await ctx.db.execute(
-            `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
-               (company_id, mailbox_key, sender_pattern, rule_type)
-             VALUES ($1, $2, $3, 'auto-triage')
-             ON CONFLICT (company_id, mailbox_key, sender_pattern) DO NOTHING`,
-            [mailbox.ingestCompanyId, key, sender],
-          );
-          if (result.rowCount > 0) inserted += 1;
-        } catch (err) {
-          ctx.logger.warn("email-tools triage-learn rule insert failed", {
-            mailbox: key,
-            sender,
-            error: (err as Error).message,
-          });
-        }
-      }
+      // Moved into learnFromTriageHeaders below, which also leaves out the
+      // agent's own moves. Kept as the undo path.
+      // const senders = new Set<string>();
+      // for (const h of headers) {
+      //   const addr = extractEmailFromHeader(h.from);
+      //   if (addr) senders.add(addr);
+      // }
+      const learned = await learnFromTriageHeaders(ctx, { key, companyId }, headers);
 
       const maxNewUid = Math.max(cursor.uid, ...newUids);
       await ctx.state.set(
@@ -250,19 +237,88 @@ export async function learnFromTriageFolder(
         { uidValidity, uid: maxNewUid },
       );
 
-      if (inserted > 0) {
+      if (learned.inserted > 0) {
         ctx.logger.info("email-tools learned auto-triage rules from triage folder", {
           mailbox: key,
           newMessages: newUids.length,
-          newSenders: senders.size,
-          rulesInserted: inserted,
+          newSenders: learned.senders,
+          rulesInserted: learned.inserted,
         });
       }
-      return inserted;
+      return learned.inserted;
     } finally {
       await safeLogout(client);
     }
   });
+}
+
+/**
+ * Learn auto-triage rules from new messages found in the triage folder.
+ *
+ * Mail an agent moved there itself is left out (see agent-moves.ts): in loose
+ * mode the triage routine moves an unknown sender's mail there on a guess and
+ * queues the sender for the operator, and learning from that move would make
+ * the decision for them. If the check for agent moves fails, this learns from
+ * every message, as it did before agents' moves were recorded.
+ */
+export async function learnFromTriageHeaders(
+  ctx: Pick<PluginContext, "db" | "logger">,
+  mailbox: { key: string; companyId: string },
+  headers: Array<{ uid: number; messageId: string | null; from: string }>,
+): Promise<{ inserted: number; senders: number; agentMoves: number }> {
+  let operatorMoved = headers;
+  try {
+    operatorMoved = await withoutAgentMoves(ctx.db, mailbox.key, headers);
+  } catch (err) {
+    ctx.logger.warn("email-tools triage-learn: could not check for agent moves", {
+      mailbox: mailbox.key,
+      error: (err as Error).message,
+    });
+  }
+
+  const senders = new Set<string>();
+  for (const h of operatorMoved) {
+    const addr = extractEmailFromHeader(h.from);
+    if (addr) senders.add(addr);
+  }
+
+  let inserted = 0;
+  for (const sender of senders) {
+    try {
+      // Moved into writeSenderRule (sender-rules.ts), which also clears the
+      // review-queue entry for the sender. Kept as the undo path.
+      // const result = await ctx.db.execute(
+      //   `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
+      //      (company_id, mailbox_key, sender_pattern, rule_type)
+      //    VALUES ($1, $2, $3, 'auto-triage')
+      //    ON CONFLICT (company_id, mailbox_key, sender_pattern) DO NOTHING`,
+      //   [mailbox.ingestCompanyId, key, sender],
+      // );
+      // if (result.rowCount > 0) inserted += 1;
+      const result = await writeSenderRule(ctx.db, {
+        companyId: mailbox.companyId,
+        mailbox: mailbox.key,
+        pattern: sender,
+        ruleType: "auto-triage",
+        onExisting: "keep",
+      });
+      if (result.written) inserted += 1;
+      if (result.clearError) {
+        ctx.logger.warn("email-tools triage-learn: rule stored, but its review-queue entry was not cleared", {
+          mailbox: mailbox.key,
+          sender,
+          error: result.clearError,
+        });
+      }
+    } catch (err) {
+      ctx.logger.warn("email-tools triage-learn rule insert failed", {
+        mailbox: mailbox.key,
+        sender,
+        error: (err as Error).message,
+      });
+    }
+  }
+  return { inserted, senders: senders.size, agentMoves: headers.length - operatorMoved.length };
 }
 
 // One-shot sweep: when an auto-triage rule is added (via UI or otherwise),

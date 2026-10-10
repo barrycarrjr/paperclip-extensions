@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.19.1";
+const PLUGIN_VERSION = "0.20.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -117,7 +117,7 @@ const mailboxItemSchema = {
       type: "boolean",
       title: "Wake an issue when mail needs attention",
       description:
-        "When on (and 'Enable receive' is on), each poll tick that dispatches at least one message (after the auto-triage and mute sender rules) requests an assignment wakeup on the 'Issue to wake' below, so the triage agent runs on real mail instead of a schedule. Adds no IMAP traffic. Pair it with issue instructions that keep one long fallback wake pending (see the README's wake-on-mail section).",
+        "When on (and 'Enable receive' is on), each poll tick that dispatches at least one message (after the auto-triage and mute sender rules) requests an assignment wakeup on the 'Issue to wake' below, so the triage agent runs on real mail instead of a schedule. Adds no IMAP traffic. The email-triage skill says what to do at the end of each woken run (keep one long fallback wake pending, park the issue as blocked), so the issue itself only needs to name the mailbox. See the README's wake-on-mail section.",
       default: false,
     },
     watchIssueId: {
@@ -412,7 +412,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["allowSend", "pollIntervalMinutes", "oauthMicrosoftClientId", "oauthRedirectUri", "mailboxes"],
+    propertyOrder: [
+      "allowSend",
+      "pollIntervalMinutes",
+      "reviewQueueExpiryDays",
+      "oauthMicrosoftClientId",
+      "oauthRedirectUri",
+      "mailboxes",
+    ],
     properties: {
       oauthMicrosoftClientId: {
         type: "string",
@@ -441,6 +448,15 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
         default: 5,
         minimum: 1,
         maximum: 60,
+      },
+      reviewQueueExpiryDays: {
+        type: "number",
+        title: "Review queue expiry (days)",
+        description:
+          "A sender the triage routine queued for a decision drops out of the review queue after this many days with no new mail from them, so the queue cannot fill up with senders nobody will ever decide on. Default 30, min 1, max 365.",
+        default: 30,
+        minimum: 1,
+        maximum: 365,
       },
       mailboxes: {
         type: "array",
@@ -724,6 +740,96 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
             type: "boolean",
             description:
               "Allow moving the cursor backwards. Only for a deliberate reseed, never for a normal run.",
+          },
+        },
+        required: ["mailbox"],
+      },
+    },
+    {
+      name: "email_add_to_review_queue",
+      displayName: "Add Senders to the Review Queue",
+      description:
+        "Record senders the triage run surfaced for a decision in the mailbox's review queue, which the plugin keeps next to the sender rules (it replaces the Review queue section of the retired rules-home document). Call once near the end of a triage run with every sender you counted as worth a rule, passing the messages you counted (messageId and uid from email_search) so each message is counted once however many runs see it. A sender already queued is updated, not duplicated. A sender already covered by a rule is not queued and comes back under alreadyRuled. An entry that cannot be stored (a sender no rule could match, a bad field, or a last-seen date older than the queue's expiry) is skipped and comes back under skipped with the reason; the rest are stored together. Any rule for a sender removes its entry, as does Dismiss on the Morning Brief or Portfolio Brief, and an entry with no new mail for the configured number of days (default 30) drops out. Returns { added, updated, alreadyRuled, skipped }.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          mailbox: {
+            type: "string",
+            description:
+              "Mailbox identifier (e.g. 'personal'). Must be configured AND list the calling company under allowedCompanies.",
+          },
+          entries: {
+            type: "array",
+            description: "One entry per sender, at most 500 per call.",
+            items: {
+              type: "object",
+              properties: {
+                sender: {
+                  type: "string",
+                  description:
+                    "Full address or @domain. A From header like 'Pat Example <pat@example.com>' is accepted and reduced to the address.",
+                },
+                messages: {
+                  type: "array",
+                  description:
+                    "The messages counted, each as email_search returns it: { messageId, uid }. The Message-ID identifies the message; a message with none (messageId null) is identified by its uid. Recommended over count, because runs see the same unread mail again.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      messageId: { type: ["string", "null"] },
+                      uid: { type: "number" },
+                    },
+                  },
+                },
+                messageIds: {
+                  type: "array",
+                  items: { type: ["string", "null"] },
+                  description:
+                    "Alternative to messages: bare Message-IDs. A null or blank one still counts as a message, just not by name.",
+                },
+                count: {
+                  type: "number",
+                  description:
+                    "Only when you cannot name the messages: the sender has at least this many. Repeating the same count does not add to it. Defaults to the number of messages named.",
+                },
+                displayName: { type: "string", description: "Name on the From line." },
+                subject: { type: "string", description: "Subject of the latest message." },
+                note: {
+                  type: "string",
+                  description:
+                    "Why it looks like a rule candidate (or why not), in a sentence. Shown to the operator. Cut at 2000 characters.",
+                },
+                suggestedRule: {
+                  type: "string",
+                  enum: ["auto-triage", "keep-always", "mute"],
+                  description: "The rule you would pick, if any.",
+                },
+                lastSeenAt: { type: "string", description: "ISO date of the latest message. Defaults to now." },
+                firstSeenAt: { type: "string", description: "ISO date of the earliest message, for an import." },
+              },
+              required: ["sender"],
+            },
+          },
+        },
+        required: ["mailbox", "entries"],
+      },
+    },
+    {
+      name: "email_list_review_queue",
+      displayName: "List the Review Queue",
+      description:
+        "Return the senders waiting in the mailbox's review queue for the operator's decision, noisiest first. Use it to say in the run report how many are still waiting, and to avoid reporting a waiting sender as new. Returns { entries: [{ sender, displayName, messageCount, firstSeenAt, lastSeenAt, lastSubject, note, suggestedRule }], total }. A sender covered by a rule is left out, and so is one with no new mail within the queue's expiry (default 30 days).",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          mailbox: {
+            type: "string",
+            description:
+              "Mailbox identifier (e.g. 'personal'). Must be configured AND list the calling company under allowedCompanies.",
+          },
+          limit: {
+            type: "number",
+            description: "Max entries returned. Default 100, max 500. total always counts every waiting sender.",
           },
         },
         required: ["mailbox"],
