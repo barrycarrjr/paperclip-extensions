@@ -1324,7 +1324,9 @@ async function runCarrierInner(
       // that opened a new tab gets longer: Selective builds the PDF in the
       // page first (about 18 seconds seen).
       const tabsBefore = browser.pages.size;
-      let until = Date.now() + 15_000;
+      // A document card's "View" builds its PDF in the page first (Selective:
+      // 2 to 18 seconds seen), so it is waited on longer from the start.
+      let until = Date.now() + (namedCard(d) ? 35_000 : 15_000);
       while (Date.now() < until && !arrived()) {
         await sleep(500);
         if (Date.now() - clickAt > 5_000 && (await page.url()) !== before && !arrived()) break;
