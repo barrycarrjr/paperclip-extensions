@@ -265,3 +265,12 @@ test("request guard: read-only Get lookups pass, anything that changes stays blo
   assert.equal(shouldBlockRequest("PUT", svc + "GetBillPaySummary"), true);
   assert.equal(shouldBlockRequest("DELETE", svc + "GetPolicyDocuments"), true);
 });
+
+test("never clicks Create, Generate or Order, even for a certificate of insurance", () => {
+  for (const t of ["Create Certificate of Insurance", "Generate Evidence of Property", "Order ID cards"]) {
+    assert.equal(isDocumentLink(t), false, t);
+    assert.equal(isNavigationLink(t), false, t);
+    assert.equal(isDangerous(t), true, t);
+  }
+  assert.equal(isDocumentLink("New Business Declarations"), true);
+});

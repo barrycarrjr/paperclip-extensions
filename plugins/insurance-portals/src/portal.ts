@@ -1237,6 +1237,7 @@ async function runCarrierInner(
       // A policy page's header ("Effective 3/30/2026", "Expiration Date
       // 03/30/2027") is not a document.
       !/^(effective|expiration|expires?|premium|due|term|renewal date|policy period)\b/i.test((l.shown || l.text).trim()) &&
+      !/\bexpiration\b/i.test(l.text) &&
       !/^\s*[\d/.-]+\s*$/.test(l.shown || l.text) &&
       !isNavigationLink(l.text);
     // A plain "View" on a document card that names the document ("Renewal",
@@ -1490,7 +1491,9 @@ async function runCarrierInner(
       for (const n of policyNumbersIn(t)) identifiers.add(n);
       for (const a of streetAddressesIn(t)) identifiers.add(a);
     }
-    const docsPage = /\bdocuments?\b/i.test(pageText.slice(0, 400));
+    // A documents page says so near its top, or has a "My Documents" section
+    // further down (Selective, under a long list of policies).
+    const docsPage = /\bdocuments?\b/i.test(pageText.slice(0, 400)) || /\bmy documents\b/i.test(pageText);
     await takeDocs(links, ctx, docsPage);
     if (depth >= 2) return;
 
@@ -1597,7 +1600,8 @@ async function runCarrierInner(
       );
       Object.assign(addresses, policyAddresses(shown.map((l) => l.text)), addresses);
       await snap(page, `opened-${pagesVisited}`, shown.map((l) => l.text));
-      await takeDocs(shown, navCtx, /\bdocuments?\b/i.test((await mainText()).slice(0, 400)));
+      const shownText = await mainText();
+      await takeDocs(shown, navCtx, /\bdocuments?\b/i.test(shownText.slice(0, 400)) || /\bmy documents\b/i.test(shownText));
       for (const item of shown.filter((l) => !isDocumentLink(l.text, l.href, l.pdfHint)).slice(0, 10)) {
         if (outOfTime()) break;
         const itemPolicy = policyNumberIn(item.text);

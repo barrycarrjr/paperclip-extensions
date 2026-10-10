@@ -18,7 +18,7 @@ const STREET_SUFFIX = ((): string => {
 
 /** Words that mark a control as one that pays, changes, submits or signs out. */
 const DANGER =
-  /\b(pay|paying|payment|payments|autopay|auto-pay|bill ?pay|make a|submit|cancel|change|changes|update|edit|delete|remove|add|enroll|enrol|sign ?up|register|claim|claims|quote|purchase|buy|renew|reinstate|transfer|withdraw|confirm|accept|agree|log ?out|sign ?out|logoff|log off|settings|profile|preferences|paperless|e-?sign|esign|request|refer|chat|contact|feedback|survey|upgrade|switch|bundle|discount offer|apply)\b/i;
+  /\b(pay|paying|payment|payments|autopay|auto-pay|bill ?pay|make a|submit|cancel|change|changes|update|edit|delete|remove|add|create|generate|order|enroll|enrol|sign ?up|register|claim|claims|quote|purchase|buy|renew|reinstate|transfer|withdraw|confirm|accept|agree|log ?out|sign ?out|logoff|log off|settings|profile|preferences|paperless|e-?sign|esign|request|refer|chat|contact|feedback|survey|upgrade|switch|bundle|discount offer|apply)\b/i;
 
 /** Link text that names a policy document worth saving. */
 const DOCUMENT =

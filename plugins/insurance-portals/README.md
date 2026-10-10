@@ -8,6 +8,11 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.16**: From the first Selective run that saved a document.
+  - "Create", "Generate" and "Order" are never clicked, even next to a document's name. The run before this clicked "Create Certificate of Insurance" (it was taken for the document "certificate of insurance"); nothing followed on screen and no request was sent beyond reading.
+  - A page with a "My Documents" section anywhere on it counts as a documents page (Selective puts it under a long list of policies).
+  - Lines such as "Personal Auto Expiration 03/30/2027" are not taken for documents.
+  - Selective's term dates are read: the two dates side by side shortly before the form's name ("... RENEWAL CERTIFICATE").
 - **v0.6.15**: Selective documents, from its "My Documents" cards.
   - A plain "View" on a card that names the document ("Renewal", "Endorsement") is saved as that document, with the card's date. Cards about bills, payments, claims or ID cards are not.
   - A PDF a portal builds in the page and opens as a `blob:` address in a new tab is fetched from the signed-in page, only when the address belongs to the carrier's own site.
