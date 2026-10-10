@@ -1458,7 +1458,16 @@ test("Selective policy page: closes the survey pop-up (never answers it), opens 
           fetch('/services/S3/GetClaimsByPolicy', { method: 'POST' });
           document.getElementById('docs').onclick = () => {
             fetch('/services/S3/GetPolicyDocuments', { method: 'POST' });
-            document.getElementById('tab').innerHTML = '<p>Documents</p><a href="/docs/dec.pdf">Declarations 03/30/2026</a>';
+            document.getElementById('tab').innerHTML = '<h2>MY DOCUMENTS</h2><div><div><span>Renewal</span> <a href="#" id="view">View</a></div><div>Effective 3/30/2026</div><div>Premium $1.00</div></div>' +
+              '<h2>ASSOCIATED BILL ACCOUNT</h2><div><a href="/trap/bill">Bill Account #000-000-001</a><p>You have no pending bills.</p><button onclick="location=\\'/trap/pay\\'">Pay</button></div>';
+            document.getElementById('view').onclick = (ev) => {
+              ev.preventDefault();
+              // The real portal fetches the document, builds it in the page and opens it as blob: in a new tab.
+              fetch('/services/S3/GetDocument', { method: 'POST' })
+                .then(() => new Promise((r) => setTimeout(r, 17000)))
+                .then(() => fetch('/docs/dec.pdf')).then((r) => r.blob())
+                .then((b) => window.open(URL.createObjectURL(new Blob([b], { type: 'application/pdf' }))));
+            };
           };
         </script>`);
     }
@@ -1478,7 +1487,7 @@ test("Selective policy page: closes the survey pop-up (never answers it), opens 
       { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 180_000, maxDocuments: 10, debugDir: null, log: () => undefined },
     );
     assert.deepEqual(hits, [], `trap pages opened: ${hits.join(", ")}`);
-    assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% sel-dec"]);
+    assert.deepEqual(result.documents.map((d) => `${d.title} | ${d.posted} | ${d.bytes.toString("latin1").split("\n")[1]}`), ["Renewal | 2026-03-30 | % sel-dec"]);
     assert.deepEqual(result.blockedPaths, []);
     assert.ok(lookups.includes("GetBillPaySummary") && lookups.includes("GetPolicyDocuments"), lookups.join(", "));
   } finally {

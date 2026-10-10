@@ -541,7 +541,17 @@ function scanLinks(): LinkInfo[] {
       m = `m${++n}`;
       el.setAttribute("data-pcip", m);
     }
-    const box = el.closest("tr, li, article, section, [class*=card], [class*=Card], [class*=row], [class*=policy], [class*=Policy]");
+    let box = el.closest("tr, li, article, section, [class*=card], [class*=Card], [class*=row], [class*=policy], [class*=Policy]");
+    // No recognisable card: the smallest enclosing block that says more than
+    // the button itself (Selective's "Renewal ... View" document card).
+    if (!box) {
+      // The largest enclosing block holding no other button: the whole card,
+      // never the section around it.
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (p.querySelectorAll("a, button, [role=button]").length > 1 || (p.innerText || "").trim().length > 300) break;
+        box = p;
+      }
+    }
     const context = box ? (box as HTMLElement).innerText.replace(/\s+/g, " ").trim().slice(0, 140) : "";
     const footer = !!el.closest("footer, [role=contentinfo], [class*=footer], [class*=Footer], [id*=footer]");
     const expanded = el.getAttribute("aria-expanded") === "true";
@@ -1191,6 +1201,23 @@ async function runCarrierInner(
   };
 
   /**
+   * Fetch a PDF address again from the signed-in page: the carrier's own
+   * addresses, or a "blob:" address its pages made (Selective builds the
+   * PDF in the page and opens it as blob:https://<carrier>/<id>).
+   */
+  const fetchPdfUrl = async (u: string): Promise<Buffer | null> => {
+    const ok = u.startsWith("blob:") ? isSafeNavigationUrl(u.slice(5), carrier.siteDomains) : isSafeNavigationUrl(u, carrier.siteDomains);
+    if (!ok) return null;
+    const got = await fetchInPage(page, u);
+    const bytes = got ? Buffer.from(got.b64, "base64") : null;
+    if (bytes && isPdf(bytes)) {
+      logCapture("refetched", { blob: u.startsWith("blob:"), bytes: bytes.length });
+      return bytes;
+    }
+    return null;
+  };
+
+  /**
    * Save the document links in `found`. On a list of dated PDFs only the
    * current term is kept. A link that turns out to open a page rather than
    * a PDF is queued as a page to read instead.
@@ -1212,7 +1239,11 @@ async function runCarrierInner(
       !/^(effective|expiration|expires?|premium|due|term|renewal date|policy period)\b/i.test((l.shown || l.text).trim()) &&
       !/^\s*[\d/.-]+\s*$/.test(l.shown || l.text) &&
       !isNavigationLink(l.text);
-    const docs = found.filter((l) => !l.footer && (isDocumentLink(l.text, l.href, l.pdfHint) || datedOnList(l)));
+    // A plain "View" on a document card that names the document ("Renewal",
+    // Selective) is that document.
+    const namedCard = (l: LinkInfo) =>
+      docsPage && GENERIC_BUTTON.test((l.shown || l.text).trim()) && !!cardDocument(l.context);
+    const docs = found.filter((l) => !l.footer && (isDocumentLink(l.text, l.href, l.pdfHint) || datedOnList(l) || namedCard(l)));
     const sameWords = (d: LinkInfo) => docs.filter((o) => o.text === d.text).length;
     const seenHere = new Map<string, number>();
     for (const d of docs) {
@@ -1253,25 +1284,27 @@ async function runCarrierInner(
       }
       const before = await page.url();
       const clickAt = Date.now();
-      logCapture("click-document");
+      logCapture("click-document", { what: (d.shown || d.text).replace(/\d/g, "#").slice(0, 40) });
       await page.clickMark(d.mark);
       const arrived = () => captured.some((c) => c.at >= clickAt) || pdfUrls.some((u) => u.at >= clickAt);
       // A PDF usually shows up within seconds. If the click moved to another
-      // page instead, stop waiting early and read that page later.
-      const until = Date.now() + 15_000;
+      // page instead, stop waiting early and read that page later. A click
+      // that opened a new tab gets longer: Selective builds the PDF in the
+      // page first (about 18 seconds seen).
+      const tabsBefore = browser.pages.size;
+      let until = Date.now() + 15_000;
       while (Date.now() < until && !arrived()) {
         await sleep(500);
         if (Date.now() - clickAt > 5_000 && (await page.url()) !== before && !arrived()) break;
+        if (browser.pages.size > tabsBefore) until = Math.max(until, clickAt + 35_000);
       }
       await sleep(800);
       let got = 0;
       for (const c of captured.filter((c) => c.at >= clickAt)) if (addPdf(meta, c.bytes)) got++;
       if (got === 0) {
         for (const u of pdfUrls.filter((u) => u.at >= clickAt)) {
-          if (!isSafeNavigationUrl(u.url, carrier.siteDomains)) continue;
-          const again = await fetchInPage(page, u.url);
-          const bytes = again ? Buffer.from(again.b64, "base64") : null;
-          if (bytes && isPdf(bytes) && addPdf(meta, bytes)) {
+          const bytes = await fetchPdfUrl(u.url);
+          if (bytes && addPdf(meta, bytes)) {
             got++;
             break;
           }
@@ -1570,6 +1603,8 @@ async function runCarrierInner(
         const itemPolicy = policyNumberIn(item.text);
         if (itemPolicy && policiesRead.has(itemPolicy)) continue;
         if (/^(close|cancel|dismiss|back)\b/i.test(item.text)) continue;
+        // A bill account, payment or claim entry is never a way to documents.
+        if (!notMoney(item.text)) continue;
         if (tried.has(`item|${ctx}|${pageKey}|${item.text}`)) continue;
         tried.add(`item|${ctx}|${pageKey}|${item.text}`);
         let im = await markByText(item.text, 3_000);
@@ -1586,6 +1621,10 @@ async function runCarrierInner(
         await settle(20_000);
         // An entry that turned out to open a PDF: keep it rather than lose it.
         const opened = captured.filter((c) => c.at >= itemAt);
+        for (const u of pdfUrls.filter((u) => u.at >= itemAt)) {
+          const bytes = await fetchPdfUrl(u.url);
+          if (bytes) opened.push({ at: Date.now(), bytes });
+        }
         if (opened.length) {
           for (const c of opened) if (addPdf(docMeta(item, contextFor(item.text, navCtx)), c.bytes)) opts.log("document-saved-in-memory");
           await closeOtherTabs();
@@ -1776,7 +1815,7 @@ function docMeta(l: LinkInfo, ctx: string): DocMeta {
     .replace(/\b\d{1,2}\/\d{1,2}\/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const named = namedDocument(l.text);
+  const named = namedDocument(l.text) ?? (GENERIC_BUTTON.test(title) ? cardDocument(l.context) : null);
   if (named && GENERIC_BUTTON.test(title)) title = named;
   else if (GENERIC_BUTTON.test(title) && l.context) {
     title = `${l.context.replace(shown, "").replace(/\s+/g, " ").trim().slice(0, 60)} ${title}`.trim();
@@ -1787,13 +1826,23 @@ function docMeta(l: LinkInfo, ctx: string): DocMeta {
 /** A portal's own message that it failed to load a policy's documents. */
 const PORTAL_LOAD_ERROR = /\bcan(?:no|['’])?t load your polic|unable to load your (?:polic|documents)/i;
 
+/**
+ * The document a card names ("Renewal Effective 3/30/2026 Premium ..."), for a
+ * plain "View" button on it. Never a bill, payment, claim or ID card.
+ */
+export function cardDocument(context: string): string | null {
+  if (!context || /\b(bill|invoice|payment|pay|statement|receipt|claim|vin|id cards?)\b/i.test(context)) return null;
+  const m = /\b(renewal|new business|declarations?(?: page)?|dec page|policy (?:change|packet|jacket|booklet|documents?)|endorsement|amended declarations?|rewrite|reinstatement|cancellation notice|nonrenewal notice)\b/i.exec(context);
+  return m ? m[1].replace(/^./, (c) => c.toUpperCase()) : null;
+}
+
 /** Button words that say nothing about which document it is. */
 const GENERIC_BUTTON = /^(view|download|open|pdf|view pdf|download pdf|print|view ?\/ ?print|view document|document)?$/i;
 
 function makeLabel(l: LinkInfo, ctx = ""): string {
   // Prefer the words on screen; screen-reader text often repeats them.
   let text = (l.shown || l.text).replace(/\s+/g, " ").trim();
-  const named = namedDocument(l.text);
+  const named = namedDocument(l.text) ?? (GENERIC_BUTTON.test(text) ? cardDocument(l.context) : null);
   if (named && GENERIC_BUTTON.test(text)) {
     const d = findDate(l.text) ?? findDate(l.context);
     return [ctx, [named, d].filter(Boolean).join(" ")].filter(Boolean).join(" - ");

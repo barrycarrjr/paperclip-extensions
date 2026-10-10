@@ -8,6 +8,11 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.15**: Selective documents, from its "My Documents" cards.
+  - A plain "View" on a card that names the document ("Renewal", "Endorsement") is saved as that document, with the card's date. Cards about bills, payments, claims or ID cards are not.
+  - A PDF a portal builds in the page and opens as a `blob:` address in a new tab is fetched from the signed-in page, only when the address belongs to the carrier's own site.
+  - A click that opens a new tab is waited on for up to 35 seconds (Selective took about 18).
+  - Bill account, payment and claim entries revealed by a tab or menu are never followed.
 - **v0.6.14**: From the first Selective run that got past sign-in.
   - A survey pop-up ("Close the survey dialog") is closed with its own close button; its answers and Submit are never pressed.
   - The request guard lets through read-only service lookups named for what they get ("GetBillPaySummary", "GetClaimsByPolicy"), unless a word in the name says it changes something. Every other write-looking request is still blocked.
