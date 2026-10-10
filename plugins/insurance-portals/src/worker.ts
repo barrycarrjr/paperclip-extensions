@@ -24,6 +24,8 @@ import { hasKeyFigures, readKeyFigures, type KeyFigures } from "./declarations.j
 import manifest from "./manifest.js";
 
 const PLUGIN_VERSION_FOR_SUMMARY = `v${manifest.version}`;
+/** Subfolder of the destination that holds the PDFs' summaries. */
+export const SUMMARIES_FOLDER = "_Summaries";
 
 interface InstanceConfig {
   allowedCompanies?: string[];
@@ -153,7 +155,7 @@ function startJob(ctx: PluginContext, cfg: InstanceConfig, params: Record<string
   );
 }
 
-/** The summary saved beside a PDF: its key figures as read, and what could not be read. */
+/** The summary saved for a PDF (in the _Summaries subfolder): its key figures as read, and what could not be read. */
 function summaryJson(
   carrierName: string,
   pdfName: string,
@@ -358,6 +360,10 @@ export async function fetchDocuments(
   const keep = termsWanted === "current" ? sorted.filter((d) => d.current) : sorted;
 
   const files = [];
+  // Summaries go in one place per insurance folder: its _Summaries subfolder,
+  // created the first time a summary is saved.
+  let summariesFolder: string | null = null;
+  const summariesFolderId = async () => (summariesFolder ??= await drive.ensureFolder(`${destination}/${SUMMARIES_FOLDER}`));
   for (const doc of keep) {
     const savedFile = doc.existingName
       ? { name: doc.existingName, id: doc.existingName, link: null, status: "already_saved" as const }
@@ -367,11 +373,11 @@ export async function fetchDocuments(
     if (savedFile.status === "saved" && doc.figures) {
       try {
         const s = await drive.saveText(
-          folderId,
+          await summariesFolderId(),
           `${savedFile.name.replace(/\.pdf$/i, "")} - summary.json`,
           summaryJson(carrier.name, savedFile.name, doc, doc.figures),
         );
-        summary = s.name;
+        summary = `${SUMMARIES_FOLDER}/${s.name}`;
       } catch (err) {
         result.notes.push(`Could not save the summary for ${savedFile.name}: ${err instanceof Error ? err.message : String(err)}`);
       }

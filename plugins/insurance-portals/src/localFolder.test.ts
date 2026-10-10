@@ -70,3 +70,16 @@ test("a summary is saved beside its PDF and never overwrites a file of the same 
   assert.equal(await readFile(join(dir, first.name), "utf8"), '{"premium":1}\n');
   await rm(dir, { recursive: true, force: true });
 });
+
+test("summaries go in a _Summaries subfolder of the destination, created when first needed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ip-summaries-"));
+  const folder = await LocalFolder.open(root);
+  const dest = await folder.ensureFolder("Insurance/Sample");
+  const summaries = await folder.ensureFolder("Insurance/Sample/_Summaries");
+  assert.equal(summaries, join(dest, "_Summaries"));
+  await folder.saveText(summaries, "Sample - Policy 0000001 - Renewal - summary.json", "{}\n");
+  assert.deepEqual(await readdir(summaries), ["Sample - Policy 0000001 - Renewal - summary.json"]);
+  // The PDF folder's own listing (used to skip saved PDFs) is not affected.
+  assert.deepEqual(await folder.listNames(dest), []);
+  await rm(root, { recursive: true, force: true });
+});
