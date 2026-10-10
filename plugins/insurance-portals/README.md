@@ -8,6 +8,10 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.14**: From the first Selective run that got past sign-in.
+  - A survey pop-up ("Close the survey dialog") is closed with its own close button; its answers and Submit are never pressed.
+  - The request guard lets through read-only service lookups named for what they get ("GetBillPaySummary", "GetClaimsByPolicy"), unless a word in the name says it changes something. Every other write-looking request is still blocked.
+  - A policy page's header ("Effective 3/30/2026", "Expiration Date 03/30/2027") is no longer taken for a document.
 - **v0.6.13**: Term dates for Liberty Mutual's newer policies, whose "Proof of insurance" button returns the whole welcome packet with the declarations page about 50 pages in. When the first 40 pages give no term, up to 150 pages are read, and the wording "Coverage begins at ... 12:01 AM on <date> ... Coverage will expire at 12:01 AM on <date>" is recognised.
 - **v0.6.12**: From the first real Liberty Mutual run with 0.6.11.
   - Term dates are read from Liberty Mutual's declarations ("POLICY PERIOD FROM: TO: JUNE 30 2026 JUNE 30 2027", month names in capitals), so its files are named by term again. A stray control character had also disabled the "Policy Period" rule for every carrier; a test now checks the sources for such characters.

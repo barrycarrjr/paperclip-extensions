@@ -450,11 +450,22 @@ export function findDecline(): string | null {
       .replace(/\s+/g, " ")
       .trim();
   const decline =
-    /^(not now|skip|skip for now|skip this step|remind me later|maybe later|ask me later|no,? thanks|no thank you|close|dismiss|reject|reject all|decline|decline all|necessary only|continue to (?:my )?account|go to (?:my )?account|continue to (?:my )?dashboard|i'?ll do this later|later|x|×)$/i;
+    /^(not now|skip|skip for now|skip this step|remind me later|maybe later|ask me later|no,? thanks|no thank you|close|dismiss|reject|reject all|decline|decline all|necessary only|continue to (?:my )?account|go to (?:my )?account|continue to (?:my )?dashboard|i'?ll do this later|later|x|×|close (?:the |this )?(?:survey|feedback)(?: dialog| window| pop-?up)?)$/i;
   const onetrust = document.querySelector("#onetrust-reject-all-handler");
   if (onetrust && vis(onetrust)) {
     let m = onetrust.getAttribute("data-pcip");
     if (!m) onetrust.setAttribute("data-pcip", (m = `m${++n}`));
+    (window as any).__pcipN = n;
+    return m;
+  }
+  // A survey's own close button ("Close the survey dialog", Selective),
+  // wherever the survey sits. Never one of its answers or its Submit.
+  const surveyClose = [...document.querySelectorAll("button, a, [role=button]")].find(
+    (b) => vis(b) && /^close (?:the |this )?(?:survey|feedback)\b/i.test(say(b)),
+  );
+  if (surveyClose) {
+    let m = surveyClose.getAttribute("data-pcip");
+    if (!m) surveyClose.setAttribute("data-pcip", (m = `m${++n}`));
     (window as any).__pcipN = n;
     return m;
   }
@@ -1196,6 +1207,10 @@ async function runCarrierInner(
       !!findDate(l.text) &&
       !/^(make|pay|submit|cancel|change|update|edit|delete|remove|add|enroll|sign|request|report|start|set ?up|manage|go)\b/i.test((l.shown || l.text).trim()) &&
       !/(bill|invoice|payment|statement|receipt|claim)/i.test(l.text) &&
+      // A policy page's header ("Effective 3/30/2026", "Expiration Date
+      // 03/30/2027") is not a document.
+      !/^(effective|expiration|expires?|premium|due|term|renewal date|policy period)\b/i.test((l.shown || l.text).trim()) &&
+      !/^\s*[\d/.-]+\s*$/.test(l.shown || l.text) &&
       !isNavigationLink(l.text);
     const docs = found.filter((l) => !l.footer && (isDocumentLink(l.text, l.href, l.pdfHint) || datedOnList(l)));
     const sameWords = (d: LinkInfo) => docs.filter((o) => o.text === d.text).length;

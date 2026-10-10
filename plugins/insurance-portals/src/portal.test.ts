@@ -1425,3 +1425,64 @@ test("the policy a page is about comes from 'Policy <number>' near its top, not 
   assert.equal(pagePolicy("Hi there\nBilling account 70000000001\n12 TEST AVE"), null);
   assert.equal(pagePolicy("Policy OK0000001 12 TEST AVE\nPolicy OK0000002 34 SAMPLE ST"), null);
 });
+
+test("Selective policy page: closes the survey pop-up (never answers it), opens Documents, read-only lookups pass", { skip: !chrome, timeout: 200_000 }, async () => {
+  const hits: string[] = [];
+  const lookups: string[] = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname.startsWith("/trap/")) {
+      hits.push(url.pathname);
+      return html("trap");
+    }
+    if (url.pathname.startsWith("/services/")) {
+      lookups.push(url.pathname.split("/").pop()!);
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end("{}");
+    }
+    if (url.pathname === "/login") return html(`<form action="/policy" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/policy") {
+      return html(`<main id="m"><h1>Policy #H 0000001</h1><p>Renewal</p><p>Effective 3/30/2026</p>
+        <div><button id="det">Details</button><button id="docs">Documents</button></div><div id="tab"><p>Drivers</p></div></main>
+        <div id="survey" role="dialog" style="position:fixed;inset:40px;background:#fff;z-index:9">
+          <p>We are always looking for ways to improve. Please take a moment to tell us what you think.</p>
+          <button onclick="fetch('/trap/survey-yes')">Yes</button><button onclick="fetch('/trap/survey-no')">No</button>
+          <button onclick="fetch('/trap/survey-submit')">Submit</button>
+          <button aria-label="Close the survey dialog" onclick="document.getElementById('survey').remove()">×</button></div>
+        <script>
+          fetch('/services/S3/GetBillPaySummary', { method: 'POST' });
+          fetch('/services/S3/GetClaimsByPolicy', { method: 'POST' });
+          document.getElementById('docs').onclick = () => {
+            fetch('/services/S3/GetPolicyDocuments', { method: 'POST' });
+            document.getElementById('tab').innerHTML = '<p>Documents</p><a href="/docs/dec.pdf">Declarations 03/30/2026</a>';
+          };
+        </script>`);
+    }
+    if (url.pathname === "/docs/dec.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("sel-dec"));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "selective", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 180_000, maxDocuments: 10, debugDir: null, log: () => undefined },
+    );
+    assert.deepEqual(hits, [], `trap pages opened: ${hits.join(", ")}`);
+    assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% sel-dec"]);
+    assert.deepEqual(result.blockedPaths, []);
+    assert.ok(lookups.includes("GetBillPaySummary") && lookups.includes("GetPolicyDocuments"), lookups.join(", "));
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

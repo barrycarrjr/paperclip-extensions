@@ -11,6 +11,7 @@ import {
   isDocumentLink,
   isNavigationLink,
   isPolicySelector,
+  isReadOnlyLookup,
   isSafeNavigationUrl,
   namedDocument,
   streetAddressesIn,
@@ -250,4 +251,17 @@ test("no source file holds a stray control character (a broken '\\b' once disabl
     const text = await readFile(new URL(f, dir), "utf8");
     assert.equal(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text), false, f);
   }
+});
+
+test("request guard: read-only Get lookups pass, anything that changes stays blocked", () => {
+  const svc = "https://portal.example.com/services/Service3/";
+  for (const name of ["GetBillPaySummary", "GetClaimsByPolicy", "GetScheduledPayments", "GetLastPayments", "GetNextPayments", "GetPolicyDocuments"]) {
+    assert.equal(shouldBlockRequest("POST", svc + name), false, name);
+  }
+  for (const name of ["MakePayment", "SubmitClaim", "UpdatePaperless", "GetPayNow", "GetAndUpdatePolicy", "SchedulePayment", "CancelPolicy", "getpayment"]) {
+    assert.equal(shouldBlockRequest("POST", svc + name), true, name);
+  }
+  assert.equal(isReadOnlyLookup("/services/Get"), false);
+  assert.equal(shouldBlockRequest("PUT", svc + "GetBillPaySummary"), true);
+  assert.equal(shouldBlockRequest("DELETE", svc + "GetPolicyDocuments"), true);
 });

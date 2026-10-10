@@ -105,7 +105,26 @@ export function shouldBlockRequest(method: string, url: string): boolean {
   } catch {
     // keep raw
   }
+  // A read-only lookup named for what it gets ("GetBillPaySummary",
+  // "GetClaimsByPolicy" on Selective) passes, unless a word of its name
+  // says it changes something.
+  if (isReadOnlyLookup(path)) return false;
   return WRITE_URL.test(path);
+}
+
+const WRITE_WORDS = new Set(
+  ["submit", "update", "delete", "create", "cancel", "make", "process", "save", "set", "add", "remove", "enroll", "post", "apply", "change", "send", "generate", "register", "confirm", "accept", "pay", "schedule", "edit", "modify", "bind", "purchase", "transfer", "refund", "sign", "upload", "insert", "put", "patch", "reinstate", "renew", "endorse", "opt", "unenroll", "activate", "deactivate", "authorize", "validate", "verify"],
+);
+
+/** True for a POST to a service call named Get..., List..., Search... with no write word in its name. */
+export function isReadOnlyLookup(path: string): boolean {
+  const last = path.split("/").filter(Boolean).pop() ?? "";
+  const m = /^(Get|List|Search|Find|Retrieve|Load|Read|Fetch)([A-Z][A-Za-z0-9]*)$/.exec(last);
+  if (!m) return false;
+  const words = m[2].split(/(?=[A-Z])/).map((w) => w.toLowerCase());
+  // "GetBillPaySummary" reads a summary; "GetPayNow" or "GetAndUpdate" do not pass.
+  const nouns = new Set(["summary", "summaries", "history", "details", "detail", "list", "info", "status"]);
+  return !words.some((w, i) => WRITE_WORDS.has(w) && !(w === "pay" && nouns.has(words[i + 1] ?? "")));
 }
 
 /** Lower-case domain of an email address, or "" if there is none. */
