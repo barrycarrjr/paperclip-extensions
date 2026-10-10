@@ -8,6 +8,11 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.18**: Every Selective policy and term.
+  - Selective lists each policy, current and expired, as a short entry ("Policy #H 0000001"), the same words once per term. Each entry is opened in turn and its "My Documents" cards are read.
+  - A plain "View" is named from the smallest block around it that names a document, so a bill box nearby no longer hides the card's name.
+  - Bill and billing account numbers are never taken for policy numbers when naming files.
+  - Page snapshots in the debug folder now include the text around each link, to tune new layouts in fewer runs.
 - **v0.6.17**: Selective's login code is requested once, not twice. Its "Send Email" button both picks email and sends the code; the pop-up stays on screen for a moment afterwards, and the same button was pressed again as the "send" step, so two codes arrived a second apart. A button whose words say it sends is now pressed once only.
 - **v0.6.16**: From the first Selective run that saved a document.
   - "Create", "Generate" and "Order" are never clicked, even next to a document's name. The run before this clicked "Create Certificate of Insurance" (it was taken for the document "certificate of insurance"); nothing followed on screen and no request was sent beyond reading.

@@ -19,6 +19,7 @@ import {
   isDangerous,
   isDocumentLink,
   isNavigationLink,
+  isPolicyListEntry,
   isPolicySelector,
   isSafeNavigationUrl,
   namedDocument,
@@ -509,6 +510,8 @@ interface LinkInfo {
   pdfHint: boolean;
   /** A section toggle that is already open: clicking it would close it. */
   expanded?: boolean;
+  /** Text of the smallest block around the link that names a document ("Renewal Effective 3/30/2026"). */
+  docCard?: string;
 }
 
 function scanLinks(): LinkInfo[] {
@@ -566,7 +569,20 @@ function scanLinks(): LinkInfo[] {
     const context = box ? (box as HTMLElement).innerText.replace(/\s+/g, " ").trim().slice(0, 140) : "";
     const footer = !!el.closest("footer, [role=contentinfo], [class*=footer], [class*=Footer], [id*=footer]");
     const expanded = el.getAttribute("aria-expanded") === "true";
-    out.push({ mark: m, text, href, context, footer, shown, pdfHint, expanded });
+    // For a plain "View": the smallest block around it that names a
+    // document, so a bill box further out does not hide the card's name.
+    let docCard = "";
+    if (/^(view|open|download|print|view ?\/ ?print|pdf)$/i.test(shown)) {
+      for (let p = el.parentElement, i = 0; p && p !== document.body && i < 8; p = p.parentElement, i++) {
+        const t = (p.innerText || "").replace(/\s+/g, " ").trim();
+        if (t.length > 400) break;
+        if (/\b(renewal|new business|declarations?|dec page|policy (?:change|packet|jacket|booklet|documents?)|endorsement|rewrite|reinstatement|cancellation notice|nonrenewal notice)\b/i.test(t)) {
+          docCard = t.slice(0, 200);
+          break;
+        }
+      }
+    }
+    out.push({ mark: m, text, href, context, footer, shown, pdfHint, expanded, docCard });
   }
   (window as any).__pcipN = n;
   return out;
@@ -1258,7 +1274,7 @@ async function runCarrierInner(
     // A plain "View" on a document card that names the document ("Renewal",
     // Selective) is that document.
     const namedCard = (l: LinkInfo) =>
-      docsPage && GENERIC_BUTTON.test((l.shown || l.text).trim()) && !!cardDocument(l.context);
+      docsPage && GENERIC_BUTTON.test((l.shown || l.text).trim()) && !!cardDocument(l.docCard || l.context);
     const docs = found.filter((l) => !l.footer && (isDocumentLink(l.text, l.href, l.pdfHint) || datedOnList(l) || namedCard(l)));
     const sameWords = (d: LinkInfo) => docs.filter((o) => o.text === d.text).length;
     const seenHere = new Map<string, number>();
@@ -1273,7 +1289,7 @@ async function runCarrierInner(
       tried.add(id);
       // The policy the button belongs to: its own words, then its card or
       // row when that names exactly one policy, then the page's.
-      const rowPolicies = [...new Set(policyNumbersIn(d.context))];
+      const rowPolicies = [...new Set(policyNumbersIn(withoutAccounts(d.docCard || d.context)))];
       const policy = contextFor(d.text, rowPolicies.length === 1 ? contextFor(`policy ${rowPolicies[0]}`, ctx) : ctx);
       // The same button repeated per policy with no way to tell which policy
       // it is for (a home page of cards): leave it to each policy's own page.
@@ -1359,6 +1375,8 @@ async function runCarrierInner(
   const policiesRead = new Set<string>();
   /** The first page seen with a "Select another policy" control. */
   let selectorPage: string | undefined;
+  /** The first page seen listing policies as short entries ("Policy #H 0000001", Selective). */
+  let policyListPage: string | undefined;
   /** A visible "documents" control for policy `n`, whatever its exact wording. */
   const markByPolicyDocs = (n: string) =>
     page
@@ -1477,7 +1495,7 @@ async function runCarrierInner(
     const pageKey = keyOf(here);
     const links = await page.evaluate<LinkInfo[]>(scanLinks).catch(() => [] as LinkInfo[]);
     Object.assign(addresses, policyAddresses(links.map((l) => l.text)), addresses);
-    await snap(page, `page-${pagesVisited}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "", pdf: l.pdfHint })));
+    await snap(page, `page-${pagesVisited}`, links.map((l) => ({ text: l.text, href: l.href ? new URL(l.href).pathname : "", pdf: l.pdfHint, ctx: l.context.slice(0, 80), card: l.docCard?.slice(0, 80) })));
     const ownPolicy = policyNumberIn(ctx);
     if (ownPolicy) policiesRead.add(ownPolicy);
 
@@ -1501,6 +1519,7 @@ async function runCarrierInner(
       }
     }
     if (links.some((l) => !l.footer && isPolicySelector(l.text))) selectorPage ??= here;
+    if (links.filter((l) => !l.footer && isPolicyListEntry(l.text)).length >= 2) policyListPage ??= here;
     // Remember the account's own numbers and addresses (for the private list).
     for (const t of [...links.map((l) => l.text), pageText]) {
       for (const n of policyNumbersIn(t)) identifiers.add(n);
@@ -1770,6 +1789,52 @@ async function runCarrierInner(
   const portalFailed: string[] = [];
   const unreachable: string[] = [];
 
+  /**
+   * Selective lists every policy, current and expired, as a short entry
+   * ("Policy #H 0000001"), the same number once per term. Open each entry in
+   * turn, the n-th of the same words being that policy's n-th term, and read
+   * the page it shows.
+   */
+  const readPoliciesFromList = async (from: string) => {
+    const entries = async () => (await visibleLinks()).filter((l) => !l.footer && isPolicyListEntry(l.text));
+    if (!(await entries()).length) {
+      await page.goto(from).catch(() => undefined);
+      await settle(20_000);
+    }
+    const seen = new Map<string, number>();
+    const todo = (await entries()).map((l) => {
+      const k = seen.get(l.text) ?? 0;
+      seen.set(l.text, k + 1);
+      return { text: l.text, k };
+    });
+    navLog("policy-list", { entries: todo.length });
+    for (const e of todo.slice(0, 20)) {
+      if (outOfTime() || documents.length >= opts.maxDocuments) break;
+      const n = policyNumberIn(e.text);
+      if (!n) continue;
+      let list = await entries();
+      if (!list.length) {
+        await page.goto(from).catch(() => undefined);
+        await settle(20_000);
+        list = await entries();
+      }
+      const target = list.filter((l) => l.text === e.text)[e.k];
+      if (!target) {
+        navLog("policy-unreachable", { policy: `...${n.slice(-4)}`, how: "list", term: e.k });
+        continue;
+      }
+      const before = await mainText();
+      await page.clickMark(target.mark);
+      await settle(20_000);
+      const until = Date.now() + 10_000;
+      while (Date.now() < until && (await mainText()) === before) await sleep(500);
+      navLog("open-policy", { policy: `...${n.slice(-4)}`, how: "list", term: e.k });
+      pagesVisited++;
+      await readPage(contextFor(`policy ${n}`), 1);
+      policiesRead.add(n);
+    }
+  };
+
   const start = await page.url();
   visited.add(keyOf(start));
   pagesVisited++;
@@ -1780,6 +1845,9 @@ async function runCarrierInner(
     await readPoliciesFromSelector(selectorPage);
     // Every policy has been read from its own page; the other pages only
     // lead back to the same documents.
+    queue.length = 0;
+  } else if (policyListPage && !outOfTime() && documents.length < opts.maxDocuments) {
+    await readPoliciesFromList(policyListPage);
     queue.length = 0;
   }
   while (queue.length && pagesVisited < 15 && !outOfTime() && documents.length < opts.maxDocuments) {
@@ -1810,6 +1878,11 @@ async function runCarrierInner(
   return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, identifiers: [...identifiers], notes };
 }
 
+/** `text` with bill and billing account numbers taken out: they are never policy numbers. */
+export function withoutAccounts(text: string): string {
+  return text.replace(/\b(?:bill(?:ing)?\s+)?acc(?:oun)?t\.?\s*(?:no\.?|number|#)?\s*:?\s*[A-Za-z0-9-]+/gi, " ");
+}
+
 /**
  * The one policy a page is about, from its top: a policy-looking number
  * that follows the word "policy" ("Policy OK0000001"), and the street
@@ -1834,12 +1907,12 @@ function docMeta(l: LinkInfo, ctx: string): DocMeta {
     .replace(/\b\d{1,2}\/\d{1,2}\/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const named = namedDocument(l.text) ?? (GENERIC_BUTTON.test(title) ? cardDocument(l.context) : null);
+  const named = namedDocument(l.text) ?? (GENERIC_BUTTON.test(title) ? cardDocument(l.docCard || l.context) : null);
   if (named && GENERIC_BUTTON.test(title)) title = named;
   else if (GENERIC_BUTTON.test(title) && l.context) {
     title = `${l.context.replace(shown, "").replace(/\s+/g, " ").trim().slice(0, 60)} ${title}`.trim();
   }
-  return { label: makeLabel(l, ctx), policy: ctx, title: title.slice(0, 80) || "Document", posted: findDate(l.text) ?? findDate(l.context) };
+  return { label: makeLabel(l, ctx), policy: ctx, title: title.slice(0, 80) || "Document", posted: findDate(l.text) ?? findDate(l.docCard ?? "") ?? findDate(l.context) };
 }
 
 /** A portal's own message that it failed to load a policy's documents. */
@@ -1861,9 +1934,9 @@ const GENERIC_BUTTON = /^(view|download|open|pdf|view pdf|download pdf|print|vie
 function makeLabel(l: LinkInfo, ctx = ""): string {
   // Prefer the words on screen; screen-reader text often repeats them.
   let text = (l.shown || l.text).replace(/\s+/g, " ").trim();
-  const named = namedDocument(l.text) ?? (GENERIC_BUTTON.test(text) ? cardDocument(l.context) : null);
+  const named = namedDocument(l.text) ?? (GENERIC_BUTTON.test(text) ? cardDocument(l.docCard || l.context) : null);
   if (named && GENERIC_BUTTON.test(text)) {
-    const d = findDate(l.text) ?? findDate(l.context);
+    const d = findDate(l.text) ?? findDate(l.docCard ?? "") ?? findDate(l.context);
     return [ctx, [named, d].filter(Boolean).join(" ")].filter(Boolean).join(" - ");
   }
   // The posted date may be only in the screen-reader text; keep it in the name.

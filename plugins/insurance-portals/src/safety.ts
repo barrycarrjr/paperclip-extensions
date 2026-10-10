@@ -48,6 +48,11 @@ export function isPolicySelector(label: string): boolean {
   return /^[<‹\s]*(?:select|choose|pick) (?:another|a different|other|a|your)? ?polic(?:y|ies)$/i.test(label.trim());
 }
 
+/** A short entry naming one policy and nothing else ("Policy #H 0000001", "Policy #PCL0000001"). */
+export function isPolicyListEntry(label: string): boolean {
+  return /^policy\s*#?\s*[A-Z]{0,4}\s*\d{5,}$/i.test(label.trim().replace(/\s+/g, " "));
+}
+
 /** Words that mark an older document we were not asked for. */
 const NOT_CURRENT = /\b(prior|previous|expired|archived?|history|historical|cancell?ed|old)\b/i;
 

@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Browser, findChrome } from "./cdp.js";
-import { pagePolicy, runCarrier, type CarrierProfile } from "./portal.js";
+import { pagePolicy, runCarrier, withoutAccounts, type CarrierProfile } from "./portal.js";
 
 function pdf(tag: string): Buffer {
   return Buffer.from(`%PDF-1.4\n% ${tag}\n${"x".repeat(200)}\n%%EOF\n`, "latin1");
@@ -1496,4 +1496,78 @@ test("Selective policy page: closes the survey pop-up (never answers it), opens 
     await browser.close();
     server.close();
   }
+});
+
+test("Selective policy list: every entry, current and expired, its Renewal card's View saved, bill box never used", { skip: !chrome, timeout: 300_000 }, async () => {
+  // Made-up policies; the second H entry is the expired term.
+  const terms = [
+    { id: 0, label: "Policy #H 0000001", kind: "Homeowners", from: "3/30/2026", file: "h26" },
+    { id: 1, label: "Policy #S 0000002", kind: "Commercial Package", from: "3/30/2026", file: "s26" },
+    { id: 2, label: "Policy #H 0000001", kind: "Homeowners", from: "3/30/2025", file: "h25" },
+  ];
+  const hits: string[] = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname.startsWith("/trap/")) {
+      hits.push(url.pathname);
+      return html("trap");
+    }
+    if (url.pathname === "/login") return html(`<form action="/home" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/home") {
+      return html(`<nav><a href="#" onclick="return false">ID CARDS</a></nav>
+        <aside><h3>Active Policies</h3>${terms.slice(0, 2).map((t) => `<a href="#" data-t="${t.id}">${t.label}</a>`).join("")}
+        <h3>Expired Policies</h3>${terms.slice(2).map((t) => `<a href="#" data-t="${t.id}">${t.label}</a>`).join("")}</aside>
+        <main id="m"><h2>MY POLICIES</h2><p>Pick a policy</p></main>
+        <script>
+          const T = ${JSON.stringify(terms)};
+          document.querySelectorAll('[data-t]').forEach((a) => a.onclick = (ev) => { ev.preventDefault(); setTimeout(() => show(T[+a.dataset.t]), 600); });
+          function show(t) {
+            document.getElementById('m').innerHTML = '<h1>' + t.kind.toUpperCase() + ' ' + t.label.replace('Policy #', '') + '</h1><p>Other Actions</p><a href="/trap/certificate">Create Certificate of Insurance</a>' +
+              '<h2>MY DOCUMENTS</h2><section class="docs-card"><div><span>Renewal</span> <a href="#" id="v">View</a></div><div>Effective</div><div>' + t.from + '</div><div>Premium</div><div>$1.00</div>' +
+              '<h2>ASSOCIATED BILL ACCOUNT</h2><a href="/trap/bill">Bill Account #000-000-001</a><p>You have no pending bills.</p><button onclick="location=\\'/trap/pay\\'">Pay</button></section>';
+            document.getElementById('v').onclick = (ev) => {
+              ev.preventDefault();
+              fetch('/docs/' + t.file + '.pdf').then((r) => r.blob()).then((b) => window.open(URL.createObjectURL(new Blob([b], { type: 'application/pdf' }))));
+            };
+          }
+        </script>`);
+    }
+    const m = /^\/docs\/(\w+)\.pdf$/.exec(url.pathname);
+    if (m) {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf(`sel-${m[1]}`));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "selective", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 280_000, maxDocuments: 20, debugDir: null, log: () => undefined },
+    );
+    assert.deepEqual(hits, [], `trap pages opened: ${hits.join(", ")}`);
+    const got = result.documents.map((d) => `${d.policy} | ${d.title} | ${d.posted} | ${d.bytes.toString("latin1").split("\n")[1]}`).sort();
+    assert.deepEqual(got, [
+      "Policy 0000001 | Renewal | 2025-03-30 | % sel-h25",
+      "Policy 0000001 | Renewal | 2026-03-30 | % sel-h26",
+      "Policy 0000002 | Renewal | 2026-03-30 | % sel-s26",
+    ]);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test("bill account numbers are never taken for policy numbers", () => {
+  assert.equal(withoutAccounts("Renewal View Bill Account #000-000-001 Pay").includes("000-000-001"), false);
+  assert.equal(withoutAccounts("BILL ACCT. NO.: 0000000001 H 0000001").includes("0000000001"), false);
+  assert.equal(withoutAccounts("Billing account 70000000001 12 TEST AVE").includes("70000000001"), false);
+  assert.ok(withoutAccounts("Policy #H 0000001 Bill Account #000-000-001").includes("0000001"));
 });
