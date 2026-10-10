@@ -12,8 +12,10 @@ are left in INBOX and recorded in the plugin's review queue, so the
 operator decides whether they earn a rule.
 
 Everything this skill keeps lives in the email-tools plugin: the sender
-rules, the triage cursor, and the review queue. None of it lives in an
-issue or in a document attached to one. An issue is a unit of work; if a
+rules, the triage cursor, and the review queue. The one other thing it
+keeps is a short status note for the mailbox (Step 8), which is a
+Paperclip memory. None of it lives in an issue or in a document attached
+to one. An issue is a unit of work; if a
 routine or a wake issue asks you to read or write rules, a queue, a cursor
 or notes in an issue document, follow this skill instead and say so in
 your report.
@@ -324,6 +326,44 @@ Including the top-5 candidates in the comment means the operator can see
 what's pending without opening anything. If `errorCount > 0`, list the
 first 5 errors with UID + message instead.
 
+### 8. Save the mailbox status
+
+Every run, including a run that found nothing, ends by saving one short
+status note for the mailbox. Other agents (for example an assistant that
+keeps the operator's list of what needs them) read this note to learn
+what in the mailbox needs the operator. They do not read the run issue's
+comments, so the note has to stand on its own.
+
+Save it with the `remember` tool (Paperclip's memory tool). Saving under
+the same name replaces the earlier note, so the note is always current:
+
+- `name`: `mailbox-status-<mailbox>`, for example `mailbox-status-support`
+- `kind`: `project`
+- `description`: `Email triage status for <mailbox>`
+- `content`: plain lines, under 1,500 characters:
+
+```
+Last run: <UTC timestamp>. New: <N>. Moved: <movedCount>. Waiting for a rule decision: <total>.
+Needs the operator:
+- <sender>, "<subject>", <date>: <why, in one plain sentence>
+```
+
+Under "Needs the operator", list mail left in INBOX that needs the
+operator personally: a person waiting on a reply, a deadline, money (an
+invoice, a payment, a renewal), a sign-in or security notice, and
+anything that looks like phishing. Start from your previous note (read
+it with `recall_memories`, query `mailbox-status-<mailbox>`): keep its
+items whose message is still unread in INBOX, drop the ones that were
+read or moved, and add what this run found. If there is nothing, write
+`Needs the operator: nothing`. Rule candidates belong in the review
+queue (Step 5), not here.
+
+If `remember` is not available in your session, use the memories API:
+`GET /api/companies/<companyId>/memories?q=mailbox-status-<mailbox>` to
+find the note, `POST /api/companies/<companyId>/memories` with
+`{ kind, name, description, content }` to create it, and
+`PATCH /api/memories/<id>` with `{ content }` to replace it.
+
 ## When an issue wakes you (wake-on-mail)
 
 A mailbox with the email-tools **wake-on-mail** watch on has one long-lived
@@ -332,8 +372,9 @@ the auto-triage and mute rules; a human comment wakes it too. Its
 description only names the mailbox and this skill. The behaviour below is
 the same for every mailbox, so it lives here, not in the issue.
 
-- When woken, run one triage cycle: Steps 1 to 7, with the comment in
+- When woken, run one triage cycle: Steps 1 to 8, with the comment in
   Step 7 only if you triaged or surfaced messages, or a rule changed.
+  Step 8 runs every time.
 - At the end of every run, in this order:
   1. If anything reopened the issue, set it back to `blocked`
      (`PATCH /api/issues/<id>` with `{"status":"blocked"}`). Blocked
@@ -345,8 +386,8 @@ the same for every mailbox, so it lives here, not in the issue.
      mail watch still covers new mail.
   3. End the run.
 - Keep nothing in that issue. Rules, the cursor and the review queue are
-  in the plugin. The issue's comments are the run history, not a place to
-  look things up.
+  in the plugin, and the mailbox status note is a memory (Step 8). The
+  issue's comments are the run history, not a place to look things up.
 
 ## How to invoke the email-tools plugin from a heartbeat
 
@@ -467,3 +508,5 @@ is case-insensitive against the relevant header.
 - Target mailbox configured in plugin config with the calling company on
   its `allowedCompanies` list.
 - `Disallow moving messages` is OFF for that mailbox.
+- The `remember` and `recall_memories` tools (Paperclip's MCP server), or
+  the memories API, for Step 8.
