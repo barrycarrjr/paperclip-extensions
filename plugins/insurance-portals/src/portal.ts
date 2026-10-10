@@ -107,6 +107,8 @@ export interface RunResult {
   identifiers: string[];
   /** Documents not downloaded because a file for them is already saved. */
   skipped: Array<{ policy: string; title: string; posted: string | null; label: string; existingName: string }>;
+  /** Documents listed on a page whose PDF never arrived (the page stayed put). */
+  missed: Array<{ policy: string; title: string; posted: string | null }>;
   notes: string[];
 }
 
@@ -1146,6 +1148,7 @@ async function runCarrierInner(
 
   const documents: CapturedPdf[] = [];
   const skipped: RunResult["skipped"] = [];
+  const missed: RunResult["missed"] = [];
   const identifiers = new Set<string>();
   const seen = new Set<string>();
   const addPdf = (meta: DocMeta, bytes: Buffer) => {
@@ -1349,6 +1352,9 @@ async function runCarrierInner(
       // Close tabs the click opened, and return to where we were.
       await closeOtherTabs();
       const now = await page.url();
+      // Listed as a document, clicked, and nothing came and the page stayed:
+      // remember it so the next run can say whether it came through.
+      if (got === 0 && now === before) missed.push({ policy: meta.policy, title: meta.title, posted: meta.posted });
       if (now !== before) {
         if (got === 0) enqueue(now, policy);
         await page.goto(before).catch(() => undefined);
@@ -1891,7 +1897,7 @@ async function runCarrierInner(
     await writeFile(join(opts.debugDir, "pdf-capture-log.json"), JSON.stringify(captureLog, null, 2)).catch(() => undefined);
     await writeFile(join(opts.debugDir, "nav-log.json"), JSON.stringify(navEvents, null, 2)).catch(() => undefined);
   }
-  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, identifiers: [...identifiers], notes };
+  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, missed, identifiers: [...identifiers], notes };
 }
 
 /** `text` with bill and billing account numbers taken out: they are never policy numbers. */

@@ -1583,3 +1583,39 @@ test("bill account numbers are never taken for policy numbers", () => {
   assert.equal(withoutAccounts("Billing account 70000000001 12 TEST AVE").includes("70000000001"), false);
   assert.ok(withoutAccounts("Policy #H 0000001 Bill Account #000-000-001").includes("0000001"));
 });
+
+test("a listed document whose PDF never arrives is reported as missed, not silently dropped", { skip: !chrome, timeout: 120_000 }, async () => {
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") return html(`<form action="/docs" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/docs") {
+      return html(`<header><a href="/docs">Home</a><a href="/docs">My Policies</a><button>Log out</button></header><main><h1>Policy documents</h1><p>Policy 0000001</p>
+        <div class="row"><button onclick="window.open('/pdf/dec.pdf')">Declarations 03/30/2026</button></div>
+        <div class="row"><button onclick="/* the portal fails to build it */ void 0">Declarations 03/30/2025</button></div></main>`);
+    }
+    if (url.pathname === "/pdf/dec.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("dec-2026"));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 100_000, maxDocuments: 10, debugDir: null, log: () => undefined },
+    );
+    assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% dec-2026"]);
+    assert.deepEqual(result.missed.map((m) => m.posted), ["2025-03-30"]);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});

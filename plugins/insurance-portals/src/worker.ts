@@ -19,6 +19,7 @@ import { assignTerms, existingFileFor, fileNameFor, findRevision, findTerm, term
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { policyNumberIn, policyNamedInPdf, splitDrivePath } from "./safety.js";
+import { asHistory, describeHealth, recordRun, type HealthReport } from "./history.js";
 
 interface InstanceConfig {
   allowedCompanies?: string[];
@@ -45,7 +46,48 @@ interface InstanceConfig {
   maxDocuments?: number;
   defaultTerms?: "all" | "current";
   privateListFile?: string;
+  enableForemost?: boolean;
+  enableLibertyMutual?: boolean;
+  enableSelective?: boolean;
 }
+
+/** Each carrier's on/off switch in the settings. Missing means on. */
+const ENABLE_FIELDS: Record<CarrierKey, keyof InstanceConfig> = {
+  foremost: "enableForemost",
+  liberty_mutual: "enableLibertyMutual",
+  selective: "enableSelective",
+};
+const carrierOn = (cfg: InstanceConfig, key: CarrierKey) => cfg[ENABLE_FIELDS[key]] !== false;
+
+/** Where a carrier's run record is kept: per company, per carrier. */
+const historyKey = (companyId: string, carrier: CarrierKey) => ({
+  scopeKind: "company" as const,
+  scopeId: companyId,
+  namespace: carrier,
+  stateKey: "run-history",
+});
+
+/** Add this run to the carrier's record. The record is a help, never a reason to fail a run. */
+async function noteRun(
+  ctx: PluginContext,
+  companyId: string,
+  carrier: CarrierKey,
+  carrierName: string,
+  run: Parameters<typeof recordRun>[1],
+): Promise<HealthReport | null> {
+  try {
+    const prev = asHistory(await ctx.state.get(historyKey(companyId, carrier)));
+    const { history, report } = recordRun(prev, run, carrierName);
+    await ctx.state.set(historyKey(companyId, carrier), history);
+    return report;
+  } catch (err) {
+    ctx.logger.warn("insurance-portals: could not update the run record", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/** Errors that mean the run never got past sign-in. */
+const SIGN_IN_FAILURE = /\[E(LOGIN_[A-Z_]+|CODE_[A-Z_]+|CAPTCHA|MAIL_AUTH_FAILED)\]/;
 
 const CREDENTIAL_FIELDS: Record<CarrierKey, [keyof InstanceConfig, keyof InstanceConfig]> = {
   foremost: ["foremostUsername", "foremostPassword"],
@@ -134,6 +176,9 @@ export async function fetchDocuments(
   const carrierKey = String(params.carrier ?? "") as CarrierKey;
   const carrier = CARRIERS[carrierKey];
   if (!carrier) return { error: "[EINVALID_INPUT] carrier must be one of: foremost, liberty_mutual, selective." };
+  if (!carrierOn(cfg, carrierKey)) {
+    return { error: `[ECARRIER_OFF] ${carrier.name} is turned off in the Insurance Portals plugin settings.` };
+  }
   const destination = typeof params.destination === "string" ? params.destination.trim() : "";
   if (!destination) return { error: "[EINVALID_INPUT] destination (a Drive folder path) is required." };
   try {
@@ -182,7 +227,14 @@ export async function fetchDocuments(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(debugDir ? `${message} (debug screenshots: ${debugDir})` : message);
+    const report = await noteRun(ctx, companyId, carrierKey, carrier.name, {
+      at: new Date().toISOString(),
+      outcome: SIGN_IN_FAILURE.test(message) ? "signin_failed" : "error",
+      got: [],
+      missed: [],
+    });
+    const alert = report?.alert ? ` ALERT: ${report.alert}` : "";
+    throw new Error(`${message}${alert}${debugDir ? ` (debug screenshots: ${debugDir})` : ""}`);
   } finally {
     await browser.close();
   }
@@ -264,6 +316,16 @@ export async function fetchDocuments(
     }
   }
 
+  // The carrier's run record: what is still missing, and whether it looks broken.
+  const got = read.map((d) => ({ policy: d.policy, title: d.title, posted: d.posted }));
+  const health = await noteRun(ctx, companyId, carrierKey, carrier.name, {
+    at: new Date().toISOString(),
+    outcome: "ok",
+    got,
+    missed: result.missed,
+  });
+  if (health) result.notes.push(...describeHealth(health));
+
   const saved = files.filter((f) => f.status === "saved").length;
   await ctx.activity
     .log({
@@ -293,6 +355,7 @@ export async function fetchDocuments(
       blockedWriteRequests: result.blockedRequests,
       blockedPaths: result.blockedPaths,
       notes: result.notes,
+      health: health ?? null,
       debugDir,
       seconds: Math.round((Date.now() - started) / 1000),
     },
@@ -402,14 +465,18 @@ const plugin = definePlugin({
       for (const key of Object.keys(CREDENTIAL_FIELDS) as CarrierKey[]) {
         const [u, p] = CREDENTIAL_FIELDS[key];
         const name = CARRIERS[key].name;
+        if (!carrierOn(cfg, key)) {
+          checks.push({ name, passed: true, message: "turned off in the settings (skipped)" });
+          continue;
+        }
         if (!cfg[u] && !cfg[p]) {
-          checks.push({ name, passed: true, message: "not configured (skipped)" });
+          checks.push({ name, passed: true, message: "on, but not configured (skipped)" });
           continue;
         }
         await check(name, async () => {
           await need(ctx, cfg[u] as string | undefined, `${name} user name`);
           await need(ctx, cfg[p] as string | undefined, `${name} password`);
-          return "user name and password secrets readable";
+          return "on; user name and password secrets readable";
         });
       }
       await check("Code mailbox", async () => {

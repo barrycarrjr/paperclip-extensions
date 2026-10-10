@@ -8,6 +8,11 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.23**: On/off switch per carrier, a "still missing" list kept between runs, and a plain alert when a carrier looks broken.
+  - Three settings, Foremost on / Liberty Mutual on / Selective on, all on by default. A carrier switched off is skipped by `check-setup` and refused with `ECARRIER_OFF`; nothing saved for it is removed.
+  - Documents listed on a page whose PDF never arrived are remembered (per company and carrier). The next result says which came through and which are still missing, with the number of runs in a row.
+  - A failed sign-in, an error, or two runs in a row that find no documents put an `ALERT:` line in the result and `data.health`, so a routine can open a task.
+  - Needs two more permissions: `plugin.state.read` and `plugin.state.write`.
 - **v0.6.22**: Endorsements and policy changes carry the form's revision code in their file name ("Endorsement 01D (posted 2024-03-30)"), so two issued the same day are told apart instead of one getting "(2)". A file saved before, with or without the code, still counts as saved.
 - **v0.6.21**: A document card's "View" is waited on for up to 35 seconds from the start (Selective builds the PDF in the page first). 0.6.20 pressed it once only but kept the 15-second wait, so a slow PDF was missed; one rehearsal failed and 0.6.20 should not be used.
 - **v0.6.20**: Selective's earlier terms and no second copies.
@@ -144,6 +149,7 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 | Field | Kind |
 |---|---|
 | Allowed companies | company picker (empty = nobody) |
+| Foremost on / Liberty Mutual on / Selective on | booleans, default on. Off = that carrier is skipped and a request for it is refused (`ECARRIER_OFF`); its passwords and browser sign-in are kept |
 | Foremost / Liberty Mutual / Selective user name and password (6 fields) | secret refs |
 | Code mailbox address | text |
 | Code mailbox app password | secret ref |
@@ -162,6 +168,8 @@ Drives the locally installed Google Chrome over the DevTools pipe (`--remote-deb
 
 All secrets must belong to the company that calls the tool.
 
+**Run record.** For each company and carrier the plugin keeps a short record of its last ten runs and of documents it saw listed but could not download (plugin state, inside Paperclip). Each result then says which earlier misses came through, which are still missing and after how many runs, and starts with `ALERT:` when sign-in fails or when two runs in a row find no documents at all (documents already saved count as found). The same is in the result's `data.health`.
+
 Operator actions `start-fetch` / `fetch-status` run the same fetch without an agent (see Recent changes). An operator action, `check-setup` (`POST /api/plugins/:id/actions/check-setup`), starts Chrome, reads each configured secret, signs in to the mailbox read-only, and opens the save location (local folder, or a Drive sign-in). It does not sign in to any carrier.
 
 ## Error codes
@@ -169,6 +177,7 @@ Operator actions `start-fetch` / `fetch-status` run the same fetch without an ag
 | Code | Meaning |
 |---|---|
 | `ECOMPANY_NOT_ALLOWED` | Calling company is not in Allowed companies. |
+| `ECARRIER_OFF` | That carrier is turned off in the settings. |
 | `EINVALID_INPUT` / `EINVALID_DESTINATION` | Bad carrier or Drive path. |
 | `ECONFIG_MISSING` / `ESECRET_UNREADABLE` | A setting is blank, or its secret is missing or belongs to another company. |
 | `ECHROME_NOT_FOUND` | Chrome not found. |

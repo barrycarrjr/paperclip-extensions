@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.6.22";
+const PLUGIN_VERSION = "0.6.23";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -105,6 +105,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "http.outbound",
     "activity.log.write",
     "telemetry.track",
+    "plugin.state.read",
+    "plugin.state.write",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
@@ -114,6 +116,9 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     additionalProperties: false,
     propertyOrder: [
       "allowedCompanies",
+      "enableForemost",
+      "enableLibertyMutual",
+      "enableSelective",
       "foremostUsername",
       "foremostPassword",
       "libertyMutualUsername",
@@ -192,6 +197,24 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         title: "Local folder (optional)",
         description:
           "Folder on this computer that the destination path is created under. Leave blank to use the Google Drive for desktop 'My Drive' folder (found automatically when exactly one Google account is signed in), so files sync to Drive. '~' means your home folder.",
+      },
+      enableForemost: {
+        type: "boolean",
+        title: "Foremost on",
+        default: true,
+        description: "Off = Foremost is skipped and a request for it is refused. Its saved passwords and browser sign-in are kept.",
+      },
+      enableLibertyMutual: {
+        type: "boolean",
+        title: "Liberty Mutual on",
+        default: true,
+        description: "Off = Liberty Mutual is skipped and a request for it is refused. Its saved passwords and browser sign-in are kept.",
+      },
+      enableSelective: {
+        type: "boolean",
+        title: "Selective on",
+        default: true,
+        description: "Off = Selective is skipped and a request for it is refused. Its saved passwords and browser sign-in are kept.",
       },
       chromePath: {
         type: "string",
