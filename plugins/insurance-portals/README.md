@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.24**: A document counts as missing only when no PDF arrived at all. On the first live run with 0.6.23, Liberty Mutual's "Welcome packet" and "Declaration" buttons returned the same file as "Proof of insurance" (already kept) and were wrongly listed as missing. The run record starts afresh (records from 0.6.23 are not read).
 - **v0.6.23**: On/off switch per carrier, a "still missing" list kept between runs, and a plain alert when a carrier looks broken.
   - Three settings, Foremost on / Liberty Mutual on / Selective on, all on by default. A carrier switched off is skipped by `check-setup` and refused with `ECARRIER_OFF`; nothing saved for it is removed.
   - Documents listed on a page whose PDF never arrived are remembered (per company and carrier). The next result says which came through and which are still missing, with the number of runs in a row.

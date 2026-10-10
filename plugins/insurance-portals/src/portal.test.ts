@@ -1595,7 +1595,8 @@ test("a listed document whose PDF never arrives is reported as missed, not silen
     if (url.pathname === "/docs") {
       return html(`<header><a href="/docs">Home</a><a href="/docs">My Policies</a><button>Log out</button></header><main><h1>Policy documents</h1><p>Policy 0000001</p>
         <div class="row"><button onclick="window.open('/pdf/dec.pdf')">Declarations 03/30/2026</button></div>
-        <div class="row"><button onclick="/* the portal fails to build it */ void 0">Declarations 03/30/2025</button></div></main>`);
+        <div class="row"><button onclick="/* the portal fails to build it */ void 0">Declarations 03/30/2025</button></div>
+        <div class="row"><button onclick="window.open('/pdf/dec.pdf')">Welcome packet 03/30/2026</button></div></main>`);
     }
     if (url.pathname === "/pdf/dec.pdf") {
       res.writeHead(200, { "content-type": "application/pdf" });
@@ -1613,6 +1614,7 @@ test("a listed document whose PDF never arrives is reported as missed, not silen
       { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + 100_000, maxDocuments: 10, debugDir: null, log: () => undefined },
     );
     assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% dec-2026"]);
+    // The welcome packet is the same file as the declarations: a repeat, not missing.
     assert.deepEqual(result.missed.map((m) => m.posted), ["2025-03-30"]);
   } finally {
     await browser.close();

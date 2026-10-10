@@ -64,7 +64,8 @@ const historyKey = (companyId: string, carrier: CarrierKey) => ({
   scopeKind: "company" as const,
   scopeId: companyId,
   namespace: carrier,
-  stateKey: "run-history",
+  // "-2": records from 0.6.23 counted repeat copies as missing; they are not read.
+  stateKey: "run-history-2",
 });
 
 /** Add this run to the carrier's record. The record is a help, never a reason to fail a run. */

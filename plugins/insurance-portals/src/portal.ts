@@ -1354,7 +1354,10 @@ async function runCarrierInner(
       const now = await page.url();
       // Listed as a document, clicked, and nothing came and the page stayed:
       // remember it so the next run can say whether it came through.
-      if (got === 0 && now === before) missed.push({ policy: meta.policy, title: meta.title, posted: meta.posted });
+      // A PDF that arrived but was a copy of one already kept (Liberty
+      // Mutual's "Welcome packet" and "Proof of insurance" can be the same
+      // file) is not missing.
+      if (got === 0 && now === before && !arrived()) missed.push({ policy: meta.policy, title: meta.title, posted: meta.posted });
       if (now !== before) {
         if (got === 0) enqueue(now, policy);
         await page.goto(before).catch(() => undefined);
