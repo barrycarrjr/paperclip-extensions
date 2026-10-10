@@ -1065,7 +1065,7 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
         <div role="switch" aria-checked="false" style="display:inline-block;width:120px;height:24px;cursor:pointer" onclick="const covered=document.getElementById('pop').style.display==='block'||document.getElementById('codes').style.display==='block'; this.outerHTML=this.outerHTML; if(covered){document.getElementById('pop').style.display='none';document.getElementById('codes').style.display='none';fetch('/reset',{method:'POST'})}">Remember Me</div>
         <input type="button" id="frmLogin_btnPWAReportAClaim" value="Report a Claim" onclick="fetch('/claim',{method:'POST'})">
         <div id="pop" style="display:none;position:fixed;inset:0;background:#fff"><p>For your security we need to verify your identity. How should we send your code?</p>
-          <input type="button" id="frmLogin_btnSendEmail" value="Send Email" onclick="fetch('/send-email',{method:'POST'});document.getElementById('codes').style.display='block';document.getElementById('pop').style.display='none'">
+          <input type="button" id="frmLogin_btnSendEmail" value="Send Email" onclick="fetch('/send-email',{method:'POST'});setTimeout(()=>{document.getElementById('codes').style.display='block';document.getElementById('pop').style.display='none'},2500)">
           <input type="button" id="frmLogin_btnSendText" value="Send Text" onclick="fetch('/send-text',{method:'POST'})"></div>
         <div id="codes" style="display:none;position:fixed;inset:0;background:#fff"><p>Enter the code we emailed you.</p>
           <input id="frmLogin_txtCode1" maxlength="1"><input id="frmLogin_txtCode2" maxlength="1"><input id="frmLogin_txtCode3" maxlength="1"><input id="frmLogin_txtCode4" maxlength="1">
@@ -1104,6 +1104,8 @@ test("Selective rehearsal: real login element names, Send Email pop-up, 4 one-di
       { username: "u", password: "p", getCode: async () => "5521", deadline: Date.now() + 230_000, maxDocuments: 20, debugDir: process.env.PC_DEBUG_DIR ?? null, log: () => undefined },
     );
     assert.deepEqual(result.documents.map((d) => d.bytes.toString("latin1").split("\n")[1]), ["% selective-policy"], `hits: ${hits.join(", ")}`);
+    // The pop-up stays up for a moment after "Send Email": still one code, not two.
+    assert.equal(hits.filter((h) => h === "POST /send-email").length, 1, `hits: ${hits.join(", ")}`);
     assert.ok(hits.includes("POST /send-email") && !hits.includes("POST /send-text"), "email, never text");
     assert.ok(!hits.includes("POST /claim") && !hits.includes("POST /pay"), "no claim, no payment");
     assert.ok(!hits.includes("POST /cookie-settings") && !hits.includes("POST /cookie-accept"), "cookie banner left alone");

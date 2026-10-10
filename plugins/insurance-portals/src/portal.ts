@@ -172,6 +172,8 @@ interface LoginScan {
   password: string | null;
   codeInputs: string[];
   emailChoice: string | null;
+  /** The email choice is itself a send button ("Send Email"): one click sends the code. */
+  emailChoiceSends: boolean;
   sendCode: string | null;
   submit: string | null;
   cookieReject: string | null;
@@ -309,6 +311,7 @@ export function scanLogin(): LoginScan {
 
   let emailChoice: Element | null = null;
   let sendCode: Element | null = null;
+  let plainEmail: Element | undefined;
   {
     const pageText = document.body.innerText.toLowerCase();
     // A button that plainly says "Send Email" is the choice itself, whatever
@@ -318,7 +321,7 @@ export function scanLogin(): LoginScan {
     // ("Email" next to an agent's phone number is a mailto: link, not a choice).
     const codeTalk = /(code|verif|one.?time|confirm (?:it'?s|your identity)|security check|two.?step|multi.?factor)/.test(pageText);
     const isMailLink = (c: Element) => c.tagName === "A" && /^mailto:/i.test((c as HTMLAnchorElement).getAttribute("href") ?? "");
-    const plainEmail = codeTalk
+    plainEmail = codeTalk
       ? clickables.find((c) => !isMailLink(c) && /^(send )?(an )?e-?mail( me)?( (a|the|my) code)?$/i.test(label(c)))
       : undefined;
     // Reading the page for "code"/"verify" wording only once the sign-in
@@ -413,6 +416,14 @@ export function scanLogin(): LoginScan {
     password: password ? mark(password) : null,
     codeInputs: codeInputs.map(mark),
     emailChoice: emailChoice ? mark(emailChoice) : null,
+    // Only a button whose words say it sends ("Send Email", "Email me a
+    // code"); an "Email" option (radio, label) still needs its send button.
+    emailChoiceSends:
+      !!emailChoice &&
+      emailChoice.tagName !== "LABEL" &&
+      !["radio", "checkbox"].includes((emailChoice as HTMLInputElement).type ?? "") &&
+      emailChoice.getAttribute("role") !== "radio" &&
+      /^(send\b|e-?mail me\b)/i.test(label(emailChoice)),
     sendCode: sendCode ? mark(sendCode) : null,
     submit: submitEl ? mark(submitEl) : null,
     cookieReject: cookieReject && visible(cookieReject) ? mark(cookieReject) : null,
@@ -952,9 +963,13 @@ async function runCarrierInner(
       await snap(page, "choose-email");
       await page.clickMark(s.emailChoice);
       codeRequestedAt = Date.now();
+      // "Send Email" (Selective) sends the code itself; the same button can
+      // still be on screen a moment later and must not be pressed again,
+      // or a second code is sent.
+      if (s.emailChoiceSends) sendClicked = true;
       await sleep(1200);
-      const after = await page.evaluate<LoginScan>(scanLogin).catch(() => null);
-      if (after && after.codeInputs.length === 0 && after.sendCode) {
+      const after = sendClicked ? null : await page.evaluate<LoginScan>(scanLogin).catch(() => null);
+      if (after && after.codeInputs.length === 0 && after.sendCode && after.sendCode !== s.emailChoice) {
         sendClicked = true;
         await page.clickMark(after.sendCode);
         codeRequestedAt = Date.now();

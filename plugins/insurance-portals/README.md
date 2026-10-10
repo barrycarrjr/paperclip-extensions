@@ -8,6 +8,7 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.17**: Selective's login code is requested once, not twice. Its "Send Email" button both picks email and sends the code; the pop-up stays on screen for a moment afterwards, and the same button was pressed again as the "send" step, so two codes arrived a second apart. A button whose words say it sends is now pressed once only.
 - **v0.6.16**: From the first Selective run that saved a document.
   - "Create", "Generate" and "Order" are never clicked, even next to a document's name. The run before this clicked "Create Certificate of Insurance" (it was taken for the document "certificate of insurance"); nothing followed on screen and no request was sent beyond reading.
   - A page with a "My Documents" section anywhere on it counts as a documents page (Selective puts it under a long list of policies).
