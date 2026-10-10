@@ -203,8 +203,8 @@ packages:
     os: [win32]
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-uN4GSKqoBWqgf7LA8QweLdqF1Q9NaYDhNykPEvqNldh/6h/EcVka4rAtN7as01KepgzcsPJADqf/n1XDqz3apQ==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
-    version: 1.0.0-vendor.0f984983682a
+    resolution: {integrity: sha512-4wyxoIezVYM5lMJj7ZnUfR8K+9M6u3X2K9tvUnyyayhlJEPqzT0bGExZKethfEfS9OXe8pqGF2dok+OUbi9CmA==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    version: 1.0.0-vendor.df620f70fa5b
     hasBin: true
     peerDependencies:
       react: '>=18'

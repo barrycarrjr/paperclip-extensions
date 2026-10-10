@@ -128,6 +128,11 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 
 ## Recent changes
 
+- **v0.1.31** - A snapshot now gets 120 seconds to come back from the host instead of 30. The
+  plugin toolkit gave every call to Paperclip 30 seconds, an instance's snapshot outgrew that,
+  and the 2026-10-09 nightly backup failed on it (HQ-486). Rebuilt with Paperclip's plugin
+  toolkit from master, which gives `system.createSnapshot` its own 120-second limit.
+
 - **v0.1.30** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.29** — The Backups page is readable in dark mode, and the Overview card reports its
