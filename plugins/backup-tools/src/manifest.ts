@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "backup-tools";
-const PLUGIN_VERSION = "0.1.31";
+const PLUGIN_VERSION = "0.1.32";
 
 // ---------------------------------------------------------------------------
 // instanceConfigSchema sub-shapes
@@ -483,7 +483,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       name: "backup_run_now",
       displayName: "Run backup now",
       description:
-        "Trigger an on-demand backup. Optionally target one configured destination by id; default fan-out to all enabled destinations. Mutation gated by 'Allow agent-triggered on-demand backups' (default off). Returns { backupId, destinations: [...] }. Idempotency-key honored.",
+        "Trigger an on-demand backup. Optionally target one configured destination by id; default fan-out to all enabled destinations. Mutation gated by 'Allow agent-triggered on-demand backups' (default off). Returns as soon as the backup starts, with { backupId, status: 'running' }; follow it with backup_get_status. While a backup is running it returns that one instead of starting another, and refuses if you asked for a destination it is not using.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -493,8 +493,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           },
           idempotencyKey: {
             type: "string",
-            description:
-              "Optional. Subsequent calls with the same key short-circuit to the existing backup record (and don't fan out twice).",
+            description: "Not used. Repeat calls are not matched up by this key.",
           },
         },
       },
@@ -739,7 +738,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         default: 60,
         title: "Max run minutes",
         description:
-          "Backups that take longer than this are aborted and partial uploads cleaned up on best-effort. Increase for very large instances.",
+          "A backup still running after this many minutes is marked failed, so it stops holding up Run now and the scheduled backups. Its work is not stopped. Increase for very large instances.",
       },
       mutationsEnabled: {
         type: "boolean",

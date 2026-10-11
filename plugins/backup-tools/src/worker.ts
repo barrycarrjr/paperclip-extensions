@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, randomBytes } from "node:crypto";
 import { assertCompanyAccess, isCompanyAllowed } from "./companyAccess.js";
+import { createBackupQueue, type BackupTurn, type BackupTurnHooks } from "./backupQueue.js";
 import {
   CHUNK_SIZE_BYTES,
   NONCE_LENGTH,
@@ -406,9 +407,15 @@ async function runBackup(
   scheduleId: string | null,
   destinationIds: string[],
   triggeredBy: { actorId?: string; agentId?: string },
+  /** The backup's turn in the queue (see queueBackup), which every backup takes. */
+  turn?: BackupTurnHooks,
 ): Promise<{ backupId: string; status: "succeeded" | "failed" | "partial"; sizeBytes: number }> {
   const cfg = (await ctx.config.get()) as InstanceConfig;
   const passphrase = await resolveEncryptionPassphrase(ctx, cfg);
+  // False once the deadline has given up on this backup and recorded it, so
+  // a late finish does not write over that.
+  let mayRecord: boolean | undefined;
+  const claimOutcome = () => (mayRecord ??= turn ? turn.claimOutcome() : true);
 
   const ns = ctx.db.namespace;
   const archiveUuid = generateArchiveUuid();
@@ -420,6 +427,7 @@ async function runBackup(
      VALUES ($1, $2, $3, $4, 'running', $5, $6, $7)`,
     [backupId, archiveUuid, cadence, scheduleId, startedAt.toISOString(), triggeredBy.actorId ?? null, triggeredBy.agentId ?? null],
   );
+  turn?.started(backupId);
 
   let archiveFilePath: string | null = null;
   let envelope: ArchiveEnvelope | null = null;
@@ -495,8 +503,11 @@ async function runBackup(
     const finalStatus: "succeeded" | "failed" | "partial" =
       successes === 0 ? "failed" : successes < destinationIds.length ? "partial" : "succeeded";
 
+    if (!claimOutcome()) return { backupId, status: "failed", sizeBytes: archiveSizeBytes };
+    // error_summary is cleared so a finished row never carries an earlier
+    // run's reason, such as EBACKUP_INTERRUPTED, under a "succeeded" status.
     await ctx.db.execute(
-      `UPDATE ${TABLES.backups(ns)} SET status = $2, completed_at = now(), size_bytes = $3, manifest_json = $4 WHERE id = $1`,
+      `UPDATE ${TABLES.backups(ns)} SET status = $2, completed_at = now(), size_bytes = $3, manifest_json = $4, error_summary = NULL WHERE id = $1`,
       [backupId, finalStatus, archiveSizeBytes, JSON.stringify(envelope)],
     );
 
@@ -525,20 +536,42 @@ async function runBackup(
     return { backupId, status: finalStatus, sizeBytes: archiveSizeBytes };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    await ctx.db.execute(
-      `UPDATE ${TABLES.backups(ns)} SET status = 'failed', completed_at = now(), error_summary = $2 WHERE id = $1`,
-      [backupId, errMsg.slice(0, 1000)],
-    );
-    if (scheduleId && cadence !== "manual") {
-      await updateScheduleAfterRun(ctx, scheduleId, cadence, "failed");
-    }
-    await maybeCreateFailureIssue(ctx, cfg, backupId, "failed", perDestResults, errMsg);
+    if (!claimOutcome()) return { backupId, status: "failed", sizeBytes: archiveSizeBytes };
+    await recordFailedBackup(ctx, cfg, backupId, cadence, scheduleId, errMsg, perDestResults);
     return { backupId, status: "failed", sizeBytes: archiveSizeBytes };
   } finally {
     if (archiveFilePath && existsSync(archiveFilePath)) {
       try { unlinkSync(archiveFilePath); } catch { /* best-effort */ }
     }
   }
+}
+
+/** Record a failed backup: its row, its schedule, and the failure alert. */
+async function recordFailedBackup(
+  ctx: PluginContext,
+  cfg: InstanceConfig,
+  backupId: string,
+  cadence: BackupCadence,
+  scheduleId: string | null,
+  errMsg: string,
+  perDestResults: Array<{ id: string; status: string; error?: string }>,
+) {
+  await ctx.db.execute(
+    `UPDATE ${TABLES.backups(ctx.db.namespace)} SET status = 'failed', completed_at = now(), error_summary = $2 WHERE id = $1`,
+    [backupId, errMsg.slice(0, 1000)],
+  );
+  if (scheduleId && cadence !== "manual") {
+    await updateScheduleAfterRun(ctx, scheduleId, cadence, "failed");
+  }
+  await maybeCreateFailureIssue(ctx, cfg, backupId, "failed", perDestResults, errMsg);
+}
+
+/** Close a row its backup left running. A row that has finished is left alone. */
+async function closeBackupRow(ctx: PluginContext, backupId: string, errMsg: string) {
+  await ctx.db.execute(
+    `UPDATE ${TABLES.backups(ctx.db.namespace)} SET status = 'failed', completed_at = now(), error_summary = $2 WHERE id = $1 AND status = 'running'`,
+    [backupId, errMsg.slice(0, 1000)],
+  );
 }
 
 function extractErrorCode(msg: string): string {
@@ -691,6 +724,78 @@ async function applyRetention(
   }
 }
 
+// ─── One backup at a time, and Run now ───────────────────────────────────────
+//
+// Every backup, scheduled or Run now, takes its turn in one queue: the host
+// makes one snapshot at a time (see backupQueue.ts).
+//
+// A backup takes about a minute and grows with the instance, but Paperclip
+// stops waiting for a plugin request after 30 seconds. So Run now answers as
+// soon as the backup row exists and the backup carries on in this worker. The
+// row records how it ends, which is what the Backups page and
+// backup_get_status read.
+
+const backupQueue = createBackupQueue();
+
+/** The maxRunMinutes setting in milliseconds, or its default of 60 minutes. */
+function maxRunMs(cfg: InstanceConfig): number {
+  const minutes = cfg.maxRunMinutes;
+  return (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0 ? minutes : 60) * 60_000;
+}
+
+/** Queue a backup behind any backup already running or waiting. */
+function queueBackup(
+  ctx: PluginContext,
+  cfg: InstanceConfig,
+  cadence: BackupCadence,
+  scheduleId: string | null,
+  destinationIds: string[],
+  triggeredBy: { actorId?: string; agentId?: string },
+): BackupTurn {
+  return backupQueue.enqueue({
+    destinationIds,
+    deadlineMs: maxRunMs(cfg),
+    run: (turn) => runBackup(ctx, cadence, scheduleId, destinationIds, triggeredBy, turn),
+    giveUp: (backupId, reason, claimed) =>
+      claimed
+        ? recordFailedBackup(ctx, cfg, backupId, cadence, scheduleId, reason, [])
+        : closeBackupRow(ctx, backupId, reason),
+    report: (message, err) => ctx.logger.error(message, { err: String(err), cadence, scheduleId }),
+  });
+}
+
+function sameDestinations(a: string[], b: string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((id) => right.has(id));
+}
+
+async function startManualBackup(
+  ctx: PluginContext,
+  cfg: InstanceConfig,
+  destinationIds: string[],
+  triggeredBy: { actorId?: string; agentId?: string },
+  /** The caller picked these destinations rather than taking every enabled one. */
+  chosen = false,
+): Promise<{ backupId: string; status: "running"; alreadyRunning: boolean }> {
+  // Nothing here awaits before queueBackup, so two callers cannot both find
+  // the queue empty and start two backups.
+  const running = backupQueue.current();
+  if (running) {
+    // Run now hands back the backup already running, scheduled or not. A
+    // caller who picked other destinations would not get them from it.
+    if (chosen && !sameDestinations(destinationIds, running.destinationIds)) {
+      throw new Error("[EBACKUP_ALREADY_RUNNING] a backup is already running, try again when it finishes");
+    }
+    return { backupId: await running.started, status: "running", alreadyRunning: true };
+  }
+  if (destinationIds.length === 0) {
+    throw new Error("[EBACKUP_NO_DESTINATIONS] no enabled destinations configured");
+  }
+  const turn = queueBackup(ctx, cfg, "manual", null, destinationIds, triggeredBy);
+  return { backupId: await turn.started, status: "running", alreadyRunning: false };
+}
+
 // ─── Tool / API handlers ─────────────────────────────────────────────────────
 
 // Stashed at setup time so onApiRequest (which doesn't get a ctx parameter)
@@ -713,6 +818,18 @@ const plugin = definePlugin({
       await ensureSchedulesSeeded(ctx, cfg.schedules!);
     }
 
+    // Nothing runs in a worker that has only just started, so a backup still
+    // marked running was cut off when the last worker stopped (a restart or an
+    // upgrade mid-run). Close it, or the Backups page shows it running forever.
+    await ctx.db
+      .execute(
+        `UPDATE ${TABLES.backups(ctx.db.namespace)} SET status = 'failed', completed_at = now(), error_summary = $1 WHERE status = 'running'`,
+        ["[EBACKUP_INTERRUPTED] the plugin stopped before this backup finished"],
+      )
+      .catch((err: unknown) => {
+        ctx.logger.warn("could not close backups left running", { err: String(err) });
+      });
+
     // ─── Cadence jobs ────────────────────────────────────────────────────
 
     for (const cadence of ["hourly", "daily", "weekly", "monthly"] as const) {
@@ -733,11 +850,11 @@ const plugin = definePlugin({
             );
             continue;
           }
-          try {
-            await runBackup(ctx, cadence, scheduleId, schedule.destinationIds, {});
-          } catch (err) {
-            ctx.logger.error(`cadence_${cadence}: schedule ${scheduleId} failed`, { err: String(err) });
-          }
+          // Waits its turn behind any backup already running, Run now's
+          // included. Starting alongside it failed at once, because the host
+          // refuses a second snapshot while one is in flight. The queue logs
+          // a backup that fails.
+          await queueBackup(ctx, cfgNow, cadence, scheduleId, schedule.destinationIds, {}).finished;
         }
       });
     }
@@ -772,8 +889,22 @@ const plugin = definePlugin({
         if (destinationIds.length === 0) {
           return { error: "[EBACKUP_NO_DESTINATIONS] no enabled destinations configured" };
         }
-        const result = await runBackup(ctx, "manual", null, destinationIds, { agentId: runCtx.agentId });
-        return { content: `Backup ${result.status}: id=${result.backupId} size=${result.sizeBytes}B`, data: result };
+        // Answers once the backup has started. Waiting for the whole backup ran
+        // past the host's 30 second limit on a tool call.
+        let started: Awaited<ReturnType<typeof startManualBackup>>;
+        try {
+          started = await startManualBackup(ctx, cfgNow, destinationIds, { agentId: runCtx.agentId }, Boolean(p.destinationId));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (extractErrorCode(message) === "EBACKUP_ALREADY_RUNNING") return { error: message };
+          throw err;
+        }
+        return {
+          content: started.alreadyRunning
+            ? `A backup is already running: id=${started.backupId}. Follow it with backup_get_status.`
+            : `Backup started: id=${started.backupId}. It takes a minute or more. Follow it with backup_get_status.`,
+          data: started,
+        };
       },
     );
 
@@ -891,7 +1022,15 @@ const plugin = definePlugin({
       return { visible: isCompanyAllowed(cfgNow.allowedCompanies, companyId) };
     });
 
-    ctx.data.register("dashboard.health", async () => {
+    ctx.data.register("dashboard.health", async (params: Record<string, unknown>) => {
+      // Backup status is for the companies on the allowed list. This had no
+      // check, so the dashboard widget showed it to every company. hostScope
+      // is the company the host checked; the page cannot forge it.
+      const companyId = (params.hostScope as { companyId?: string | null } | undefined)?.companyId ?? "";
+      const cfgNow = (await ctx.config.get()) as InstanceConfig;
+      if (!isCompanyAllowed(cfgNow.allowedCompanies, companyId)) {
+        throw new Error("[ECOMPANY_NOT_ALLOWED]");
+      }
       const ns2 = ctx.db.namespace;
       const [last] = await ctx.db.query<{
         status: string;
@@ -944,6 +1083,26 @@ const plugin = definePlugin({
         .map((d) => ({ id: d.id, kind: d.kind, label: d.label }));
       return { destinations };
     });
+
+    // The Overview tab's Run now button calls usePluginAction, which resolves
+    // against this registry, not the routeKey dispatch in onApiRequest where
+    // backups.run-now also exists. Nothing was registered here, so the button
+    // failed at once with "No action or operation handler registered" and
+    // never started a backup.
+    ctx.actions.register("backups.run-now", async (params: Record<string, unknown>) => {
+      // hostScope is the company the host checked. The page cannot forge it.
+      const companyId = (params.hostScope as { companyId?: string | null } | undefined)?.companyId ?? "";
+      const cfgNow = (await ctx.config.get()) as InstanceConfig;
+      assertCompanyAccess(ctx, {
+        tool: "backups.run-now",
+        resourceLabel: "backup-tools",
+        resourceKey: "plugin",
+        allowedCompanies: cfgNow.allowedCompanies,
+        companyId,
+      });
+      const destinationIds = (cfgNow.destinations ?? []).filter((d) => d.enabled !== false).map((d) => d.id);
+      return await startManualBackup(ctx, cfgNow, destinationIds, {});
+    });
   },
 
   // ─── API request dispatch ────────────────────────────────────────────────
@@ -968,6 +1127,16 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
   const ctx = stashedCtx;
   if (!ctx) return { status: 503, body: { error: "backup-tools not initialised" } };
   const { routeKey, params, query, body } = input;
+  // The host only checks that the caller belongs to the company in
+  // ?companyId=. Without this, a member of any company could start a
+  // whole-instance backup, list the archives or probe the destinations.
+  const cfgAccess = (await ctx.config.get()) as InstanceConfig;
+  if (!isCompanyAllowed(cfgAccess.allowedCompanies, input.companyId)) {
+    return {
+      status: 403,
+      body: { error: `[ECOMPANY_NOT_ALLOWED] backup-tools is not assigned to company ${input.companyId}.` },
+    };
+  }
   switch (routeKey) {
     case "destinations.list": {
       const cfgNow = (await ctx.config.get()) as InstanceConfig;
@@ -1004,11 +1173,21 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
     case "backups.run-now": {
       const cfgNow = (await ctx.config.get()) as InstanceConfig;
       const b = (body ?? {}) as { destinationIds?: string[] };
-      const destinationIds = b.destinationIds && b.destinationIds.length > 0
-        ? b.destinationIds
+      const chosen = Boolean(b.destinationIds && b.destinationIds.length > 0);
+      const destinationIds = chosen
+        ? b.destinationIds!
         : (cfgNow.destinations ?? []).filter((d) => d.enabled !== false).map((d) => d.id);
-      const result = await runBackup(ctx, "manual", null, destinationIds, {});
-      return { status: 201, body: result };
+      // 202: the backup has started, not finished. Waiting for it ran past
+      // the host's 30 second limit and answered 502 for a backup that worked.
+      try {
+        return { status: 202, body: await startManualBackup(ctx, cfgNow, destinationIds, {}, chosen) };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const code = extractErrorCode(message);
+        if (code === "EBACKUP_ALREADY_RUNNING") return { status: 409, body: { error: message } };
+        if (code === "EBACKUP_NO_DESTINATIONS") return { status: 400, body: { error: message } };
+        throw err;
+      }
     }
     case "manifest-of": {
       const p = params as { destinationId: string; archiveKey: string };

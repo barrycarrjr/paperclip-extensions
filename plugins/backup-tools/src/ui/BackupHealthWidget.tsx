@@ -1,4 +1,5 @@
 import { usePluginData } from "@paperclipai/plugin-sdk/ui";
+import { widgetErrorText } from "./errorText.js";
 
 type DashboardHealth = {
   lastRun: { status: string; started_at: string; size_bytes: number | null } | null;
@@ -9,6 +10,9 @@ function statusColor(status: string | undefined) {
   if (!status) return "#9ca3af";
   if (status === "succeeded") return "#10b981";
   if (status === "partial") return "#f59e0b";
+  // A running backup is not a failure, but it showed red here. Run now leaves
+  // one running for a minute or so.
+  if (status === "running") return "#3b82f6";
   return "#ef4444";
 }
 
@@ -31,12 +35,21 @@ function formatSize(bytes: number | null): string {
 }
 
 export function BackupHealthWidget() {
-  const { data, loading } = usePluginData<DashboardHealth>("dashboard.health", {});
+  const { data, loading, error } = usePluginData<DashboardHealth>("dashboard.health", {});
 
   if (loading) {
     return (
       <div style={{ padding: 12, fontSize: 13, color: "var(--muted-foreground, #6b7280)" }}>
         Loading backup status…
+      </div>
+    );
+  }
+  // dashboard.health refuses a company that is not on the allowed list. Say
+  // so rather than falling through to "Last run: never".
+  if (error) {
+    return (
+      <div style={{ padding: 12, fontSize: 13, color: "var(--muted-foreground, #6b7280)" }}>
+        {widgetErrorText(error)}
       </div>
     );
   }

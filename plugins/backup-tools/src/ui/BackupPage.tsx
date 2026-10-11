@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   useHostContext,
@@ -6,6 +6,7 @@ import {
   usePluginAction,
   type PluginPageProps,
 } from "@paperclipai/plugin-sdk/ui";
+import { errorText } from "./errorText.js";
 
 type Tab = "overview" | "schedules" | "destinations" | "history" | "restore";
 
@@ -155,6 +156,9 @@ export function BackupPage(_props: PluginPageProps) {
   );
 }
 
+/** How often the Overview card reads the last backup again while one is running. */
+const RUNNING_REFRESH_MS = 5_000;
+
 function OverviewTab({ companyId: _companyId }: { companyId: string | null }) {
   const { data, loading, error, refresh } = usePluginData<{ lastRun: Backup | null; nextRunAfter: string | null }>(
     "dashboard.health",
@@ -163,8 +167,18 @@ function OverviewTab({ companyId: _companyId }: { companyId: string | null }) {
   const runNowAction = usePluginAction("backups.run-now");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const running = data?.lastRun?.status === "running";
 
-  if (loading) return <div>Loading…</div>;
+  // Run now answers as soon as the backup starts, so the card follows the
+  // backup itself: read it again every few seconds until it has finished.
+  useEffect(() => {
+    if (!running) return;
+    const timer = setTimeout(refresh, RUNNING_REFRESH_MS);
+    return () => clearTimeout(timer);
+  }, [running, data, refresh]);
+
+  // Each refresh sets loading again. Keep the card on screen while it does.
+  if (loading && !data) return <div>Loading…</div>;
   if (error) return <ErrorNote error={error} />;
 
   return (
@@ -191,16 +205,18 @@ function OverviewTab({ companyId: _companyId }: { companyId: string | null }) {
           {data?.nextRunAfter ? new Date(data.nextRunAfter).toUTCString() : "—"}
         </div>
         <button
-          disabled={busy}
+          disabled={busy || running}
           onClick={async () => {
             setBusy(true);
             setMsg(null);
             try {
-              const result = await runNowAction({});
-              setMsg(`Started: ${(result as { backupId?: string })?.backupId ?? "(see history)"}`);
-              await refresh();
+              // Answers as soon as the backup starts (or with the one already
+              // running). The refresh shows it running, and the effect above
+              // follows it from there.
+              await runNowAction({});
+              refresh();
             } catch (err) {
-              setMsg(err instanceof Error ? err.message : String(err));
+              setMsg(errorText(err));
             } finally {
               setBusy(false);
             }
@@ -208,12 +224,17 @@ function OverviewTab({ companyId: _companyId }: { companyId: string | null }) {
           style={{
             ...primaryButton,
             marginTop: 12,
-            cursor: busy ? "wait" : "pointer",
-            opacity: busy ? 0.6 : 1,
+            cursor: busy ? "wait" : running ? "default" : "pointer",
+            opacity: busy || running ? 0.6 : 1,
           }}
         >
-          {busy ? "Running…" : "Run backup now"}
+          {busy ? "Starting…" : running ? "Backup running…" : "Run backup now"}
         </button>
+        {running && (
+          <div style={{ marginTop: 8, fontSize: 12, color: css.muted }}>
+            A backup is running. The result shows under Last backup when it finishes.
+          </div>
+        )}
         {msg && <div style={{ marginTop: 8, fontSize: 12, color: css.muted }}>{msg}</div>}
       </div>
     </div>
@@ -386,7 +407,7 @@ function RestoreTab({ companyId: _companyId }: { companyId: string | null }) {
                 setResult(r);
                 setStep(4);
               } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
+                setError(errorText(err));
               } finally {
                 setBusy(false);
               }
@@ -442,7 +463,7 @@ function RestoreTab({ companyId: _companyId }: { companyId: string | null }) {
                 setResult(r);
                 setStep(5);
               } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
+                setError(errorText(err));
               } finally {
                 setBusy(false);
               }

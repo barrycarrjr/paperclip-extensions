@@ -16,7 +16,7 @@ Encrypted system snapshots for your Paperclip instance, on a schedule (or on dem
 
 | Tool | Purpose |
 |---|---|
-| `backup_run_now` | Trigger a manual backup (mutationsEnabled gate). Optional destinationId. |
+| `backup_run_now` | Start a manual backup (mutationsEnabled gate). Optional destinationId. Answers once the backup has started, or with the backup already running; follow it with `backup_get_status`. |
 | `backup_list_recent` | List recent backups (filterable by cadence/status). |
 | `backup_get_status` | Fetch one backup with per-destination outcomes. |
 | `backup_list_destinations` | List destinations the company is allowed to use. |
@@ -123,11 +123,23 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 | `EBACKUP_SNAPSHOT_NO_BODY` | core response had no body stream |
 | `EBACKUP_KDF_UNSUPPORTED` | envelope declares an unknown KDF |
 | `EBACKUP_NOT_FOUND` | requested backup id doesn't exist |
+| `EBACKUP_INTERRUPTED` | the plugin stopped (a restart or an upgrade) before a running backup finished; set when the plugin next starts |
+| `EBACKUP_TIMED_OUT` | a backup was still running after `maxRunMinutes`; it is marked failed and the next backup may start |
+| `EBACKUP_ALREADY_RUNNING` | a backup is already running and the request asked for destinations it is not using; try again when it finishes |
 | `ECOMPANY_NOT_ALLOWED` | calling company isn't in `allowedCompanies` |
 | `EDISABLED` | mutation tool called while `mutationsEnabled: false` |
 
 ## Recent changes
 
+- **v0.1.32** - "Run backup now" works. The page called an action the plugin never registered,
+  so the button always failed, and the run-now API route waited for the whole backup and
+  answered 502 after 30 seconds while the backup succeeded. Run now (page, API and the
+  `backup_run_now` tool) now answers at once and the backup runs in the background; the page
+  shows it running and then its result. Every backup, manual or scheduled, goes through one
+  queue, so they no longer collide; each gets a `maxRunMinutes` deadline (`EBACKUP_TIMED_OUT`),
+  and a backup cut off by a restart is marked `EBACKUP_INTERRUPTED`. API routes and the
+  dashboard widget now refuse companies not on the allowed list. Refusals show their message
+  instead of "[object Object]", and the "Idempotency-key honored" claim is gone.
 - **v0.1.31** - A snapshot now gets 120 seconds to come back from the host instead of 30. The
   plugin toolkit gave every call to Paperclip 30 seconds, an instance's snapshot outgrew that,
   and the 2026-10-09 nightly backup failed on it (HQ-486). Rebuilt with Paperclip's plugin
