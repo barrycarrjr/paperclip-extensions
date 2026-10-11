@@ -397,8 +397,8 @@ packages:
     resolution: {integrity: sha512-nyT7T3nbMyBI/lvr6L5TyWbFJAI9FTgVRakNoBqCD+PmID8DzFrrNdLLtHMwMszOtqZa8PAOV24ZqDnQrhQINA==}
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-4wyxoIezVYM5lMJj7ZnUfR8K+9M6u3X2K9tvUnyyayhlJEPqzT0bGExZKethfEfS9OXe8pqGF2dok+OUbi9CmA==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
-    version: 1.0.0-vendor.df620f70fa5b
+    resolution: {integrity: sha512-Njyao+bYp92zcO0rI5xv8mNY1Fo7EZ3+V4Oyx1OeAKbaJf3Q9qjlIVVfDW68m2AFpXb5krDBSO7fy8TkrHJKLw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    version: 1.0.0-vendor.011d2ecbe694
     hasBin: true
     peerDependencies:
       react: '>=18'
@@ -407,8 +407,8 @@ packages:
         optional: true
 
   '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
-    resolution: {integrity: sha512-mCotIF7rdzRq1HS/ZC+H2+nAkErgnCc854aS1CaIhOaeh/IoG+dVE2zoCaI/slFzQggySlBtUma0b/PCA0/bEw==, tarball: file:../../vendor/sdk/shared.tgz}
-    version: 0.3.1-vendor.ea7fc86369ca
+    resolution: {integrity: sha512-Smb9AuG2uJP1GieIvMSsrpved2wIzDcFcVBEfZ2xpQpFAZIMZvLcp94F3SsWZu4qSQWExDtPk7FVzO2DO4SwCw==, tarball: file:../../vendor/sdk/shared.tgz}
+    version: 0.3.1-vendor.4f64fbae9447
 
   '@smithy/chunked-blob-reader-native@4.2.3':
     resolution: {integrity: sha512-jA5k5Udn7Y5717L86h4EIv06wIr3xn8GM1qHRi/Nf31annXcXHJjBKvgztnbn2TxH3xWrPBfgwHsOwZf0UmQWw==}
