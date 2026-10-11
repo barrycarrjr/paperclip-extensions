@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.6.27";
+const PLUGIN_VERSION = "0.6.28";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 

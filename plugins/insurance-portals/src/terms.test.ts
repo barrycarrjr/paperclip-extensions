@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { pdfText } from "./pdfText.js";
-import { assignTerms, existingFileFor, fileNameFor, findRevision, findTerm, termFromName, toIso } from "./terms.js";
+import { assignTerms, documentRevision, existingFileFor, fileNameFor, findChangeEffective, findRevision, findTerm, termFromName, toIso } from "./terms.js";
 
 test("finds the policy period in the wordings declarations pages use", () => {
   assert.deepEqual(findTerm("Policy Period: 08/01/2026 to 08/01/2027 12:01 AM standard time"), { from: "2026-08-01", to: "2027-08-01" });
@@ -153,4 +153,19 @@ test("same-day endorsements are told apart by the form's revision code", () => {
   assert.equal(existingFileFor([old], "Selective", d), old);
   // A different document whose title ends the same way is not a match.
   assert.equal(existingFileFor(["Selective - Policy 0000001 - Term 2024-03-30 to 2025-03-30 - Auto Endorsement (posted 2024-03-30).pdf"], "Selective", d), null);
+});
+
+test("Liberty Mutual policy changes are told apart by the date each took effect", () => {
+  const change = "We have made the following changes to your policy: - The following mortgage servicing company is replaced by: EXAMPLE BANK This change is effective May 20, 2026 . Please place this letter with your insurance policy.";
+  assert.equal(findChangeEffective(change), "effective 2026-05-20");
+  assert.equal(documentRevision("Policy change", change), "effective 2026-05-20");
+  assert.equal(findChangeEffective("The following first mortgagee is deleted: EXAMPLE LLC These changes are effective February 20, 2026. Please place"), "effective 2026-02-20");
+  // Selective's code wins where there is one; other documents get none.
+  assert.equal(documentRevision("Endorsement", "F 0000001 - 01D PA 00-00000-00000 This change is effective May 20, 2026"), "01D");
+  assert.equal(documentRevision("Renewal", change), null);
+  const term = { from: "2026-03-30", to: "2027-03-30" };
+  assert.equal(
+    fileNameFor("Liberty Mutual", { policy: "12 TEST AVE - Policy OK0000001", title: "Policy change", posted: null, term, revision: "effective 2026-05-20" }),
+    "Liberty Mutual - 12 TEST AVE - Policy OK0000001 - Term 2026-03-30 to 2027-03-30 - Policy change effective 2026-05-20",
+  );
 });

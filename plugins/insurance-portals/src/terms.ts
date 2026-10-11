@@ -160,6 +160,28 @@ export function findRevision(text: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * The date a Liberty Mutual policy change took effect, from "This change is
+ * effective May 20, 2026" (or "These changes are effective ..."), as
+ * "effective 2026-05-20". Liberty Mutual's forms
+ * carry no revision code, and this date tells same-term changes apart.
+ */
+export function findChangeEffective(text: string): string | null {
+  const m = /(?:This change is|These changes are) effective ([A-Z][a-z]+\.? \d{1,2},? \d{4})/.exec(text.replace(/\s+/g, " "));
+  const iso = m ? toIso(m[1]) : null;
+  return iso ? `effective ${iso}` : null;
+}
+
+/**
+ * What tells this endorsement or policy change apart from others of the
+ * same kind: Selective's form revision code ("01D"), or the date a Liberty
+ * Mutual change took effect ("effective 2026-05-20"). Null for other documents.
+ */
+export function documentRevision(title: string, text: string): string | null {
+  if (!/\b(endorsement|policy change)\b/i.test(title)) return null;
+  return findRevision(text) ?? findChangeEffective(text);
+}
+
 /** The term written into a file name by `fileNameFor`, if there is one. */
 export function termFromName(name: string): Term | null {
   const m = /Term (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})/.exec(name);
@@ -186,7 +208,7 @@ export function existingFileFor(names: string[], carrier: string, d: { policy: s
       const base = n.replace(/\.pdf$/i, "").replace(/ \(\d+\)$/, "");
       if (!base.endsWith(tail)) return false;
       const before = base.slice(0, -tail.length);
-      return before.endsWith(` - ${title}`) || new RegExp(` - ${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\d{2}[A-Z]$`).test(before);
+      return before.endsWith(` - ${title}`) || new RegExp(` - ${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (?:\\d{2}[A-Z]|effective \\d{4}-\\d{2}-\\d{2})$`).test(before);
     }) ?? null
   );
 }

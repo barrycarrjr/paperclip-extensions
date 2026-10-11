@@ -14,7 +14,7 @@ import { LocalFolder } from "./localFolder.js";
 import { profileDirFor } from "./profiles.js";
 import { addPrivateItems, privateItemsFromPolicies, privateListPath } from "./privateList.js";
 import { pdfText } from "./pdfText.js";
-import { assignTerms, existingFileFor, fileNameFor, findRevision, findTerm, termFromName } from "./terms.js";
+import { assignTerms, documentRevision, existingFileFor, fileNameFor, findTerm, termFromName } from "./terms.js";
 import { testMailbox, waitForLoginCode, type MailboxSettings } from "./loginCode.js";
 import { CARRIERS, runCarrier, type CarrierKey } from "./portal.js";
 import { policyNumberIn, policyNamedInPdf, splitDrivePath } from "./safety.js";
@@ -346,7 +346,7 @@ export async function fetchDocuments(
     }
     // Two endorsements can be issued the same day; the form's revision code
     // tells them apart in the file name.
-    const revision = /\b(endorsement|policy change)\b/i.test(doc.title) ? findRevision(text) : null;
+    const revision = documentRevision(doc.title, text);
     // The declarations page's key figures, for a summary beside the PDF.
     const figures = readKeyFigures(text);
     read.push({ ...doc, term, revision, figures: hasKeyFigures(figures) ? figures : null });
