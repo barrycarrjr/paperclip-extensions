@@ -10,8 +10,9 @@
  *   - 1 data handler for the sidebar visibility ping.
  *
  * Privileged operations (snapshot produce, snapshot restore) go through the
- * core `/api/system/snapshot*` endpoints. The plugin never reads or writes
- * core tables directly.
+ * host's `ctx.system` calls, not the core `/api/system/snapshot*` endpoints,
+ * which a worker cannot reach. The plugin never reads or writes core tables
+ * directly.
  */
 
 import {
@@ -25,7 +26,17 @@ import {
 } from "@paperclipai/plugin-sdk";
 import { Readable, PassThrough, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createReadStream, createWriteStream, existsSync, statSync, mkdirSync, unlinkSync } from "node:fs";
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  statSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID, randomBytes } from "node:crypto";
@@ -34,6 +45,7 @@ import { createBackupQueue, type BackupTurn, type BackupTurnHooks } from "./back
 import {
   CHUNK_SIZE_BYTES,
   NONCE_LENGTH,
+  TAG_LENGTH,
   createChunkCipher,
   createChunkDecipher,
   deriveKeys,
@@ -335,30 +347,158 @@ async function buildEncryptedArchiveToTmpFile(input: {
   return { archiveFilePath, envelope, sizeBytes };
 }
 
-async function decryptArchiveToTmpSql(input: {
+/** Check the envelope's seal with the passphrase and return the body's decipher. */
+async function unlockArchive(passphrase: string, envelope: ArchiveEnvelope): Promise<ReturnType<typeof createChunkDecipher>> {
+  const salt = Buffer.from(envelope.salt, "base64url");
+  const { bodyKey, hmacKey } = await deriveKeys({
+    passphrase,
+    salt: new Uint8Array(salt.buffer, salt.byteOffset, salt.byteLength),
+    params: envelope.kdfParams,
+  });
+  // Verify the envelope HMAC against the canonical form.
+  if (!verifyEnvelopeHmac(hmacKey, canonicalizeForHmac(envelope), envelope.hmac)) {
+    throw new Error("[EBACKUP_INTEGRITY_FAILED] envelope HMAC verification failed");
+  }
+  return createChunkDecipher(bodyKey);
+}
+
+/**
+ * Decrypt the whole archive and throw the plain text away: the preview. Every
+ * chunk is authenticated and the end marker must be there, so a wrong
+ * passphrase, a changed byte or a cut-off archive all fail, and nothing of the
+ * database reaches the disk.
+ */
+async function verifyArchive(input: {
   passphrase: string;
   envelope: ArchiveEnvelope;
   encryptedBodyStream: NodeJS.ReadableStream;
-}): Promise<{ sqlGzPath: string }> {
-  const salt = Buffer.from(input.envelope.salt, "base64url");
-  const { bodyKey, hmacKey } = await deriveKeys({
-    passphrase: input.passphrase,
-    salt: new Uint8Array(salt.buffer, salt.byteOffset, salt.byteLength),
-    params: input.envelope.kdfParams,
+}): Promise<void> {
+  const decipher = await unlockArchive(input.passphrase, input.envelope);
+  const discard = new Writable({
+    write(_chunk, _encoding, done) {
+      done();
+    },
   });
-  // Verify the envelope HMAC against the canonical form.
-  if (!verifyEnvelopeHmac(hmacKey, canonicalizeForHmac(input.envelope), input.envelope.hmac)) {
-    throw new Error("[EBACKUP_INTEGRITY_FAILED] envelope HMAC verification failed");
-  }
-  const decipher = createChunkDecipher(bodyKey);
-  const sqlGzPath = join(tmpdir(), `pcback-decrypt-${randomUUID()}.sql.gz`);
-  const out = createWriteStream(sqlGzPath);
+  await decryptBodyTo(discard, decipher, input.encryptedBodyStream);
+}
 
+/**
+ * Folders holding an apply's decrypted dump, in the system temp folder:
+ * `pcback-restore-<worker pid>-XXXXXX`. Each holds the whole database in plain
+ * text. The pid lets a later worker tell a stopped worker's leftovers from a
+ * running one's.
+ */
+const RESTORE_DIR_PREFIX = "pcback-restore-";
+
+/** The folder of the apply running now, if any, so onShutdown can remove it. */
+let restoreTempDir: string | null = null;
+
+function removeRestoreDir(dir: string): void {
+  try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  if (restoreTempDir === dir) restoreTempDir = null;
+}
+
+/**
+ * Decrypt the whole archive into a file for Paperclip to apply. The file is
+ * new (`wx`), readable by this account only (0600), and alone in a folder
+ * from mkdtemp, which is private to this account on Linux and macOS. On
+ * Windows the temp folder is already per user. A failure part way removes the
+ * folder; otherwise the caller removes it once Paperclip has finished.
+ */
+async function decryptArchiveForApply(input: {
+  passphrase: string;
+  envelope: ArchiveEnvelope;
+  encryptedBodyStream: NodeJS.ReadableStream;
+}): Promise<{ dir: string; sqlGzPath: string }> {
+  const decipher = await unlockArchive(input.passphrase, input.envelope);
+  const dir = await mkdtemp(join(tmpdir(), `${RESTORE_DIR_PREFIX}${process.pid}-`));
+  restoreTempDir = dir;
+  const sqlGzPath = join(dir, "dump.sql.gz");
+  try {
+    const out = createWriteStream(sqlGzPath, { flags: "wx", mode: 0o600 });
+    // With no listener, a failed write is thrown from nowhere and stops the
+    // worker. With one, it reaches end()'s callback in decryptBodyTo instead.
+    out.on("error", () => {});
+    try {
+      await decryptBodyTo(out, decipher, input.encryptedBodyStream);
+    } catch (err) {
+      // Close the file before the folder goes, so nothing is still writing.
+      if (!out.closed) {
+        await new Promise<void>((resolve) => {
+          out.once("close", () => resolve());
+          out.end();
+        });
+      }
+      throw err;
+    }
+  } catch (err) {
+    // A chunk that fails authentication part way through leaves the chunks
+    // before it on disk in plain text.
+    removeRestoreDir(dir);
+    throw err;
+  }
+  return { dir, sqlGzPath };
+}
+
+/**
+ * Remove decrypted dumps a stopped worker left in the temp folder. A worker
+ * stopped mid-restore never reaches runRestore's cleanup, and each dump is the
+ * whole database in plain text. A folder whose worker is still running (a
+ * second Paperclip on this machine, say) is left alone. Loose
+ * `pcback-decrypt-*.sql.gz` files are what versions before 0.1.33 left.
+ */
+function sweepDecryptedLeftovers(ctx: PluginContext): void {
+  const root = tmpdir();
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return;
+  }
+  let removed = 0;
+  for (const name of names) {
+    const owner = /^pcback-restore-(\d+)-/.exec(name);
+    if (!owner && !/^pcback-decrypt-.*\.sql\.gz$/.test(name)) continue;
+    const path = join(root, name);
+    if (path === restoreTempDir) continue;
+    if (owner && Number(owner[1]) !== process.pid && processIsRunning(Number(owner[1]))) continue;
+    try {
+      rmSync(path, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      /* best-effort */
+    }
+  }
+  if (removed > 0) ctx.logger.warn("removed decrypted restore files a stopped worker left behind", { removed });
+}
+
+function processIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it is running, as another account.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The longest chunk on the wire: length prefix aside, nonce, a full chunk and its tag. */
+const MAX_ENCRYPTED_CHUNK_BYTES = NONCE_LENGTH + CHUNK_SIZE_BYTES + TAG_LENGTH;
+
+async function decryptBodyTo(
+  out: Writable,
+  decipher: ReturnType<typeof createChunkDecipher>,
+  encryptedBodyStream: NodeJS.ReadableStream,
+): Promise<void> {
   let buffer = new Uint8Array(0);
-  const reader = input.encryptedBodyStream as unknown as AsyncIterable<Uint8Array>;
+  const reader = encryptedBodyStream as unknown as AsyncIterable<Uint8Array>;
   let endOfStream = false;
   for await (const chunk of reader) {
-    if (endOfStream) break;
+    // Nothing may follow the end marker. Read on to make sure of it.
+    if (endOfStream) {
+      if (chunk.byteLength > 0) throw new Error("[EBACKUP_INTEGRITY_FAILED] the archive has data after its end marker");
+      continue;
+    }
     const merged = new Uint8Array(buffer.length + chunk.byteLength);
     merged.set(buffer);
     merged.set(chunk, buffer.length);
@@ -371,6 +511,11 @@ async function decryptArchiveToTmpSql(input: {
         buffer = buffer.subarray(4);
         break;
       }
+      // A damaged length would otherwise have the rest of the archive held
+      // in memory, waiting for a chunk this plugin never writes.
+      if (len > MAX_ENCRYPTED_CHUNK_BYTES) {
+        throw new Error("[EBACKUP_INTEGRITY_FAILED] the archive has a chunk longer than any this plugin writes");
+      }
       if (buffer.length < 4 + len) break; // wait for more bytes
       const nonce = buffer.subarray(4, 4 + NONCE_LENGTH);
       const ct = buffer.subarray(4 + NONCE_LENGTH, 4 + len);
@@ -378,23 +523,31 @@ async function decryptArchiveToTmpSql(input: {
       out.write(Buffer.from(pt));
       buffer = buffer.subarray(4 + len);
     }
-  }
-  if (!endOfStream) {
-    // Process trailing chunk without sentinel (writer likely cut off mid-stream)
-    if (buffer.length >= 4) {
-      const len = new DataView(buffer.buffer, buffer.byteOffset, 4).getUint32(0, false);
-      if (len > 0 && buffer.length >= 4 + len) {
-        const nonce = buffer.subarray(4, 4 + NONCE_LENGTH);
-        const ct = buffer.subarray(4 + NONCE_LENGTH, 4 + len);
-        const pt = decipher.decryptChunk(nonce, ct);
-        out.write(Buffer.from(pt));
-      }
+    if (endOfStream && buffer.length > 0) {
+      throw new Error("[EBACKUP_INTEGRITY_FAILED] the archive has data after its end marker");
     }
   }
+  // Every archive ends with a marker. Without one it was cut off, and the
+  // chunks after the last whole one are missing. This used to decrypt what was
+  // there, drop a partial last chunk and report success.
+  if (!endOfStream) {
+    throw new Error("[EBACKUP_INTEGRITY_FAILED] the archive is cut off: it has no end marker");
+  }
+  // if (!endOfStream) {
+  //   // Process trailing chunk without sentinel (writer likely cut off mid-stream)
+  //   if (buffer.length >= 4) {
+  //     const len = new DataView(buffer.buffer, buffer.byteOffset, 4).getUint32(0, false);
+  //     if (len > 0 && buffer.length >= 4 + len) {
+  //       const nonce = buffer.subarray(4, 4 + NONCE_LENGTH);
+  //       const ct = buffer.subarray(4 + NONCE_LENGTH, 4 + len);
+  //       const pt = decipher.decryptChunk(nonce, ct);
+  //       out.write(Buffer.from(pt));
+  //     }
+  //   }
+  // }
   await new Promise<void>((resolve, reject) => {
     out.end((err: unknown) => (err ? reject(err) : resolve()));
   });
-  return { sqlGzPath };
 }
 
 // ─── runBackup — the main fan-out path ──────────────────────────────────────
@@ -737,6 +890,17 @@ async function applyRetention(
 
 const backupQueue = createBackupQueue();
 
+/**
+ * Backups still at work. Not the same as the queue's: a backup its deadline
+ * gave up on leaves the queue but goes on snapshotting or uploading.
+ */
+let backupsWorking = 0;
+
+/** True while any backup is queued or still at work. */
+function backupRunning(): boolean {
+  return backupQueue.current() !== null || backupsWorking > 0;
+}
+
 /** The maxRunMinutes setting in milliseconds, or its default of 60 minutes. */
 function maxRunMs(cfg: InstanceConfig): number {
   const minutes = cfg.maxRunMinutes;
@@ -755,7 +919,12 @@ function queueBackup(
   return backupQueue.enqueue({
     destinationIds,
     deadlineMs: maxRunMs(cfg),
-    run: (turn) => runBackup(ctx, cadence, scheduleId, destinationIds, triggeredBy, turn),
+    run: (turn) => {
+      backupsWorking += 1;
+      return runBackup(ctx, cadence, scheduleId, destinationIds, triggeredBy, turn).finally(() => {
+        backupsWorking -= 1;
+      });
+    },
     giveUp: (backupId, reason, claimed) =>
       claimed
         ? recordFailedBackup(ctx, cfg, backupId, cadence, scheduleId, reason, [])
@@ -778,6 +947,11 @@ async function startManualBackup(
   /** The caller picked these destinations rather than taking every enabled one. */
   chosen = false,
 ): Promise<{ backupId: string; status: "running"; alreadyRunning: boolean }> {
+  // An apply is replacing the database. A backup now would copy a database
+  // that is about to go, or be refused by Paperclip part way.
+  if (activeRestore?.mode === "apply") {
+    throw new Error("[EBACKUP_RESTORE_RUNNING] a restore is running, try again when it finishes");
+  }
   // Nothing here awaits before queueBackup, so two callers cannot both find
   // the queue empty and start two backups.
   const running = backupQueue.current();
@@ -794,6 +968,280 @@ async function startManualBackup(
   }
   const turn = queueBackup(ctx, cfg, "manual", null, destinationIds, triggeredBy);
   return { backupId: await turn.started, status: "running", alreadyRunning: false };
+}
+
+// ─── Restore ─────────────────────────────────────────────────────────────────
+//
+// A restore replaces the whole instance database with an archive, so only an
+// instance admin may preview or apply one. On the page that is
+// hostScope.isInstanceAdmin, which the host sets and the browser cannot. The
+// restore API routes are instance-admin routes, so the host checks those.
+//
+// A restore downloads and decrypts the whole archive before Paperclip replays
+// it, which takes longer than the host's 30 seconds for a plugin request. So,
+// like Run now, preview and apply answer as soon as the restore has started,
+// and the page follows it through restore.status. Progress is kept here, not
+// in the database: an apply replaces the tables the plugin's database calls go
+// through, so those calls wait until it has finished.
+//
+// A preview decrypts and checks the whole archive here and keeps nothing.
+// Paperclip reads an archive only to apply it.
+
+const RESTORE_CONFIRM_PHRASE = "RESTORE THIS INSTANCE";
+
+type RestoreMode = "preview" | "apply";
+type RestoreConflictMode = "overwrite" | "skip" | "fail-on-conflict";
+
+/** What the page and the restore API routes see of a restore. Never the passphrase. */
+type RestoreView = {
+  restoreId: string;
+  mode: RestoreMode;
+  status: "running" | "succeeded" | "failed";
+  /** While it runs: fetching and decrypting the archive, or Paperclip at work on the dump. */
+  stage: "download" | "paperclip" | null;
+  destinationId: string;
+  archiveKey: string;
+  /** The person who asked, as the host or the API caller named them. */
+  requestedBy: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  /** From the archive's envelope, once it has been read. */
+  archive: { createdAt: string; instanceId: string; cadence: string; tables: number; rows: number } | null;
+  /** How it ended: the preview's check, or Paperclip's answer to an apply. */
+  result: { applied: boolean; dryRun: boolean; warnings: string[] } | null;
+  error: string | null;
+};
+
+/** The restore running now. One at a time. */
+let activeRestore: RestoreView | null = null;
+/** Settles when the restore running now has ended. */
+let activeRestoreEnded: Promise<void> = Promise.resolve();
+/** The latest restore, running or finished. Kept until the worker restarts. */
+let latestRestore: RestoreView | null = null;
+
+/**
+ * `ctx.system.restoreSnapshot`, the restore half of `createSnapshot`. Paperclip's
+ * plugin toolkit has it from the release that added the
+ * `system.snapshot.restore` capability. It is spelled out here so the plugin
+ * still builds against an older vendored toolkit; a build made that way cannot
+ * restore, and says so.
+ */
+export type SystemRestoreCall = (input: {
+  filePath: string;
+  mode: RestoreMode;
+  conflictMode?: RestoreConflictMode;
+  requestedByUserId?: string | null;
+}) => Promise<{ applied: boolean; dryRun: boolean; touchedTables: string[]; warnings: string[] }>;
+
+function hostRestore(ctx: PluginContext): SystemRestoreCall {
+  const system = ctx.system as PluginContext["system"] & { restoreSnapshot?: SystemRestoreCall };
+  if (typeof system.restoreSnapshot !== "function") {
+    throw new Error(
+      "[EBACKUP_RESTORE_UNSUPPORTED] this build of backup-tools cannot ask Paperclip for a restore; it needs rebuilding with Paperclip's current plugin toolkit",
+    );
+  }
+  return (input) => system.restoreSnapshot!(input);
+}
+
+/** True only when the host says the caller is an instance admin. */
+function hostSaysInstanceAdmin(params: Record<string, unknown>): boolean {
+  return (params.hostScope as { isInstanceAdmin?: unknown } | undefined)?.isInstanceAdmin === true;
+}
+
+/** The few facts about an archive a person checks before restoring it. */
+function describeArchive(envelope: ArchiveEnvelope): NonNullable<RestoreView["archive"]> {
+  const counts = [
+    ...Object.values(envelope.publicTableCounts ?? {}),
+    ...(envelope.pluginNamespaces ?? []).flatMap((ns) => Object.values(ns.tableCounts ?? {})),
+  ];
+  return {
+    createdAt: envelope.createdAt,
+    instanceId: envelope.instanceId,
+    cadence: envelope.cadence,
+    tables: counts.length,
+    rows: counts.reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0),
+  };
+}
+
+type RestoreRequest = {
+  mode: RestoreMode;
+  destinationId?: unknown;
+  archiveKey?: unknown;
+  passphrase?: unknown;
+  conflictMode?: unknown;
+  confirmPhrase?: unknown;
+  /** The person asking: the host's hostScope.userId, or the API caller's user. */
+  requestedBy: string | null;
+  /** The company the call came from. An apply's activity entry is filed there. */
+  companyId: string | null;
+};
+
+/**
+ * Start a preview or an apply and answer at once. The caller has already
+ * checked that an instance admin asked. Nothing here awaits before
+ * activeRestore is set, so two clicks cannot start two restores.
+ */
+function startRestore(ctx: PluginContext, request: RestoreRequest): { restoreId: string; mode: RestoreMode; status: "running" } {
+  const destinationId = typeof request.destinationId === "string" ? request.destinationId.trim() : "";
+  const archiveKey = typeof request.archiveKey === "string" ? request.archiveKey.trim() : "";
+  if (!destinationId || !archiveKey) {
+    throw new Error("[EBACKUP_RESTORE_INVALID] pick a destination and an archive to restore");
+  }
+  if (request.mode === "apply" && request.confirmPhrase !== RESTORE_CONFIRM_PHRASE) {
+    throw new Error(`[EBACKUP_RESTORE_NOT_CONFIRMED] type ${RESTORE_CONFIRM_PHRASE} to apply a restore`);
+  }
+  if (activeRestore) {
+    throw new Error("[EBACKUP_RESTORE_RUNNING] a restore is already running, wait for it to finish");
+  }
+  // Paperclip refuses a restore while it takes a snapshot, but a backup goes
+  // on encrypting and uploading after that, even one its deadline gave up on.
+  // A restore must not start under it.
+  if (request.mode === "apply" && backupRunning()) {
+    throw new Error("[EBACKUP_BACKUP_RUNNING] a backup is running, try the restore again when it finishes");
+  }
+
+  const restore: RestoreView = {
+    restoreId: randomUUID(),
+    mode: request.mode,
+    status: "running",
+    stage: "download",
+    destinationId,
+    archiveKey,
+    requestedBy: request.requestedBy,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    archive: null,
+    result: null,
+    error: null,
+  };
+  activeRestore = restore;
+  latestRestore = restore;
+  // A blank passphrase means this instance's own key, the one its backups use.
+  const passphrase = typeof request.passphrase === "string" && request.passphrase.length > 0 ? request.passphrase : null;
+  const conflictMode: RestoreConflictMode =
+    request.conflictMode === "skip" || request.conflictMode === "fail-on-conflict" ? request.conflictMode : "overwrite";
+  activeRestoreEnded = runRestore(ctx, restore, passphrase, conflictMode, request.companyId).finally(() => {
+    if (activeRestore === restore) activeRestore = null;
+  });
+  return { restoreId: restore.restoreId, mode: restore.mode, status: "running" };
+}
+
+/**
+ * Settles once no apply is running, or after `maxWaitMs` in case one never
+ * ends. A scheduled backup waits here rather than copying a database that is
+ * being replaced, or being refused part way by Paperclip.
+ */
+async function applyEnded(maxWaitMs: number): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  while (activeRestore?.mode === "apply" && Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      activeRestoreEnded,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+}
+
+/** Fetch and decrypt the archive, then check it or hand it to Paperclip, recording how it went on `restore`. */
+async function runRestore(
+  ctx: PluginContext,
+  restore: RestoreView,
+  passphrase: string | null,
+  conflictMode: RestoreConflictMode,
+  companyId: string | null,
+): Promise<void> {
+  ctx.logger.info(`restore ${restore.mode} started`, {
+    restoreId: restore.restoreId,
+    destinationId: restore.destinationId,
+    archiveKey: restore.archiveKey,
+    requestedBy: restore.requestedBy,
+  });
+  let tempDir: string | null = null;
+  try {
+    const cfg = (await ctx.config.get()) as InstanceConfig;
+    const key = passphrase ?? (await resolveEncryptionPassphrase(ctx, cfg));
+    const adapter = await getAdapter(ctx, restore.destinationId);
+    const { envelope, bytesConsumed } = decodeEnvelope(await adapter.downloadHead(restore.archiveKey));
+    restore.archive = describeArchive(envelope);
+    const body = skipBytes(await adapter.download(restore.archiveKey), bytesConsumed);
+    if (restore.mode === "preview") {
+      // Every part decrypted and checked, and the plain text thrown away.
+      // Paperclip's own preview reads nothing but whether the file exists, so
+      // writing the database to disk for it would buy nothing.
+      await verifyArchive({ passphrase: key, envelope, encryptedBodyStream: body });
+      restore.result = { applied: false, dryRun: true, warnings: [] };
+    } else {
+      const decrypted = await decryptArchiveForApply({ passphrase: key, envelope, encryptedBodyStream: body });
+      tempDir = decrypted.dir;
+      // Nothing should have started a backup since the check at the start,
+      // but this is the last moment it can still be refused cleanly.
+      if (backupRunning()) {
+        throw new Error("[EBACKUP_BACKUP_RUNNING] a backup started while the archive was being prepared, try the restore again when it finishes");
+      }
+      restore.stage = "paperclip";
+      const outcome = await hostRestore(ctx)({
+        filePath: decrypted.sqlGzPath,
+        mode: "apply",
+        conflictMode,
+        requestedByUserId: restore.requestedBy,
+      });
+      restore.result = { applied: outcome.applied, dryRun: outcome.dryRun, warnings: outcome.warnings ?? [] };
+    }
+    restore.status = "succeeded";
+  } catch (err) {
+    restore.error = err instanceof Error ? err.message : String(err);
+    restore.status = "failed";
+  } finally {
+    restore.stage = null;
+    restore.finishedAt = new Date().toISOString();
+    // The decrypted dump is the whole database in plain text.
+    if (tempDir) removeRestoreDir(tempDir);
+  }
+  const outcome = {
+    restoreId: restore.restoreId,
+    status: restore.status,
+    requestedBy: restore.requestedBy,
+    error: restore.error ?? undefined,
+  };
+  if (restore.status === "failed") ctx.logger.warn(`restore ${restore.mode} failed`, outcome);
+  else ctx.logger.info(`restore ${restore.mode} finished`, outcome);
+  if (restore.mode === "apply") await recordApplyActivity(ctx, restore, companyId);
+}
+
+/**
+ * File an apply in the activity log once it has ended. An entry written when
+ * it started would be gone: the apply replaces the activity log with the
+ * archive's.
+ */
+async function recordApplyActivity(ctx: PluginContext, restore: RestoreView, companyId: string | null): Promise<void> {
+  if (!companyId) {
+    ctx.logger.warn("restore not filed in the activity log: the call named no company", { restoreId: restore.restoreId });
+    return;
+  }
+  try {
+    await ctx.activity.log({
+      companyId,
+      message: restore.status === "succeeded" ? "backup.restore.applied" : "backup.restore.failed",
+      metadata: {
+        restoreId: restore.restoreId,
+        requestedByUserId: restore.requestedBy,
+        destinationId: restore.destinationId,
+        archiveKey: restore.archiveKey,
+        archiveCreatedAt: restore.archive?.createdAt ?? null,
+        archiveInstanceId: restore.archive?.instanceId ?? null,
+        error: restore.error,
+      },
+    });
+  } catch (err) {
+    // The company may not be in the archive the instance now holds.
+    ctx.logger.warn("could not file the restore in the activity log", {
+      restoreId: restore.restoreId,
+      err: String(err),
+    });
+  }
 }
 
 // ─── Tool / API handlers ─────────────────────────────────────────────────────
@@ -830,6 +1278,9 @@ const plugin = definePlugin({
         ctx.logger.warn("could not close backups left running", { err: String(err) });
       });
 
+    // Likewise a decrypted dump left by a worker stopped mid-restore.
+    sweepDecryptedLeftovers(ctx);
+
     // ─── Cadence jobs ────────────────────────────────────────────────────
 
     for (const cadence of ["hourly", "daily", "weekly", "monthly"] as const) {
@@ -849,6 +1300,12 @@ const plugin = definePlugin({
               [scheduleId, nextRunFor(cadence, new Date()).toISOString()],
             );
             continue;
+          }
+          // An apply is replacing the database: wait for it, then back up
+          // what it restored. Bounded by maxRunMinutes in case it never ends.
+          if (activeRestore?.mode === "apply") {
+            ctx.logger.info(`cadence_${cadence}: waiting for a restore to finish`, { scheduleId });
+            await applyEnded(maxRunMs(cfgNow));
           }
           // Waits its turn behind any backup already running, Run now's
           // included. Starting alongside it failed at once, because the host
@@ -896,7 +1353,8 @@ const plugin = definePlugin({
           started = await startManualBackup(ctx, cfgNow, destinationIds, { agentId: runCtx.agentId }, Boolean(p.destinationId));
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          if (extractErrorCode(message) === "EBACKUP_ALREADY_RUNNING") return { error: message };
+          const code = extractErrorCode(message);
+          if (code === "EBACKUP_ALREADY_RUNNING" || code === "EBACKUP_RESTORE_RUNNING") return { error: message };
           throw err;
         }
         return {
@@ -1103,6 +1561,35 @@ const plugin = definePlugin({
       const destinationIds = (cfgNow.destinations ?? []).filter((d) => d.enabled !== false).map((d) => d.id);
       return await startManualBackup(ctx, cfgNow, destinationIds, {});
     });
+
+    // The Restore tab's Preview and Apply called these keys, and nothing was
+    // registered under them, so both failed at once like Run now did. Only an
+    // instance admin may preview or apply a restore, whatever the allowed
+    // list says. The tab shows its controls only to instance admins, but the
+    // check that counts is the one in each action.
+    ctx.data.register("restore.status", async (params: Record<string, unknown>) => {
+      const isInstanceAdmin = hostSaysInstanceAdmin(params);
+      return { isInstanceAdmin, restore: isInstanceAdmin && latestRestore ? { ...latestRestore } : null };
+    });
+
+    for (const mode of ["preview", "apply"] as const) {
+      ctx.actions.register(`restore.${mode}`, async (params: Record<string, unknown>) => {
+        if (!hostSaysInstanceAdmin(params)) {
+          throw new Error("[EBACKUP_RESTORE_NOT_ADMIN] only an instance admin can preview or apply a restore");
+        }
+        const hostScope = params.hostScope as { userId?: unknown; companyId?: unknown };
+        return startRestore(ctx, {
+          mode,
+          destinationId: params.destinationId,
+          archiveKey: params.archiveKey,
+          passphrase: params.passphrase,
+          conflictMode: params.conflictMode,
+          confirmPhrase: params.confirmPhrase,
+          requestedBy: typeof hostScope.userId === "string" ? hostScope.userId : null,
+          companyId: typeof hostScope.companyId === "string" ? hostScope.companyId : null,
+        });
+      });
+    }
   },
 
   // ─── API request dispatch ────────────────────────────────────────────────
@@ -1116,6 +1603,14 @@ const plugin = definePlugin({
 
   async onConfigChanged(_newCfg: Record<string, unknown>): Promise<void> {
     clearAdapterCache();
+  },
+
+  async onShutdown(): Promise<void> {
+    // The worker exits after this, so a restore under way never reaches its
+    // own cleanup, and the dump it decrypted is the whole database in plain
+    // text. If the folder cannot go now (Paperclip still has the file open),
+    // the next worker's start removes it.
+    if (restoreTempDir) removeRestoreDir(restoreTempDir);
   },
 
   async onHealth() {
@@ -1184,7 +1679,9 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const code = extractErrorCode(message);
-        if (code === "EBACKUP_ALREADY_RUNNING") return { status: 409, body: { error: message } };
+        if (code === "EBACKUP_ALREADY_RUNNING" || code === "EBACKUP_RESTORE_RUNNING") {
+          return { status: 409, body: { error: message } };
+        }
         if (code === "EBACKUP_NO_DESTINATIONS") return { status: 400, body: { error: message } };
         throw err;
       }
@@ -1222,88 +1719,123 @@ async function handleApi(input: PluginApiRequestInput): Promise<PluginApiRespons
     }
     case "restore.preview":
     case "restore.apply": {
-      const apply = routeKey === "restore.apply";
-      const cfgNow = (await ctx.config.get()) as InstanceConfig;
-      const b = (body ?? {}) as {
-        destinationId?: string; archiveKey?: string; passphrase?: string;
-        conflictMode?: string; confirmPhrase?: string;
-      };
-      if (!b.destinationId || !b.archiveKey) {
-        return { status: 400, body: { error: "destinationId and archiveKey required" } };
-      }
-      if (apply && b.confirmPhrase !== "RESTORE THIS INSTANCE") {
-        return { status: 400, body: { error: "confirmPhrase must equal 'RESTORE THIS INSTANCE'" } };
-      }
-      // Passphrase is optional: if omitted, the auto-key is loaded from the
-      // plugin DB. For cross-instance restores in auto-key mode, the caller
-      // must export the key first and pass it here explicitly.
-      const restorePassphrase = b.passphrase ?? await resolveEncryptionPassphrase(ctx, cfgNow);
-      const adapter = await getAdapter(ctx, b.destinationId);
-      const headBytes = await adapter.downloadHead(b.archiveKey);
-      const { envelope, bytesConsumed } = decodeEnvelope(headBytes);
-      const fullStream = await adapter.download(b.archiveKey);
-      // Skip the envelope bytes already consumed.
-      const skipped = await skipBytes(fullStream, bytesConsumed);
-      const { sqlGzPath } = await decryptArchiveToTmpSql({
-        passphrase: restorePassphrase,
-        envelope,
-        encryptedBodyStream: skipped,
-      });
+      // The host lets only instance admins reach these two routes. Like the
+      // page's actions they answer once the restore has started: waiting for
+      // it ran past the host's 30 seconds. Follow it with restore.get.
+      const b = (body ?? {}) as Record<string, unknown>;
       try {
-        const apiBase = process.env.PAPERCLIP_API_URL?.replace(/\/+$/, "") ?? "";
-        if (!apiBase) return { status: 500, body: { error: "[EBACKUP_NO_API_URL] worker has no PAPERCLIP_API_URL" } };
-        const url = `${apiBase}/api/system/snapshot/restore?mode=${apply ? "apply" : "preview"}&conflict=${b.conflictMode ?? "overwrite"}`;
-        const sqlBody = createReadStream(sqlGzPath);
-        const resp = await ctx.http.fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/gzip" },
-          body: sqlBody as unknown as BodyInit,
-          // @ts-expect-error duplex is required by Node fetch when streaming a request body
-          duplex: "half",
-        });
-        const text = await resp.text();
-        if (!resp.ok) return { status: 502, body: { error: text } };
-        return { status: 200, body: JSON.parse(text) };
-      } finally {
-        try { unlinkSync(sqlGzPath); } catch { /* best-effort */ }
+        return {
+          status: 202,
+          body: startRestore(ctx, {
+            mode: routeKey === "restore.apply" ? "apply" : "preview",
+            destinationId: b.destinationId,
+            archiveKey: b.archiveKey,
+            passphrase: b.passphrase,
+            conflictMode: b.conflictMode,
+            confirmPhrase: b.confirmPhrase,
+            requestedBy: input.actor.userId ?? input.actor.actorId ?? null,
+            companyId: input.companyId,
+          }),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const code = extractErrorCode(message);
+        if (code === "EBACKUP_RESTORE_RUNNING" || code === "EBACKUP_BACKUP_RUNNING") {
+          return { status: 409, body: { error: message } };
+        }
+        if (code === "EBACKUP_RESTORE_INVALID" || code === "EBACKUP_RESTORE_NOT_CONFIRMED") {
+          return { status: 400, body: { error: message } };
+        }
+        throw err;
       }
+      // Until 0.1.33 these routes waited for the whole restore and posted the
+      // decrypted dump to Paperclip's own HTTP API. That could never work from
+      // a worker: the route is for instance admins, which a worker cannot be,
+      // and plugin HTTP refuses loopback and private addresses. Kept for
+      // reference; restores go through ctx.system.restoreSnapshot now.
+      //
+      // const apply = routeKey === "restore.apply";
+      // const cfgNow = (await ctx.config.get()) as InstanceConfig;
+      // const b = (body ?? {}) as {
+      //   destinationId?: string; archiveKey?: string; passphrase?: string;
+      //   conflictMode?: string; confirmPhrase?: string;
+      // };
+      // if (!b.destinationId || !b.archiveKey) {
+      //   return { status: 400, body: { error: "destinationId and archiveKey required" } };
+      // }
+      // if (apply && b.confirmPhrase !== "RESTORE THIS INSTANCE") {
+      //   return { status: 400, body: { error: "confirmPhrase must equal 'RESTORE THIS INSTANCE'" } };
+      // }
+      // // Passphrase is optional: if omitted, the auto-key is loaded from the
+      // // plugin DB. For cross-instance restores in auto-key mode, the caller
+      // // must export the key first and pass it here explicitly.
+      // const restorePassphrase = b.passphrase ?? await resolveEncryptionPassphrase(ctx, cfgNow);
+      // const adapter = await getAdapter(ctx, b.destinationId);
+      // const headBytes = await adapter.downloadHead(b.archiveKey);
+      // const { envelope, bytesConsumed } = decodeEnvelope(headBytes);
+      // const fullStream = await adapter.download(b.archiveKey);
+      // // Skip the envelope bytes already consumed.
+      // const skipped = await skipBytes(fullStream, bytesConsumed);
+      // const { sqlGzPath } = await decryptArchiveToTmpSql({
+      //   passphrase: restorePassphrase,
+      //   envelope,
+      //   encryptedBodyStream: skipped,
+      // });
+      // try {
+      //   const apiBase = process.env.PAPERCLIP_API_URL?.replace(/\/+$/, "") ?? "";
+      //   if (!apiBase) return { status: 500, body: { error: "[EBACKUP_NO_API_URL] worker has no PAPERCLIP_API_URL" } };
+      //   const url = `${apiBase}/api/system/snapshot/restore?mode=${apply ? "apply" : "preview"}&conflict=${b.conflictMode ?? "overwrite"}`;
+      //   const sqlBody = createReadStream(sqlGzPath);
+      //   const resp = await ctx.http.fetch(url, {
+      //     method: "POST",
+      //     headers: { "Content-Type": "application/gzip" },
+      //     body: sqlBody as unknown as BodyInit,
+      //     // @ts-expect-error duplex is required by Node fetch when streaming a request body
+      //     duplex: "half",
+      //   });
+      //   const text = await resp.text();
+      //   if (!resp.ok) return { status: 502, body: { error: text } };
+      //   return { status: 200, body: JSON.parse(text) };
+      // } finally {
+      //   try { unlinkSync(sqlGzPath); } catch { /* best-effort */ }
+      // }
+    }
+    case "restore.get": {
+      const id = (params as { id: string }).id;
+      if (!latestRestore || latestRestore.restoreId !== id) {
+        return {
+          status: 404,
+          body: { error: "[EBACKUP_RESTORE_NOT_FOUND] only the latest restore is kept, and not across a restart" },
+        };
+      }
+      return { status: 200, body: { ...latestRestore } };
     }
     default:
       return { status: 404, body: { error: `Unknown route: ${routeKey}` } };
   }
 }
 
-async function skipBytes(stream: NodeJS.ReadableStream, bytes: number): Promise<NodeJS.ReadableStream> {
-  // Read+discard `bytes` from the stream, then return the same stream
-  // for further consumption.
-  let remaining = bytes;
-  return new Readable({
-    async read() {
-      if (remaining > 0) {
-        // Drain `remaining` bytes from upstream first.
-        const reader = stream as unknown as AsyncIterable<Uint8Array>;
-        for await (const chunk of reader) {
-          if (chunk.byteLength <= remaining) {
-            remaining -= chunk.byteLength;
-            if (remaining === 0) break;
-            continue;
-          }
-          const tail = chunk.subarray(remaining);
-          remaining = 0;
-          this.push(Buffer.from(tail));
-          break;
+/**
+ * The archive's body: the stream with its first `bytes` (the envelope) skipped.
+ *
+ * This used to read the stream in two `for await` loops, one after the other.
+ * Leaving the first loop destroys the stream, so the second got nothing, and
+ * any archive longer than one read never decrypted. It reads once now.
+ */
+function skipBytes(stream: NodeJS.ReadableStream, bytes: number): NodeJS.ReadableStream {
+  return Readable.from(
+    (async function* () {
+      let remaining = bytes;
+      for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+        if (remaining >= chunk.byteLength) {
+          remaining -= chunk.byteLength;
+          continue;
         }
+        yield remaining > 0 ? chunk.subarray(remaining) : chunk;
+        remaining = 0;
       }
-      // Now pipe the rest through.
-      const reader = stream as unknown as AsyncIterable<Uint8Array>;
-      for await (const chunk of reader) {
-        if (!this.push(Buffer.from(chunk))) {
-          break;
-        }
-      }
-      this.push(null);
-    },
-  });
+    })(),
+  );
 }
 
 export default plugin;

@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "backup-tools";
-const PLUGIN_VERSION = "0.1.32";
+const PLUGIN_VERSION = "0.1.33";
 
 // ---------------------------------------------------------------------------
 // instanceConfigSchema sub-shapes
@@ -366,9 +366,14 @@ Now wait for the next scheduled run (you'll see \`schedule_state.next_run_after\
 Restore is **instance-admin only**. Open the **Restore** tab, follow the wizard:
 1. Pick destination + archive
 2. Enter passphrase — **optional in auto-key mode**. Leave blank if restoring to the same instance (the plugin loads the stored key automatically). For a cross-instance restore in auto-key mode, export the key first (Restore tab → Export instance key) and paste it here. For user-managed passphrase mode, enter the passphrase as normal.
-3. Preview (envelope-only in v0.1; full preview in v0.2)
+3. Preview: the plugin downloads the whole archive and decrypts it with the passphrase, checking every part, so a wrong passphrase, a changed byte or a cut-off archive is caught. Nothing changes and nothing is saved to disk; Paperclip itself reads the archive only on apply. It runs in the background and can take a few minutes; the tab shows how far it has got.
 4. Type the literal phrase \`RESTORE THIS INSTANCE\` to confirm
-5. Apply — streams the decrypted archive into the privileged \`/api/system/snapshot/restore\` endpoint
+5. Apply: Paperclip replaces the whole database with the archive, in one transaction, so a failed restore leaves the database as it was. It is refused while a backup or another restore is running, and backups wait or are refused until it ends. Paperclip may not answer until it finishes.
+6. Restart Paperclip when it finishes, so every part of it works from the restored data. You may need to sign in again.
+
+Only instance admins see the wizard's controls, and only they can preview or apply.
+
+**Only restore archives you made.** Paperclip replays an archive with psql, which can also run commands on the server.
 
 Conflict modes (\`overwrite\` / \`skip\` / \`fail-on-conflict\`) are declared in the wizard; v0.1 only wires \`overwrite\` through. Other modes return \`[ESNAPSHOT_CONFLICT_MODE_UNSUPPORTED]\`.
 
@@ -419,6 +424,11 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     // core job; without it there is nothing to back up. Replaces an attempt to
     // call the host's own HTTP API, which could never work from inside a worker.
     "system.snapshot.read",
+    // Hand a decrypted archive back to the host to restore. Even more powerful
+    // than reading a snapshot: it replaces the whole database. The worker only
+    // offers it to instance admins. Cast until the vendored plugin toolkit is
+    // repacked from a Paperclip that lists it.
+    "system.snapshot.restore" as never,
     "http.outbound",
     "secrets.read-ref",
     "companies.read",
@@ -614,6 +624,15 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       // Cast: "instance-admin" is recognized by paperclip core's auth-mode
       // enum (added in the same release as /api/system/snapshot*) but isn't
       // in the npm-published SDK type yet.
+      auth: "instance-admin" as never,
+      capability: "api.routes.register",
+      companyResolution: { from: "query", key: "companyId" },
+    },
+    {
+      // Follow a restore that restore.preview or restore.apply started.
+      routeKey: "restore.get",
+      method: "GET",
+      path: "/restore/:id",
       auth: "instance-admin" as never,
       capability: "api.routes.register",
       companyResolution: { from: "query", key: "companyId" },
