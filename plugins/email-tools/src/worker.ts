@@ -1352,6 +1352,59 @@ const plugin = definePlugin({
       },
     );
 
+    ctx.tools.register(
+      "email_search_contacts",
+      {
+        displayName: "Search Email Contacts",
+        description:
+          "Search contacts in the company address book by name or email address.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = (params ?? {}) as { query?: string; limit?: number };
+        try {
+          const contacts = await listContacts(ctx.db, runCtx.companyId, {
+            query: p.query,
+            limit: p.limit,
+          });
+          return {
+            content: `Found ${contacts.length} contact(s).`,
+            data: { contacts },
+          };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "email_save_contact",
+      {
+        displayName: "Save Email Contact",
+        description: "Save or update a contact in the company address book.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = (params ?? {}) as { email?: string; name?: string; notes?: string };
+        if (!p.email) {
+          return { error: "email is required" };
+        }
+        try {
+          const contact = await upsertContact(ctx.db, runCtx.companyId, {
+            email: p.email,
+            name: p.name,
+            notes: p.notes,
+          });
+          return {
+            content: `Saved contact ${contact.email}${contact.name ? ` (${contact.name})` : ""}.`,
+            data: { contact },
+          };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
     ctx.jobs.register("poll-mailboxes", async () => {
       const config = (await ctx.config.get()) as InstanceConfig;
       await runPoll(ctx, config);
@@ -2190,6 +2243,50 @@ const plugin = definePlugin({
         startedAt,
       );
       return { ok: true, messageId: info.messageId, sentCopy: info.sentCopy, original: info.original };
+    });
+
+    // "?"? Address Book Bridge Endpoints "?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?"?
+    ctx.data.register("email.list-contacts", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const query = typeof params.query === "string" ? params.query : typeof params.q === "string" ? params.q : undefined;
+      const limit = typeof params.limit === "number" ? params.limit : typeof params.limit === "string" ? parseInt(params.limit, 10) : undefined;
+      const companyIds = Array.isArray(params.companyIds)
+        ? (params.companyIds as string[])
+        : typeof params.companyIds === "string"
+          ? (params.companyIds as string).split(",").map((s) => s.trim()).filter(Boolean)
+          : undefined;
+
+      if (companyIds && companyIds.length > 0) {
+        const contacts = await searchContactsAcrossCompanies(ctx.db, companyIds, query, limit);
+        return { contacts };
+      }
+
+      if (!companyId) {
+        return { contacts: [] };
+      }
+
+      const contacts = await listContacts(ctx.db, companyId, { query, limit });
+      return { contacts };
+    });
+
+    ctx.actions.register("email.save-contact", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) throw new Error("companyId is required");
+      const email = typeof params.email === "string" ? params.email : "";
+      if (!email) throw new Error("email is required");
+      const name = typeof params.name === "string" ? params.name : undefined;
+      const notes = typeof params.notes === "string" ? params.notes : undefined;
+      const contact = await upsertContact(ctx.db, companyId, { email, name, notes });
+      return { ok: true, contact };
+    });
+
+    ctx.actions.register("email.delete-contact", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) throw new Error("companyId is required");
+      const id = typeof params.id === "string" ? params.id : "";
+      if (!id) throw new Error("id is required");
+      const ok = await deleteContact(ctx.db, companyId, id);
+      return { ok };
     });
 
     idleManager = new IdleManager(ctx);
