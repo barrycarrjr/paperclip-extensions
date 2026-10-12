@@ -432,8 +432,8 @@ packages:
     engines: {node: '>= 10'}
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-g+7M2nvIETGINhyUsOXMC128Gr4eHMoKUROVh/y9b44CQKCMZRmwdipgRJ+et3mIearwsZFwFZKHxo98mVj6kw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
-    version: 1.0.0
+    resolution: {integrity: sha512-Njyao+bYp92zcO0rI5xv8mNY1Fo7EZ3+V4Oyx1OeAKbaJf3Q9qjlIVVfDW68m2AFpXb5krDBSO7fy8TkrHJKLw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    version: 1.0.0-vendor.011d2ecbe694
     hasBin: true
     peerDependencies:
       react: '>=18'
@@ -442,8 +442,8 @@ packages:
         optional: true
 
   '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
-    resolution: {integrity: sha512-ZrY3w1R+nWbwMg/3tY+l51wA3p+nGX49ce9TZVmRr8KsHgKckuHtbRxTEbMZQO4mxogD1uoBKEb8HsXrcfSISg==, tarball: file:../../vendor/sdk/shared.tgz}
-    version: 0.3.1
+    resolution: {integrity: sha512-Smb9AuG2uJP1GieIvMSsrpved2wIzDcFcVBEfZ2xpQpFAZIMZvLcp94F3SsWZu4qSQWExDtPk7FVzO2DO4SwCw==, tarball: file:../../vendor/sdk/shared.tgz}
+    version: 0.3.1-vendor.4f64fbae9447
 
   '@pdf-lib/standard-fonts@1.0.0':
     resolution: {integrity: sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA==}
