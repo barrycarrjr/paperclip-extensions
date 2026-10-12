@@ -7,6 +7,12 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.20.1** - Reply support for explicit CC and BCC recipients. Both the
+  `email_reply` agent tool and the `email.send-reply` bridge action now accept
+  optional `cc` and `bcc` recipient lists, preserving existing `replyAll`
+  behavior while allowing additional CC/BCC addresses to be included in outbound
+  replies.
+
 - **v0.20.0** - The triage review queue moves out of the rules-home issue and
   into the plugin database, next to the sender rules. Until now each triage
   run appended a "Review queue" section (senders it could not place, with its

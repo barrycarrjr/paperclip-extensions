@@ -608,3 +608,18 @@ test("every send in the worker goes through deliver, which saves the copy", () =
   // fetching the original counts.
   assert.equal([...src.matchAll(/const startedAt = Date\.now\(\);/g)].length, 4);
 });
+
+test("email_reply and email.send-reply wire up cc and bcc to deliver", () => {
+  const src = readFileSync(new URL("./worker.ts", import.meta.url), "utf8");
+  const replyToolAt = src.indexOf('"email_reply",');
+  const replyToolEnd = src.indexOf('"email_mark_read",', replyToolAt);
+  const replyTool = src.slice(replyToolAt, replyToolEnd);
+  assert.match(replyTool, /cc:\s*cc\.length\s*>\s*0\s*\?\s*cc\s*:\s*undefined/);
+  assert.match(replyTool, /bcc:\s*bcc\s*&&\s*bcc\.length\s*>\s*0\s*\?\s*bcc\s*:\s*undefined/);
+
+  const replyActionAt = src.indexOf('"email.send-reply",');
+  const replyActionEnd = src.indexOf('"email.send-new",', replyActionAt);
+  const replyAction = src.slice(replyActionAt, replyActionEnd);
+  assert.match(replyAction, /cc:\s*cc\.length\s*>\s*0\s*\?\s*cc\s*:\s*undefined/);
+  assert.match(replyAction, /bcc:\s*bcc\s*&&\s*bcc\.length\s*>\s*0\s*\?\s*bcc\s*:\s*undefined/);
+});

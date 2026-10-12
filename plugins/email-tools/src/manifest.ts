@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.20.0";
+const PLUGIN_VERSION = "0.20.1";
 
 const mailboxItemSchema = {
   type: "object",
@@ -849,6 +849,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
           body: { type: "string", description: "Plain-text body." },
           body_html: { type: "string" },
           replyAll: { type: "boolean", default: false },
+          cc: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+            description: "Optional carbon copy recipients.",
+          },
+          bcc: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+            description: "Optional blind carbon copy recipients.",
+          },
           attachments: {
             type: "array",
             description:

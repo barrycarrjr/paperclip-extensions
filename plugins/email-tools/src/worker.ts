@@ -962,6 +962,8 @@ const plugin = definePlugin({
           body_html?: string;
           replyAll?: boolean;
           attachments?: unknown;
+          cc?: string | string[];
+          bcc?: string | string[];
         };
         const gate = gateMailbox("email_reply", p.mailbox, runCtx, config);
         if (!gate.ok) return { error: gate.error };
@@ -994,6 +996,23 @@ const plugin = definePlugin({
           );
           cc = withoutOwnAddress(merged, ourAddress);
         }
+        if (p.cc) {
+          const extraCc = Array.isArray(p.cc)
+            ? p.cc
+            : typeof p.cc === "string"
+              ? p.cc.split(",").map((x) => x.trim()).filter(Boolean)
+              : [];
+          for (const addr of extraCc) {
+            if (!cc.includes(addr)) {
+              cc.push(addr);
+            }
+          }
+        }
+        const bcc = Array.isArray(p.bcc)
+          ? p.bcc
+          : typeof p.bcc === "string"
+            ? p.bcc.split(",").map((x) => x.trim()).filter(Boolean)
+            : undefined;
 
         const subject = original.subject?.match(/^re:/i)
           ? original.subject
@@ -1021,6 +1040,7 @@ const plugin = definePlugin({
               from: rt.smtpFrom,
               to: replyTo,
               cc: cc.length > 0 ? cc : undefined,
+              bcc: bcc && bcc.length > 0 ? bcc : undefined,
               subject,
               body: p.body,
               bodyHtml: p.body_html,
@@ -2067,6 +2087,23 @@ const plugin = definePlugin({
         );
         cc = withoutOwnAddress(merged, ourAddress);
       }
+      if (params.cc) {
+        const extraCc = Array.isArray(params.cc)
+          ? (params.cc as string[])
+          : typeof params.cc === "string"
+            ? (params.cc as string).split(",").map((x) => x.trim()).filter(Boolean)
+            : [];
+        for (const addr of extraCc) {
+          if (!cc.includes(addr)) {
+            cc.push(addr);
+          }
+        }
+      }
+      const bcc = Array.isArray(params.bcc)
+        ? (params.bcc as string[])
+        : typeof params.bcc === "string"
+          ? (params.bcc as string).split(",").map((x) => x.trim()).filter(Boolean)
+          : undefined;
       const subject = original.subject?.match(/^re:/i) ? original.subject : `Re: ${original.subject ?? ""}`.trim();
       const refsChain = [...original.references];
       if (original.messageId && !refsChain.includes(original.messageId)) {
@@ -2083,6 +2120,7 @@ const plugin = definePlugin({
           from: rt.smtpFrom,
           to: replyTo,
           cc: cc.length > 0 ? cc : undefined,
+          bcc: bcc && bcc.length > 0 ? bcc : undefined,
           subject,
           body,
           bodyHtml,
