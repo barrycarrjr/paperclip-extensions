@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.20.1";
+const PLUGIN_VERSION = "0.21.0";
 
 const mailboxItemSchema = {
   type: "object",
@@ -877,6 +877,39 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
           },
         },
         required: ["mailbox", "uid", "body"],
+      },
+    },
+    {
+      name: "email_search_contacts",
+      displayName: "Search Email Contacts",
+      description:
+        "Search contacts in the company address book by name or email address.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Optional query to filter contacts by name or email.",
+          },
+          limit: {
+            type: "integer",
+            description: "Maximum number of contacts to return (default 20, max 100).",
+          },
+        },
+      },
+    },
+    {
+      name: "email_save_contact",
+      displayName: "Save Email Contact",
+      description: "Save or update a contact in the company address book.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          email: { type: "string", description: "Contact email address." },
+          name: { type: "string", description: "Optional display name for the contact." },
+          notes: { type: "string", description: "Optional notes for the contact." },
+        },
+        required: ["email"],
       },
     },
   ],

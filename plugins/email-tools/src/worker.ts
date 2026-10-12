@@ -72,6 +72,12 @@ import {
 import { writeSenderRule } from "./sender-rules.js";
 import { recordAgentTriageMoves } from "./agent-moves.js";
 import {
+  listContacts,
+  searchContactsAcrossCompanies,
+  upsertContact,
+  deleteContact,
+} from "./contacts.js";
+import {
   parseStoredCursor,
   planCursorAdvance,
   resolveSince,

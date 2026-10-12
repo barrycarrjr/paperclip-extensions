@@ -7,6 +7,12 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.21.0** - Address book and contact management. Adds persistent contacts table
+  (`email_contacts`), agent tools `email_search_contacts` and `email_save_contact`,
+  and UI bridge endpoints (`email.list-contacts`, `email.save-contact`,
+  `email.delete-contact`) with cross-company search support for portfolio-wide
+  address book suggestions.
+
 - **v0.20.1** - Reply support for explicit CC and BCC recipients. Both the
   `email_reply` agent tool and the `email.send-reply` bridge action now accept
   optional `cc` and `bcc` recipient lists, preserving existing `replyAll`
