@@ -30,11 +30,14 @@ Same convention as `email-triage`:
 | `title` | NO — hardcode the mailbox name | `Triage support Help Scout` |
 | `description` | YES — use `{{mailbox}}` | `Run helpscout-triage against the {{mailbox}} mailbox...` |
 | `variables` | one entry: `{name: "mailbox", defaultValue: "<key>"}` | |
-| `parentIssueId` | the rules-home issue ID for this mailbox | |
 
 Hardcoding the title keeps the placeholder syntax out of the UI listing.
 When cloning for a new mailbox, update both the title text and the
 variable's `defaultValue`.
+
+Keep the description to the account and this skill. The procedure and the
+rules are not repeated there: a copy goes stale the next time this skill
+changes, and the run issue inherits it as its own description.
 
 ## Pre-conditions
 
@@ -44,10 +47,11 @@ variable's `defaultValue`.
   (the skill needs to tag and change status).
 - `help-scout` plugin v0.6.0+, which is where triage rules live. Older
   versions kept them in a Markdown document.
-- A **rules-home issue** in the routine's company, with
-  `routine.parentIssueId` pointing at it. Optional for triage itself now
-  that rules and the cursor are in the plugin database. It is still the
-  target for the one-time import and tombstone (step 1b).
+- No issue is needed for anything this skill reads or writes. Rules and
+  the cursor are in the help-scout plugin. Older installs have a
+  "rules-home" issue titled `Help Scout triage rules - <account>` with a
+  retired `helpscout-triage-rules` document on it; never read or write
+  that document.
 
 ## Parameters (passed in by the routine)
 
@@ -79,55 +83,10 @@ The response is:
 Use these two lists for the matching in Step 5. Keep-active is evaluated
 first and wins.
 
-### 1b. One-time migration (skip once done)
-
-Older installs still have the rules in a `helpscout-triage-rules`
-document. Lift them across once, then retire the document.
-
-Resolve the rules-home issue. A null `parentIssueId` means there is
-nothing to migrate, so skip the rest of this step and carry on:
-
-```bash
-PARENT_ID=$(curl -s -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
-  "$PAPERCLIP_API_URL/api/routines/$ROUTINE_ID" \
-  | jq -r '.parentIssueId')
-```
-
-Fetch `GET /api/issues/<PARENT_ID>/documents/helpscout-triage-rules`. On
-404, or if the body already contains
-`<!-- retired:helpscout-triage-rules -->`, there is nothing to do.
-
-Otherwise:
-
-1. Pass the document body to the `helpscout.import-rules` plugin action
-   with `accountKey` and (if scoped) `mailboxId`. It parses all four rule
-   forms, gives keep-active precedence over auto-noise on any conflict,
-   and is safe to run twice. It returns `{ found, imported, existing }`.
-2. Re-run `helpscout_list_rules` and confirm the count matches what the
-   document held. **If anything is missing, stop and report it** rather
-   than continuing, because the document is about to stop being read.
-3. `PUT` the tombstone body below to the same document path, with a
-   `changeSummary` of "Retired: rules moved to the help-scout database".
-
-```markdown
-<!-- retired:helpscout-triage-rules -->
-
-# Retired
-
-This document no longer holds anything.
-
-- **Triage rules** live in the help-scout plugin database. Manage them
-  with the Keep active / Auto-noise buttons in the Help Scout view.
-- **The triage cursor** lives in plugin state, read and written by
-  `helpscout_get_triage_cursor` / `helpscout_set_triage_cursor`.
-
-Previous contents remain in this document's revision history.
-```
-
-Do not attempt to DELETE the document. That route requires board auth
-and an agent does not have it.
-
-Mention the import counts in the run report the first time this runs.
+<!-- Step 1b, the one-time lift of a helpscout-triage-rules document into
+the database, is retired: the live instance's documents were imported and
+tombstoned in August 2026. The helpscout.import-rules plugin action still
+exists for an install that has one left. -->
 
 ### 2. Determine since-cutoff
 
@@ -204,10 +163,12 @@ c. **Match against Auto-noise** — if any rule matches:
 d. **No match** — count it as a rule candidate if it looks like one,
    otherwise leave it alone entirely.
 
-   "Count" means tally it in memory for the run report in Step 7. There
-   is nowhere to write it, and nothing reads a stored queue: the operator
-   sets rules from the Keep active / Auto-noise buttons in the Help Scout
-   view, which write straight to the database.
+   "Count" means tally it in memory for the run report in Step 7. Do not
+   store it anywhere, least of all in an issue or a document: a
+   conversation this skill does not close stays active in Help Scout
+   until someone handles it, so Help Scout itself is the list of what is
+   waiting. The operator sets rules from the Keep active / Auto-noise
+   buttons in the Help Scout view, which write straight to the database.
 
    - Sender domain is in known-noise pattern list (e.g. `@*.notifications`,
      `noreply@`, `no-reply@`, `mailer@`) → count it.
@@ -227,8 +188,10 @@ recorded a later timestamp: note it and finish normally, do not force.
 
 ### 7. Report
 
-Append a comment on **this run's issue** (NOT the rules-home / parent
-issue). Use `PAPERCLIP_ISSUE_ID` from the heartbeat env.
+Append a comment on **this run's issue**: `PAPERCLIP_ISSUE_ID` from the
+heartbeat env. That is the issue paperclip created for this routine fire,
+or the wake issue that woke you. Never comment on, or write to, a
+rules-home or parent issue.
 
 ```
 Help Scout triage - <mailbox> - <UTC timestamp>
@@ -250,6 +213,30 @@ Set rules with the Keep active / Auto-noise buttons in the Help Scout view.
 of looking identical to one that used a real cursor.
 
 If `errorCount > 0`, list the first 5 errors instead.
+
+## When an issue wakes you (watch-new-mail)
+
+An account with the help-scout **watch-new-mail** job on has one
+long-lived triage issue. The job checks the account every 2 minutes and
+wakes that issue when active conversations appear past the triage cursor;
+a human comment wakes it too. Its description only names the account and
+this skill. The behaviour below is the same for every account, so it
+lives here, not in the issue.
+
+- When woken, run one triage cycle: Steps 1 to 7, with the comment in
+  Step 7 only if something was processed or a rule changed.
+- At the end of every run, in this order:
+  1. If anything reopened the issue, set it back to `blocked`
+     (`PATCH /api/issues/<id>` with `{"status":"blocked"}`). Blocked
+     means "waiting for mail" and keeps the platform's 30 second re-wake
+     scan away (it only looks at `todo` and `in_progress`). Do not "fix"
+     it to `in_progress`.
+  2. If your session offers a way to schedule your own wake, keep exactly
+     one fallback wake about an hour out. If it does not, skip this; the
+     watch job still covers new conversations.
+  3. End the run.
+- Keep nothing in that issue. Rules and the cursor are in the plugin. The
+  issue's comments are the run history, not a place to look things up.
 
 ## Rule matching syntax
 

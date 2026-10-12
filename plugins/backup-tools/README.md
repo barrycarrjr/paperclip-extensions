@@ -9,14 +9,14 @@ Encrypted system snapshots for your Paperclip instance, on a schedule (or on dem
 - Fans out a single backup to one or more configured destinations (S3-compatible, Google Drive) in parallel.
 - Runs on four cadences: hourly / daily / weekly / monthly. Operators bind schedules to destinations on the settings page.
 - Prunes old archives per destination by `keepLast`.
-- Restore wizard streams a remote archive back through the privileged `/api/system/snapshot/restore` endpoint with a typed-confirmation gate.
+- Restore wizard, for instance admins only: decrypts a remote archive and has Paperclip replace the database with it (`ctx.system.restoreSnapshot`), after a preview and a typed confirmation. **Only restore archives you made:** Paperclip replays an archive with psql, which can also run commands on the server.
 - Failure issues filed in a configured company's inbox.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `backup_run_now` | Trigger a manual backup (mutationsEnabled gate). Optional destinationId. |
+| `backup_run_now` | Start a manual backup (mutationsEnabled gate). Optional destinationId. Answers once the backup has started, or with the backup already running; follow it with `backup_get_status`. |
 | `backup_list_recent` | List recent backups (filterable by cadence/status). |
 | `backup_get_status` | Fetch one backup with per-destination outcomes. |
 | `backup_list_destinations` | List destinations the company is allowed to use. |
@@ -113,7 +113,7 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 | `EBACKUP_UPLOAD_FAILED` | generic upload failure |
 | `EBACKUP_DOWNLOAD_FAILED` | generic download failure |
 | `EBACKUP_DELETE_FAILED` | retention delete failed |
-| `EBACKUP_INTEGRITY_FAILED` | per-chunk authentication or envelope HMAC failed |
+| `EBACKUP_INTEGRITY_FAILED` | per-chunk authentication or envelope HMAC failed, or the archive is cut off (no end marker) or has data after its end marker |
 | `EBACKUP_ENVELOPE_TOO_LARGE` | manifest envelope exceeded 64 KiB |
 | `EBACKUP_ENVELOPE_INVALID` | envelope JSON couldn't be parsed or magic mismatched |
 | `EBACKUP_ENVELOPE_TRUNCATED` | not enough bytes to decode envelope |
@@ -123,20 +123,57 @@ When `passphraseSecretRef` is not set, the plugin manages the encryption key its
 | `EBACKUP_SNAPSHOT_NO_BODY` | core response had no body stream |
 | `EBACKUP_KDF_UNSUPPORTED` | envelope declares an unknown KDF |
 | `EBACKUP_NOT_FOUND` | requested backup id doesn't exist |
+| `EBACKUP_INTERRUPTED` | the plugin stopped (a restart or an upgrade) before a running backup finished; set when the plugin next starts |
+| `EBACKUP_TIMED_OUT` | a backup was still running after `maxRunMinutes`; it is marked failed and the next backup may start |
+| `EBACKUP_ALREADY_RUNNING` | a backup is already running and the request asked for destinations it is not using; try again when it finishes |
+| `EBACKUP_RESTORE_NOT_ADMIN` | a preview or apply came from someone who is not an instance admin |
+| `EBACKUP_RESTORE_INVALID` | a restore named no destination or no archive (API 400) |
+| `EBACKUP_RESTORE_NOT_CONFIRMED` | an apply without the phrase `RESTORE THIS INSTANCE` (API 400) |
+| `EBACKUP_RESTORE_RUNNING` | a restore is already running; one at a time. Also Run now (page, API, `backup_run_now`) while an apply runs (API 409) |
+| `EBACKUP_BACKUP_RUNNING` | an apply while a backup runs; try again when it finishes (API 409) |
+| `EBACKUP_RESTORE_NOT_FOUND` | `restore.get` asked for a restore that is not the latest; only the latest is kept, and not across a restart |
+| `EBACKUP_RESTORE_UNSUPPORTED` | the plugin was built with a plugin toolkit that has no `ctx.system.restoreSnapshot` |
 | `ECOMPANY_NOT_ALLOWED` | calling company isn't in `allowedCompanies` |
 | `EDISABLED` | mutation tool called while `mutationsEnabled: false` |
 
 ## Recent changes
 
-- **v0.1.31** - Restore works. Preview and apply both hung until the 30 s RPC
-  timeout (`RPC call "handleApiRequest" timed out`) because `skipBytes` looped
-  over the archive stream twice: leaving the first `for await` early destroyed
-  the stream, so the second loop threw `AbortError` and decryption waited
-  forever. It now reads the stream through one iterator and fails fast on a
-  stream error. Also pins `packageManager` to `pnpm@10.28.0`: pnpm 11+ ignores
-  the `pnpm.overrides` block, so builds silently bundled the npm SDK instead of
-  the vendored one and backups failed with
-  `Cannot read properties of undefined (reading 'createSnapshot')`.
+- **v0.1.33** - The Restore tab's Preview and Apply work, for instance admins only. Like Run now
+  before 0.1.32, both called page actions the plugin never registered, so they failed at once.
+  Behind them the restore could not have worked either: it posted the decrypted dump to
+  Paperclip's own HTTP API, which a worker cannot reach, and it lost the rest of any archive
+  longer than one read while skipping the envelope. The plugin now hands the decrypted dump to
+  Paperclip with `ctx.system.restoreSnapshot`, behind a new `system.snapshot.restore`
+  capability. Only an instance admin may preview or apply (the page shows its controls only to
+  them), using the instance-admin flag Paperclip now stamps on page calls. Preview and apply
+  answer at once and run in the background; the page shows each step and the result, and the
+  `restore.preview` / `restore.apply` API routes answer 202, with a new `restore.get` route to
+  follow them. A preview decrypts and checks every part of the archive in the plugin and keeps
+  nothing; Paperclip reads an archive only to apply it. A cut-off archive, or one with data after
+  its end, now fails the preview instead of passing it. An apply needs the typed phrase and is
+  refused while a backup or another restore runs, checked again just before Paperclip starts;
+  Paperclip also refuses it while it is taking a snapshot. While an apply runs, Run now (page,
+  API and `backup_run_now`) is refused and scheduled backups wait for it. A blank passphrase uses
+  this instance's own key. The decrypted dump for an apply is written only in a private folder,
+  readable by this account alone, and removed afterwards, on shutdown, or at the next start if a
+  worker stopped mid-restore. Who asked is logged at start and end, by the plugin and by
+  Paperclip, and an apply is filed in the activity log once it ends. Requires a Paperclip with
+  `system.snapshot.restore`, and a build made with its plugin toolkit (re-vendored); an older
+  build says it cannot restore. Restart Paperclip after a restore. Only restore archives you
+  made: Paperclip replays them with psql, which can also run commands on the server.
+- **v0.1.32** - "Run backup now" works. The page called an action the plugin never registered,
+  so the button always failed, and the run-now API route waited for the whole backup and
+  answered 502 after 30 seconds while the backup succeeded. Run now (page, API and the
+  `backup_run_now` tool) now answers at once and the backup runs in the background; the page
+  shows it running and then its result. Every backup, manual or scheduled, goes through one
+  queue, so they no longer collide; each gets a `maxRunMinutes` deadline (`EBACKUP_TIMED_OUT`),
+  and a backup cut off by a restart is marked `EBACKUP_INTERRUPTED`. API routes and the
+  dashboard widget now refuse companies not on the allowed list. Refusals show their message
+  instead of "[object Object]", and the "Idempotency-key honored" claim is gone.
+- **v0.1.31** - A snapshot now gets 120 seconds to come back from the host instead of 30. The
+  plugin toolkit gave every call to Paperclip 30 seconds, an instance's snapshot outgrew that,
+  and the 2026-10-09 nightly backup failed on it (HQ-486). Rebuilt with Paperclip's plugin
+  toolkit from master, which gives `system.createSnapshot` its own 120-second limit.
 
 - **v0.1.30** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 

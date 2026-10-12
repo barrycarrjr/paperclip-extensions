@@ -59,6 +59,11 @@ export interface ConfigMailbox {
 export interface InstanceConfig {
   allowSend?: boolean;
   pollIntervalMinutes?: number;
+  /**
+   * Days a review-queue entry may go without new mail from its sender before
+   * it drops out (see review-queue.ts). Default 30.
+   */
+  reviewQueueExpiryDays?: number;
   mailboxes?: ConfigMailbox[];
   /**
    * Azure Entra "Application (client) ID" of the registered OAuth app, used for

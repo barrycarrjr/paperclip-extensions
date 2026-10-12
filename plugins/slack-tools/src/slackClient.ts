@@ -12,6 +12,19 @@ export interface ConfigWorkspace {
   defaultChannel?: string;
   allowedCompanies?: string[];
   supportChannels?: string[];
+  /** App-level token (xapp-...) for Socket Mode; enables inbound DMs. */
+  appTokenRef?: string;
+  /**
+   * Where an operator DM goes: a Clippy conversation as the Paperclip user
+   * who paired the sender's Slack account (default), or a wake of one agent.
+   */
+  inboundDmTarget?: "clippy" | "agent";
+  /** Agent woken with each operator DM as its prompt (agent mode). */
+  inboundDmAgentId?: string;
+  /** Company scope of the Clippy session, or the agent's company. */
+  inboundDmCompanyId?: string;
+  /** Slack user ids whose DMs are delivered; defaults to defaultDmTarget. */
+  inboundDmFromUserIds?: string[];
 }
 
 export interface InstanceConfig {

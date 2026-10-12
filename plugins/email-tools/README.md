@@ -7,6 +7,36 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.20.0** - The triage review queue moves out of the rules-home issue and
+  into the plugin database, next to the sender rules. Until now each triage
+  run appended a "Review queue" section (senders it could not place, with its
+  note on each) to a Markdown document on a rules-home issue. An issue is a
+  unit of work, not a place to keep standing data: on one mailbox that
+  document had passed 2,600 lines, nothing could query it, and it never
+  learned that a sender had since been given a rule. Adds the
+  `email_add_to_review_queue` and `email_list_review_queue` agent tools, the
+  `email.list-review-queue` bridge resource, and the
+  `email.add-to-review-queue` and `email.dismiss-review-entry` bridge actions
+  (the first is also the one-time import path for the old documents).
+  Each message is counted once however many runs see it, by Message-ID or,
+  for a message without one, by UID; a call that names no messages only sets
+  a floor, so repeating it (or an import) adds nothing. A batch is written
+  in one statement, so it is stored whole or not at all, and an entry that
+  cannot be stored is skipped and reported rather than failing the batch.
+  Every entry has a way out: every rule write clears the entries it settles
+  (the Auto-triage / Keep / Mute buttons, where `email.set-rule` now returns
+  `clearedReviewEntries`, and the rules the poll loop learns from mail
+  dragged into `_paperclip/triage` both go through one function, and a test
+  fails if a rule is written around it); Dismiss clears an address and its
+  domain's whole-domain entry; and an entry with no new mail for the new
+  **Review queue expiry (days)** setting (default 30) drops out and is
+  pruned. A failed clear never fails the rule. Mail an agent moves into
+  `_paperclip/triage` with `email_move` is recorded, and the poll loop no
+  longer learns an auto-triage rule from it: in loose mode that turned the
+  agent's guess into a rule and cleared the entry it had just queued. New
+  migration `004_review_queue.sql` (two tables), additive. No new
+  capability.
+
 - **v0.19.1** - Add reviewed Support Desk vendor-email delivery with immutable exact-message consent, current-account checks and durable one-attempt receipts. Uncertain delivery requires inspection; no automatic vendor messages.
 
 - **v0.19.0** - Every message the plugin sends now leaves a copy in the
@@ -281,14 +311,65 @@ senders never wake the agent. When the count is above zero, the plugin
 requests one assignment wakeup; because the poll cursor advances with
 the fetch, each batch wakes exactly once.
 
-Pair it with issue instructions that drop fast self-polling: finish the
-triage cycle, keep exactly one long fallback wake pending (for example
-60 minutes), and end the run. The fallback bounds the delay if a wake
-lands while the agent is unavailable, and it satisfies hosts whose
-liveness recovery re-wakes an idle in_progress issue that has nothing
-scheduled (Paperclip does, every 30 seconds). Parking the issue as
-"blocked" while idle keeps that scan away entirely; wakeups still reach
-a blocked issue as long as no other issue blocks it.
+What the agent does at the end of a woken run lives in the email-triage
+skill, not in the issue: finish the triage cycle, keep exactly one long
+fallback wake pending (for example 60 minutes), and end the run. The
+fallback bounds the delay if a wake lands while the agent is unavailable,
+and it satisfies hosts whose liveness recovery re-wakes an idle
+in_progress issue that has nothing scheduled (Paperclip does, every 30
+seconds). Parking the issue as "blocked" while idle keeps that scan away
+entirely; wakeups still reach a blocked issue as long as no other issue
+blocks it. The issue description then only needs to name the mailbox and
+the skill.
+
+## Triage review queue
+
+Senders the triage routine could not place, waiting for the operator to
+give them a rule or dismiss them. Stored per company and mailbox in
+`email_review_queue`, next to the sender rules.
+
+- `email_add_to_review_queue` (agent tool): `{ mailbox, entries: [{ sender,
+  messages?, messageIds?, count?, displayName?, subject?, note?,
+  suggestedRule?, lastSeenAt?, firstSeenAt? }] }`. `sender` is a full
+  address or an @domain; a From header is reduced to its address. Pass
+  `messages` as `email_search` returns them (`{ messageId, uid }`): runs see
+  the same unread mail again (the window overlaps the last run, and without
+  the IMAP WITHIN extension a search by date returns the whole day), and the
+  queue counts each message once, by Message-ID or, when it is null, by
+  UID. `count` is only for callers that cannot name the messages: it sets a
+  floor that repeating the call cannot raise. A sender already queued is
+  updated; a sender a rule already covers is not queued and comes back
+  under `alreadyRuled`; an entry that cannot be stored (an address no rule
+  could match, a bad field, or a last-seen date past the expiry) comes back
+  under `skipped` with the reason. The rest are written in one statement.
+- `email_list_review_queue` (agent tool): `{ mailbox, limit? }`, noisiest
+  first, answering `{ entries, total }`.
+- `email.list-review-queue` (bridge resource) and
+  `email.add-to-review-queue` (bridge action) are the operator-side twins.
+- `email.dismiss-review-entry` (bridge action): `{ companyId, mailbox,
+  sender }`, for a sender dealt with without a rule. It clears the address
+  and its domain's whole-domain entry (an @domain clears the domain entry
+  and every address in it), and answers `cleared: 0` for a sender that
+  could never have been queued.
+
+An entry leaves the queue when any rule covers its sender (the exact
+address, or its @domain), however the rule was made; when it is
+dismissed; or when its sender sends nothing new for **Review queue expiry
+(days)** (default 30), after which it drops out of listings and the next
+write prunes it. This is a different list from the "awaiting your call"
+rows on the Morning Brief, which are worked out live from unread mail:
+mail the routine moved, or that someone read elsewhere, drops off that
+list, while the routine's view that the sender deserves a rule stays here
+until someone decides or the sender goes quiet.
+
+The poll loop still learns an auto-triage rule from mail the operator
+drags into `_paperclip/triage`, but not from mail an agent moved there with
+`email_move`: those moves are recorded (`email_agent_triage_moves`, kept a
+fortnight) and skipped.
+
+To lift the entries out of an old rules-home document once, send them to
+`email.add-to-review-queue` (board access), then retire the document.
+Running the same import twice changes nothing.
 
 ## Migrating from v0.2.0
 

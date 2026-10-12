@@ -23,9 +23,21 @@ const SUBJECT_RE = /^subject:\s*\S/i;
 
 /** The three accepted forms: full address, @domain, or subject substring. */
 export function isValidRulePattern(pattern: string): boolean {
+  return rulePatternKind(pattern) !== null;
+}
+
+/**
+ * Which of the three forms a pattern is, or null for none of them. The review
+ * queue needs the distinction: an address or a domain can stand for a sender,
+ * a subject match cannot.
+ */
+export function rulePatternKind(pattern: string): "address" | "domain" | "subject" | null {
   const p = pattern.trim();
-  if (!p) return false;
-  return ADDRESS_RE.test(p) || DOMAIN_RE.test(p) || SUBJECT_RE.test(p);
+  if (!p) return null;
+  if (ADDRESS_RE.test(p)) return "address";
+  if (DOMAIN_RE.test(p)) return "domain";
+  if (SUBJECT_RE.test(p)) return "subject";
+  return null;
 }
 
 /**

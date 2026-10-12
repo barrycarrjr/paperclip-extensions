@@ -60,6 +60,18 @@ import {
   normalizeRulePattern,
 } from "./rule-patterns.js";
 import {
+  addToReviewQueue,
+  describeAddResult,
+  dismissReviewEntry,
+  expiryCutoff,
+  listReviewQueue,
+  normalizeReviewSender,
+  parseReviewEntries,
+  resolveExpiryDays,
+} from "./review-queue.js";
+import { writeSenderRule } from "./sender-rules.js";
+import { recordAgentTriageMoves } from "./agent-moves.js";
+import {
   parseStoredCursor,
   planCursorAdvance,
   resolveSince,
@@ -73,6 +85,7 @@ import {
   applyMuteRuleToInbox,
   clearSecretCache,
   resolveMailboxSecret,
+  TRIAGE_FOLDER,
 } from "./poll.js";
 import { IdleManager } from "./idle.js";
 import { buildThread } from "./threading.js";
@@ -855,13 +868,45 @@ const plugin = definePlugin({
         if (uids.length === 0) return { error: "uid is required" };
         if (!p.targetFolder) return { error: "targetFolder is required" };
         const folder = resolveFolder(gate.cfg, p.folder);
+        // Mail an agent puts in the triage folder is its own guess, not the
+        // operator's decision, so the poll loop must not learn a rule from it
+        // (agent-moves.ts). Recording is bookkeeping: if it fails, the move
+        // still goes ahead and the old behaviour (learning from it) returns.
+        const intoTriage = p.targetFolder === TRIAGE_FOLDER;
+        const recordMoves = async (messageKeys: string[]): Promise<void> => {
+          try {
+            await recordAgentTriageMoves(ctx.db, {
+              companyId: runCtx.companyId,
+              mailbox: gate.cfg.key ?? (p.mailbox as string),
+              messageKeys,
+            });
+          } catch (err) {
+            ctx.logger.warn("email-tools: could not record an agent move into the triage folder", {
+              mailbox: gate.cfg.key,
+              error: (err as Error).message,
+            });
+          }
+        };
         try {
-          const result = await withImapConnection(
-            ctx,
-            gate.cfg,
-            p.mailbox as string,
-            async (client) => moveMessages(client, folder, uids, p.targetFolder as string),
-          );
+          // Was a single moveMessages call. Kept as the undo path.
+          // const result = await withImapConnection(
+          //   ctx,
+          //   gate.cfg,
+          //   p.mailbox as string,
+          //   async (client) => moveMessages(client, folder, uids, p.targetFolder as string),
+          // );
+          const result = await withImapConnection(ctx, gate.cfg, p.mailbox as string, async (client) => {
+            // Before the move, by Message-ID, so the learner cannot see the
+            // messages first.
+            if (intoTriage) {
+              const before = await fetchHeaders(client, folder, uids).catch(() => []);
+              await recordMoves(before.map((h) => h.messageId ?? ""));
+            }
+            const moved = await moveMessages(client, folder, uids, p.targetFolder as string);
+            // After it, by the new UID, for mail with no Message-ID.
+            if (intoTriage) await recordMoves([...moved.uidMap.values()].map((u) => `uid:${u}`));
+            return moved;
+          });
           await ctx.telemetry.track("email_move", {
             mailbox: gate.cfg.key ?? "",
             companyId: runCtx.companyId,
@@ -1169,6 +1214,114 @@ const plugin = definePlugin({
         return {
           content: `Triage cursor for "${p.mailbox}" set to ${plan.lastRunAt}.`,
           data: { lastRunAt: plan.lastRunAt },
+        };
+      },
+    );
+
+    /**
+     * Resolve a mailbox for the review queue and confirm the calling company
+     * may touch it, the same two checks the rule and cursor tools make.
+     * Returns the configured key, so an entry is filed under the same key the
+     * Email page uses when it sets a rule and clears the entry, and the
+     * cut-off before which an entry has dropped out of the queue.
+     */
+    async function resolveReviewMailbox(
+      tool: string,
+      mailboxKey: string,
+      companyId: string,
+    ): Promise<{ mailbox: string; expiresBefore: Date }> {
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool,
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      return {
+        mailbox: cfg.key ?? mailboxKey,
+        expiresBefore: expiryCutoff(new Date(), resolveExpiryDays(config.reviewQueueExpiryDays)),
+      };
+    }
+
+    function clampListLimit(raw: unknown): number {
+      return typeof raw === "number" && Number.isFinite(raw)
+        ? Math.min(500, Math.max(1, Math.floor(raw)))
+        : 100;
+    }
+
+    /** Validate and store a batch; shared by the agent tool and the bridge action. */
+    async function queueBatch(tool: string, mailboxKey: string, companyId: string, entries: unknown) {
+      const { mailbox, expiresBefore } = await resolveReviewMailbox(tool, mailboxKey, companyId);
+      const parsed = parseReviewEntries(entries, new Date(), { expiresBefore });
+      if (!parsed.ok) throw new Error(parsed.error);
+      const result = await addToReviewQueue(ctx.db, {
+        companyId,
+        mailbox,
+        entries: parsed.entries,
+        skipped: parsed.skipped,
+        expiresBefore,
+      });
+      return { mailbox, result };
+    }
+
+    ctx.tools.register(
+      "email_add_to_review_queue",
+      {
+        displayName: "Add Senders to the Review Queue",
+        description:
+          "Record senders the triage run surfaced for a decision in the mailbox's review queue, kept in the plugin next to the sender rules. Entries that cannot be stored are skipped and reported; the rest are stored together.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { mailbox?: string; entries?: unknown };
+        if (typeof p.mailbox !== "string" || !p.mailbox) {
+          return { error: "mailbox is required" };
+        }
+        try {
+          const { mailbox, result } = await queueBatch(
+            "email_add_to_review_queue",
+            p.mailbox,
+            runCtx.companyId,
+            p.entries,
+          );
+          return { content: describeAddResult(mailbox, result), data: result };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
+    ctx.tools.register(
+      "email_list_review_queue",
+      {
+        displayName: "List the Review Queue",
+        description:
+          "Return the senders waiting in the mailbox's review queue for the operator's decision, noisiest first.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = params as { mailbox?: string; limit?: number };
+        if (typeof p.mailbox !== "string" || !p.mailbox) {
+          return { error: "mailbox is required" };
+        }
+        let resolved: { mailbox: string; expiresBefore: Date };
+        try {
+          resolved = await resolveReviewMailbox("email_list_review_queue", p.mailbox, runCtx.companyId);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+        const result = await listReviewQueue(ctx.db, {
+          companyId: runCtx.companyId,
+          mailbox: resolved.mailbox,
+          limit: clampListLimit(p.limit),
+          expiresBefore: resolved.expiresBefore,
+        });
+        return {
+          content: `${result.total} sender(s) waiting for a decision in "${resolved.mailbox}".`,
+          data: result,
         };
       },
     );
@@ -1746,14 +1899,34 @@ const plugin = definePlugin({
         companyId,
       });
       const storedPattern = normalizeRulePattern(senderPattern);
-      await ctx.db.execute(
-        `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
-           (company_id, mailbox_key, sender_pattern, rule_type)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (company_id, mailbox_key, sender_pattern)
-         DO UPDATE SET rule_type = $4, updated_at = now()`,
-        [companyId, mailboxKey, storedPattern, ruleType],
-      );
+      // Moved into writeSenderRule (sender-rules.ts), which also clears the
+      // review-queue entries this rule settles. Kept as the undo path.
+      // await ctx.db.execute(
+      //   `INSERT INTO plugin_email_tools_7cbee3fdf3.email_sender_rules
+      //      (company_id, mailbox_key, sender_pattern, rule_type)
+      //    VALUES ($1, $2, $3, $4)
+      //    ON CONFLICT (company_id, mailbox_key, sender_pattern)
+      //    DO UPDATE SET rule_type = $4, updated_at = now()`,
+      //   [companyId, mailboxKey, storedPattern, ruleType],
+      // );
+      // The rule keeps the key as the caller spelled it, as it always has; the
+      // review queue files entries under the configured key, so the clear
+      // uses that one.
+      const { clearedReviewEntries, clearError } = await writeSenderRule(ctx.db, {
+        companyId,
+        mailbox: mailboxKey,
+        queueMailbox: cfg.key ?? mailboxKey,
+        pattern: storedPattern,
+        ruleType,
+        onExisting: "replace",
+      });
+      if (clearError) {
+        ctx.logger.warn("email-tools: rule saved, but its review-queue entries were not cleared", {
+          mailbox: mailboxKey,
+          pattern: storedPattern,
+          error: clearError,
+        });
+      }
 
       // Auto-triage and mute rules do a one-shot sweep of unread INBOX so
       // backlog mail from the same sender gets cleaned up immediately
@@ -1782,7 +1955,7 @@ const plugin = definePlugin({
           });
         }
       }
-      return { ok: true, sweptCount };
+      return { ok: true, sweptCount, clearedReviewEntries };
     });
 
     // Deletes a sender rule for a mailbox.
@@ -1809,6 +1982,47 @@ const plugin = definePlugin({
         [companyId, mailboxKey, senderPattern],
       );
       return { ok: true };
+    });
+
+    // The review queue for a mailbox, for the operator UI. Same data as the
+    // email_list_review_queue agent tool.
+    ctx.data.register("email.list-review-queue", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const { mailbox, expiresBefore } = await resolveReviewMailbox("email.list-review-queue", mailboxKey, companyId);
+      return listReviewQueue(ctx.db, { companyId, mailbox, limit: clampListLimit(params.limit), expiresBefore });
+    });
+
+    // Bridge twin of the email_add_to_review_queue tool. Its first use is
+    // lifting the entries out of the retired rules-home documents once, which
+    // is safe to repeat: a second run of the same batch changes nothing.
+    ctx.actions.register("email.add-to-review-queue", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const { result } = await queueBatch("email.add-to-review-queue", mailboxKey, companyId, params.entries);
+      return { ok: true, ...result };
+    });
+
+    // Dismiss = "I dealt with this sender without a rule". Besides a rule
+    // (writeSenderRule) and the expiry, this is the way out of the queue.
+    // Dismissing an address also clears its domain's whole-domain entry.
+    ctx.actions.register("email.dismiss-review-entry", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey || params.sender === undefined) {
+        throw new Error("companyId, mailbox, and sender are required");
+      }
+      const { mailbox } = await resolveReviewMailbox("email.dismiss-review-entry", mailboxKey, companyId);
+      // A sender with no usable address (a Brief row keyed on a bare display
+      // name) can never have been queued, so there is nothing to clear. That
+      // is an answer, not an error: the Briefs show every error to the
+      // operator, and this one would only confuse.
+      const sender = normalizeReviewSender(params.sender);
+      if (!sender) return { ok: true, cleared: 0 };
+      const cleared = await dismissReviewEntry(ctx.db, { companyId, mailbox, sender });
+      return { ok: true, cleared };
     });
 
     // Sends a reply to a message via SMTP — bridge equivalent of the email_reply agent tool.
