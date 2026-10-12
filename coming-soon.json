@@ -11,15 +11,6 @@
       ]
     },
     {
-      "id": "calendar-tools",
-      "displayName": "Calendar Tools",
-      "description": "Google Calendar as a focused MCP plugin with richer tools — free/busy checks, bulk reschedule, attendee management. More powerful for agents than the broad google-workspace plugin.",
-      "categories": [
-        "automation",
-        "connector"
-      ]
-    },
-    {
       "id": "quickbooks-tools",
       "displayName": "QuickBooks Tools",
       "description": "QuickBooks Online: invoices, P&L pulls, AP aging, reconciliation triggers. Closes the loop for CFO Agent on any company running QBO.",
