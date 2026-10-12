@@ -35,5 +35,6 @@
     }
   },
   "license": "MIT",
-  "author": "Barry Carr & Tony Allard"
+  "author": "Barry Carr & Tony Allard",
+  "packageManager": "pnpm@10.28.0"
 }

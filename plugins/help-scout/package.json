@@ -39,5 +39,6 @@
       "@paperclipai/plugin-sdk": "file:../../vendor/sdk/plugin-sdk.tgz",
       "@paperclipai/shared": "file:../../vendor/sdk/shared.tgz"
     }
-  }
+  },
+  "packageManager": "pnpm@10.28.0"
 }
