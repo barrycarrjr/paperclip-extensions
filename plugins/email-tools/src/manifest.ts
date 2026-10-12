@@ -912,6 +912,31 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
         required: ["email"],
       },
     },
+    {
+      name: "email_import_contacts",
+      displayName: "Import Email Contacts",
+      description:
+        "Batch import or update contacts in the company address book. Merges and updates duplicates matching an existing email address.",
+      parametersSchema: {
+        type: "object",
+        properties: {
+          contacts: {
+            type: "array",
+            description: "List of contacts to import or update.",
+            items: {
+              type: "object",
+              properties: {
+                email: { type: "string", description: "Contact email address." },
+                name: { type: "string", description: "Optional display name." },
+                notes: { type: "string", description: "Optional notes." },
+              },
+              required: ["email"],
+            },
+          },
+        },
+        required: ["contacts"],
+      },
+    },
   ],
 };
 

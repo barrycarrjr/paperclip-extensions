@@ -76,6 +76,8 @@ import {
   searchContactsAcrossCompanies,
   upsertContact,
   deleteContact,
+  importContacts,
+  type ImportContactItem,
 } from "./contacts.js";
 import {
   parseStoredCursor,
@@ -1405,6 +1407,31 @@ const plugin = definePlugin({
       },
     );
 
+    ctx.tools.register(
+      "email_import_contacts",
+      {
+        displayName: "Import Email Contacts",
+        description:
+          "Batch import or update contacts in the company address book. Merges and updates duplicates matching an existing email address.",
+        parametersSchema: {} as Record<string, unknown>,
+      },
+      async (params, runCtx): Promise<ToolResult> => {
+        const p = (params ?? {}) as { contacts?: ImportContactItem[] };
+        if (!Array.isArray(p.contacts) || p.contacts.length === 0) {
+          return { error: "contacts array is required" };
+        }
+        try {
+          const result = await importContacts(ctx.db, runCtx.companyId, p.contacts);
+          return {
+            content: `Imported ${result.imported} contact(s) (${result.failed} failed).`,
+            data: result,
+          };
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+      },
+    );
+
     ctx.jobs.register("poll-mailboxes", async () => {
       const config = (await ctx.config.get()) as InstanceConfig;
       await runPoll(ctx, config);
@@ -2287,6 +2314,14 @@ const plugin = definePlugin({
       if (!id) throw new Error("id is required");
       const ok = await deleteContact(ctx.db, companyId, id);
       return { ok };
+    });
+
+    ctx.actions.register("email.import-contacts", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      if (!companyId) throw new Error("companyId is required");
+      const contacts = Array.isArray(params.contacts) ? (params.contacts as ImportContactItem[]) : [];
+      const result = await importContacts(ctx.db, companyId, contacts);
+      return result;
     });
 
     idleManager = new IdleManager(ctx);

@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.22.0** - Address book import and export. Adds batch contact import with duplicate merging (`email.import-contacts` bridge action and `email_import_contacts` agent tool) supporting CSV, vCard (.vcf), and JSON formats.
+
 - **v0.21.0** - Address book and contact management. Adds persistent contacts table
   (`email_contacts`), agent tools `email_search_contacts` and `email_save_contact`,
   and UI bridge endpoints (`email.list-contacts`, `email.save-contact`,

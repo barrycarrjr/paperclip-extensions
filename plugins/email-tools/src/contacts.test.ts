@@ -6,6 +6,7 @@ import {
   searchContactsAcrossCompanies,
   upsertContact,
   deleteContact,
+  importContacts,
   normalizeEmail,
   isValidEmail,
 } from "./contacts.js";
@@ -96,4 +97,28 @@ test("contacts CRUD with database", async () => {
   const finalList = await listContacts(db, companyA);
   assert.equal(finalList.length, 1);
   assert.equal(finalList[0].email, "alice@example.com");
+});
+
+test("importContacts batch upsert and validation", async () => {
+  const { db } = await openPluginDb();
+  const company = "00000000-0000-0000-0000-000000000099";
+
+  const batch = [
+    { email: "Dave@example.com", name: "Dave", notes: "Engineer" },
+    { email: "Eve@example.com", name: "Eve", notes: null },
+    { email: "invalid-email-address", name: "Bad", notes: null },
+    { email: "dave@example.com", name: "Dave Updated", notes: "Lead Engineer" }, // duplicate / merge
+  ];
+
+  const res = await importContacts(db, company, batch);
+  assert.equal(res.total, 4);
+  assert.equal(res.imported, 3); // Dave, Eve, Dave Updated
+  assert.equal(res.failed, 1); // invalid email
+  assert.equal(res.errors.length, 1);
+
+  const contacts = await listContacts(db, company);
+  assert.equal(contacts.length, 2); // Dave and Eve
+  const dave = contacts.find((c) => c.email === "dave@example.com");
+  assert.equal(dave?.name, "Dave Updated");
+  assert.equal(dave?.notes, "Lead Engineer");
 });

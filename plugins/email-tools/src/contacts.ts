@@ -12,6 +12,19 @@ export interface EmailContact {
   updatedAt: string;
 }
 
+export interface ImportContactItem {
+  email: string;
+  name?: string | null;
+  notes?: string | null;
+}
+
+export interface ImportContactsResult {
+  total: number;
+  imported: number;
+  failed: number;
+  errors: Array<{ email?: string; error: string }>;
+}
+
 interface RawContactRow {
   id: string;
   company_id: string;
@@ -48,7 +61,7 @@ export async function listContacts(
   companyId: string,
   options?: { query?: string; limit?: number },
 ): Promise<EmailContact[]> {
-  const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
+  const limit = Math.max(1, Math.min(options?.limit ?? 50, 500));
   const q = options?.query?.trim();
 
   if (q) {
@@ -78,11 +91,13 @@ export async function listContacts(
 export async function searchContactsAcrossCompanies(
   db: PluginDatabaseClient,
   companyIds: string[],
-  options?: { query?: string; limit?: number },
+  optionsOrQuery?: { query?: string; limit?: number } | string,
+  maybeLimit?: number,
 ): Promise<EmailContact[]> {
   if (companyIds.length === 0) return [];
-  const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
-  const q = options?.query?.trim();
+  const q = typeof optionsOrQuery === "string" ? optionsOrQuery.trim() : optionsOrQuery?.query?.trim();
+  const rawLimit = typeof optionsOrQuery === "string" ? maybeLimit : optionsOrQuery?.limit;
+  const limit = Math.max(1, Math.min(rawLimit ?? 50, 500));
 
   const inPlaceholders = companyIds.map((_, i) => `$${i + 1}`).join(", ");
   const params: unknown[] = [...companyIds];
@@ -117,19 +132,18 @@ export async function searchContactsAcrossCompanies(
 
 export async function upsertContact(
   db: PluginDatabaseClient,
-  input: {
-    companyId: string;
-    email: string;
-    name?: string | null;
-    notes?: string | null;
-  },
+  companyIdOrInput: string | { companyId: string; email: string; name?: string | null; notes?: string | null },
+  maybeInput?: { email: string; name?: string | null; notes?: string | null },
 ): Promise<EmailContact> {
-  const normEmail = normalizeEmail(input.email);
+  const companyId = typeof companyIdOrInput === "string" ? companyIdOrInput : companyIdOrInput.companyId;
+  const rawInput = typeof companyIdOrInput === "string" ? maybeInput! : companyIdOrInput;
+
+  const normEmail = normalizeEmail(rawInput.email);
   if (!isValidEmail(normEmail)) {
-    throw new Error(`Invalid email address: "${input.email}"`);
+    throw new Error(`Invalid email address: "${rawInput.email}"`);
   }
-  const name = input.name?.trim() || null;
-  const notes = input.notes?.trim() || null;
+  const name = rawInput.name?.trim() || null;
+  const notes = rawInput.notes?.trim() || null;
 
   await db.execute(
     `INSERT INTO ${CONTACTS_TABLE}
@@ -140,14 +154,14 @@ export async function upsertContact(
        name = EXCLUDED.name,
        notes = EXCLUDED.notes,
        updated_at = now()`,
-    [input.companyId, normEmail, name, notes],
+    [companyId, normEmail, name, notes],
   );
 
   const rows = await db.query<RawContactRow>(
     `SELECT id, company_id, email, name, notes, created_at, updated_at
      FROM ${CONTACTS_TABLE}
      WHERE company_id = $1 AND email = $2`,
-    [input.companyId, normEmail],
+    [companyId, normEmail],
   );
   if (!rows[0]) throw new Error("Failed to retrieve upserted contact");
   return mapRow(rows[0]);
@@ -155,15 +169,57 @@ export async function upsertContact(
 
 export async function deleteContact(
   db: PluginDatabaseClient,
-  input: {
-    companyId: string;
-    id: string;
-  },
+  companyIdOrInput: string | { companyId: string; id: string },
+  maybeId?: string,
 ): Promise<boolean> {
+  const companyId = typeof companyIdOrInput === "string" ? companyIdOrInput : companyIdOrInput.companyId;
+  const id = typeof companyIdOrInput === "string" ? maybeId! : companyIdOrInput.id;
+
   const result = await db.execute(
     `DELETE FROM ${CONTACTS_TABLE}
      WHERE id = $1 AND company_id = $2`,
-    [input.id, input.companyId],
+    [id, companyId],
   );
   return result.rowCount > 0;
+}
+
+export async function importContacts(
+  db: PluginDatabaseClient,
+  companyId: string,
+  contacts: ImportContactItem[],
+): Promise<ImportContactsResult> {
+  const result: ImportContactsResult = {
+    total: contacts.length,
+    imported: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  for (const item of contacts) {
+    if (!item || typeof item.email !== "string") {
+      result.failed++;
+      result.errors.push({ email: undefined, error: "Missing email address" });
+      continue;
+    }
+    const norm = normalizeEmail(item.email);
+    if (!isValidEmail(norm)) {
+      result.failed++;
+      result.errors.push({ email: item.email, error: `Invalid email address: "${item.email}"` });
+      continue;
+    }
+
+    try {
+      await upsertContact(db, companyId, {
+        email: norm,
+        name: item.name,
+        notes: item.notes,
+      });
+      result.imported++;
+    } catch (err: any) {
+      result.failed++;
+      result.errors.push({ email: item.email, error: err?.message || "Failed to save contact" });
+    }
+  }
+
+  return result;
 }
