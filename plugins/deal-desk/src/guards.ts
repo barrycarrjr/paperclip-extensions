@@ -93,6 +93,23 @@ export function checkScenarioBasis(args: {
 /** How the exit multiple is named in every piece of tool text. */
 export const ASSUMED_MULTIPLE_LABEL = "assumed exit multiple";
 
+/** Require a citation for writes presented as figures from a financial document.
+ * This validates citation presence and UUID shape, not document existence/content.
+ */
+export function checkPeriodCitation(args: {
+  sourceKind: string;
+  documentId: unknown;
+  creating: boolean;
+  changedFields: string[];
+}): void {
+  if (!["tax_return", "pnl", "bank"].includes(args.sourceKind)) return;
+  const sourcedFields = ["periodStart", "periodEnd", "revenueCents", "netIncomeCents", "ownerCompCents", "depreciationCents", "interestCents", "documentId"];
+  if (!args.creating && !args.changedFields.some(field => sourcedFields.includes(field))) return;
+  if (!isUuid(args.documentId)) {
+    throw new DealDeskError("EEVIDENCE_REQUIRED", "Creating or changing tax-return, profit-and-loss or bank figures/dates requires documentId, a valid Business Records document UUID. A cited document cannot be cleared from those records. Legacy records may still be read or have only their notes edited. This checks that an id was cited, not that its document exists or proves the figures.");
+  }
+}
+
 // ---- Rule 5: no secrets, no full tax ids ----
 
 const SECRET_KEY_RE = /pass(word|wd|code)|login|user_?name/i;

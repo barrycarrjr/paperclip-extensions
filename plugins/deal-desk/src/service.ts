@@ -43,7 +43,7 @@ import {
   scenarioToListItem,
 } from "./domain.js";
 import { formatCents, formatMultiple, formatPercent, formatRatio, table, yesNo } from "./format.js";
-import { ASSUMED_MULTIPLE_LABEL, assertNoSensitiveContent, checkAdjustmentStatusChange } from "./guards.js";
+import { ASSUMED_MULTIPLE_LABEL, assertNoSensitiveContent, checkAdjustmentStatusChange, checkPeriodCitation } from "./guards.js";
 import { parseScenarioRequest, prepareScenario, scenarioContent, type StoredScenarioInputs } from "./scenario.js";
 import type { DealOutputs } from "./calculator.js";
 import {
@@ -370,6 +370,7 @@ export function createDealService(deps: ServiceDeps) {
         }
       }
       if ((patch.periodEnd as string) < (patch.periodStart as string)) throw invalid("periodEnd must not be before periodStart.");
+      checkPeriodCitation({ sourceKind, documentId: patch.documentId, creating: true, changedFields: Object.keys(patch) });
       const id = newId();
       const result = await x(
         buildInsertPeriod(ns, call.companyId, {
@@ -418,6 +419,7 @@ export function createDealService(deps: ServiceDeps) {
       if (!sameValue(patch[key], current[key])) changedPatch[key] = patch[key];
     }
     const changed = Object.keys(changedPatch);
+    checkPeriodCitation({ sourceKind: existing.sourceKind, documentId: changedPatch.documentId !== undefined ? changedPatch.documentId : existing.documentId, creating: false, changedFields: changed });
     if (changed.length === 0) {
       return { summary: `No change: period ${periodLabel} (${sourceKind}) already matches [id ${existing.id}].`, data: { period: existing, created: false, changed: [] } };
     }

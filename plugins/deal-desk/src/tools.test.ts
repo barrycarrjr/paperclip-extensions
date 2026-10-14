@@ -4,6 +4,7 @@
  */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import type { PluginApiRequestInput, ToolRunContext } from "@paperclipai/plugin-sdk";
 import manifest from "./manifest.js";
 import { companyAccessError, isCompanyAllowed } from "./companyAccess.js";
@@ -180,7 +181,7 @@ test("tool descriptions state the rules plainly", () => {
 
 test("the manifest declares only what the plugin uses: no UI, no issue access, no core tables", () => {
   assert.equal(manifest.id, "deal-desk");
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
   assert.equal(manifest.displayName, "Deal Desk");
   assert.equal(manifest.ui, undefined);
   assert.equal(manifest.entrypoints.ui, undefined);

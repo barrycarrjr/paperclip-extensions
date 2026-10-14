@@ -303,6 +303,8 @@ Adding needs `periodStart`, `periodEnd`, `revenueCents`, `netIncomeCents`,
 `ownerCompCents`. `depreciationCents` and `interestCents` feed EBITDA only.
 `documentId` is the Business Records document the figures came from.
 
+For `tax_return`, `pnl` and `bank`, creating a period or changing a figure or period date requires a valid document UUID, either supplied in the call or already stored on that period. Clearing its citation is refused with `[EEVIDENCE_REQUIRED]`. Legacy periods remain readable, and notes-only edits or unchanged values do not require adding a citation. `seller_stated` and `other` retain their existing behavior. As with add-back evidence, the plugin checks citation presence and UUID shape; it cannot verify that the Business Records document exists, was read or supports the figures.
+
 ```json
 { "tool": "deal-desk.deal_period_upsert",
   "params": {
@@ -459,7 +461,7 @@ companies outside the allow-list.
 |---|---|
 | `[ECOMPANY_NOT_ALLOWED]` | The calling company is not in Allowed companies (or the list is empty). No data is returned. |
 | `[EINVALID_INPUT]` | A field is missing or malformed (money not in whole cents, a required input left out, unknown enum value, not a UUID, an included flag missing, and so on). The message names the field. |
-| `[EEVIDENCE_REQUIRED]` | Accepting an add-back without an evidence document id. |
+| `[EEVIDENCE_REQUIRED]` | Accepting an add-back without evidence, or creating/changing tax-return, profit-and-loss or bank period figures/dates without a document citation. Clearing a sourced period's citation is also refused. |
 | `[ENOTE_REQUIRED]` | Rejecting an add-back without a note, or a custom scenario without `basisNote`. |
 | `[ECONSERVATIVE_FIRST]` | A seller-claimed scenario before any conservative scenario exists for the deal. |
 | `[EDUPLICATE_ADJUSTMENT]` | An add-back with that description (any letter case) already exists for the period. The message gives its id. |
@@ -513,6 +515,8 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 `vendor/sdk/` through `pnpm.overrides`.
 
 ## Recent changes
+
+- **v0.1.3** - Tax-return, profit-and-loss and bank earnings periods now require a cited document UUID when created or when their figures/dates change. Citation removal is refused. An existing citation is retained when omitted; legacy records remain readable and allow notes-only edits. Seller-stated and other sources retain their existing behavior. This checks citation presence and UUID shape, not document existence, reading or content.
 
 - **v0.1.2** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 

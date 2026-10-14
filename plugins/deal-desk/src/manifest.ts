@@ -6,7 +6,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // they ever drift apart.
 
 const PLUGIN_ID = "deal-desk";
-const PLUGIN_VERSION = "0.1.2";
+const PLUGIN_VERSION = "0.1.3";
 
 const DEAL_STAGES = ["screen", "diligence", "offer", "closing", "closed", "passed"];
 const DEAL_STRUCTURES = ["asset", "stock", "undecided"];
@@ -239,7 +239,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           ownerCompCents: CENTS("Owner compensation paid in the period."),
           depreciationCents: CENTS("Depreciation and amortization, for EBITDA."),
           interestCents: CENTS("Interest expense, for EBITDA."),
-          documentId: { ...UUID, description: "The Business Records document the figures came from." },
+          documentId: { ...UUID, description: "The Business Records document the figures came from. Enforced for tax_return, pnl and bank creation or changed figures/dates. An existing citation is retained when omitted; clearing it is refused. Legacy notes-only edits and unchanged values remain allowed. Citation presence and UUID shape only, not document existence or content verification." },
           notes: { type: "string" },
         },
         required: ["dealId", "periodLabel", "sourceKind"],
