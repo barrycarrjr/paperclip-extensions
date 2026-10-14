@@ -376,6 +376,9 @@ if (!DATABASE_URL) {
     assert.equal(statutory.data.filing.dueDateKind, "statutory");
     assert.equal(statutory.data.filing.dueDateSourceTitle, guide.title);
     const id = statutory.data.filing.id;
+    await service.upsertFiling(A, { filingId: id, notes: "Unrelated unsourced note" });
+    const noteHistory = (await service.history(A, { businessId: biz.id })).data.history.find((entry) => entry.subjectId === id && entry.field === "filing.notes");
+    assert.equal(noteHistory?.source, null, "deadline evidence is not invented provenance for unrelated notes");
     const historyBefore = await count("business_history", "subject_id = $1", [id]);
     assert.equal(await codeOf(service.upsertFiling(A, { filingId: id, dueDate: "2026-11-01" })), "EDEADLINE_SOURCE_REQUIRED");
     assert.equal(await count("business_history", "subject_id = $1", [id]), historyBefore);

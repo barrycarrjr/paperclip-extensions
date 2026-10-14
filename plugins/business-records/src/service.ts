@@ -1101,7 +1101,8 @@ export function createRecordsService(deps: ServiceDeps) {
         field: `filing.${key}`,
         oldValue: current[key],
         newValue: changedPatch[key] ?? null,
-        source: basis.kind === "statutory" && basis.source ? { kind: "document", documentId: basis.source } : null,
+        source: ["dueDate", "dueDateKind", "dueDateSourceDocumentId"].includes(key) && basis.kind === "statutory" && basis.source
+          ? { kind: "document", documentId: basis.source } : null,
       });
     }
     const filing = filingToApi((await q<FilingRow>(buildGetFiling(ns, call.companyId, existing.id)))[0]!);
