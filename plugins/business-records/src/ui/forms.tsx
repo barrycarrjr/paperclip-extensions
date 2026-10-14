@@ -9,6 +9,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   DOC_TYPES,
   FILING_STATUSES,
+  FILING_DATE_KINDS,
+  filingDateKindLabel,
   PREPARERS,
   PROOF_REQUIRED_FILING_STATUSES,
   PROOF_REQUIRED_STATUS,
@@ -43,6 +45,13 @@ export function titleFromFilename(filename: string | null | undefined): string {
 
 const documentOptions = (documents: DocumentApi[]) =>
   documents.map((d) => ({ value: d.id, label: `${d.title} (${humanize(d.docType).toLowerCase()})` }));
+
+/** Keep a saved citation visible on unrelated edits, without calling it current. */
+const deadlineDocumentOptions = (documents: DocumentApi[], savedId?: string | null, savedTitle?: string | null) => [
+  ...(savedId && !documents.some((document) => document.id === savedId)
+    ? [{ value: savedId, label: `Saved source, no longer current: ${savedTitle ?? savedId}` }] : []),
+  ...documentOptions(documents),
+];
 
 // ---- Business ----
 
@@ -550,12 +559,14 @@ export function FilingForm({
   companyId,
   business,
   filing,
+  documents,
   onSaved,
   onCancel,
 }: {
   companyId: string;
   business: BusinessApi;
   filing?: FilingApi;
+  documents: DocumentApi[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -565,6 +576,8 @@ export function FilingForm({
   const [periodStart, setPeriodStart] = useState(filing?.periodStart ?? "");
   const [periodEnd, setPeriodEnd] = useState(filing?.periodEnd ?? "");
   const [dueDate, setDueDate] = useState(filing?.dueDate ?? "");
+  const [dueDateKind, setDueDateKind] = useState<string>(filing?.dueDateKind ?? "");
+  const [dueDateSourceDocumentId, setDueDateSourceDocumentId] = useState(filing?.dueDateSourceDocumentId ?? "");
   const [preparer, setPreparer] = useState<string>(filing?.preparer ?? "");
   const [notes, setNotes] = useState(filing?.notes ?? "");
   return (
@@ -581,6 +594,7 @@ export function FilingForm({
           periodStart: orNull(periodStart),
           periodEnd: orNull(periodEnd),
           dueDate,
+          ...(dueDateKind !== "unknown" ? { dueDateKind, dueDateSourceDocumentId: dueDateKind === "statutory" ? orNull(dueDateSourceDocumentId) : null } : {}),
           preparer: preparer || null,
           notes: orNull(notes),
         };
@@ -602,6 +616,14 @@ export function FilingForm({
         <Field label="Due date">
           <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} required />
         </Field>
+        <Field label="Date basis" hint="Internal planned dates are scheduling targets, not legal deadlines. Classify a changed legacy date before saving.">
+          <Select value={dueDateKind} onChange={(e) => setDueDateKind(e.target.value)} required
+            options={[...(filing?.dueDateKind === "unknown" ? [{ value: "unknown", label: filingDateKindLabel("unknown") }] : []), ...FILING_DATE_KINDS.map((value) => ({ value, label: filingDateKindLabel(value) }))]}
+            placeholder="Choose a date basis" />
+        </Field>
+        {dueDateKind === "statutory" && <Field label="Deadline source document" hint="A current document for this business supporting this date, separate from filing proof.">
+          <Select value={dueDateSourceDocumentId} onChange={(e) => setDueDateSourceDocumentId(e.target.value)} options={deadlineDocumentOptions(documents, filing?.dueDateSourceDocumentId, filing?.dueDateSourceTitle)} placeholder="Choose a source document" required />
+        </Field>}
         <Field label="Period starts">
           <Input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
         </Field>
@@ -646,6 +668,8 @@ export function FilingStatusForm({
   const [status, setStatus] = useState<string>(filing.status);
   const [proofDocumentId, setProofDocumentId] = useState(filing.proofDocumentId ?? "");
   const [extendedDueDate, setExtendedDueDate] = useState(filing.extendedDueDate ?? "");
+  const [extendedDueDateKind, setExtendedDueDateKind] = useState<string>(filing.extendedDueDate ? filing.extendedDueDateKind : "");
+  const [extendedDueDateSourceDocumentId, setExtendedDueDateSourceDocumentId] = useState(filing.extendedDueDateSourceDocumentId ?? "");
   const [reason, setReason] = useState(filing.notRequiredReason ?? "");
   const [sourceKind, setSourceKind] = useState("professional_advice");
   const [sourceDocumentId, setSourceDocumentId] = useState("");
@@ -660,7 +684,9 @@ export function FilingStatusForm({
         await recordsApi.setFilingStatus(companyId, filing.id, {
           status,
           ...(needsProof && proofDocumentId ? { proofDocumentId } : {}),
-          ...(status === "extension_filed" ? { extendedDueDate: orNull(extendedDueDate) } : {}),
+          ...(status === "extension_filed" ? { extendedDueDate: orNull(extendedDueDate),
+            ...(extendedDueDateKind !== "unknown" ? { extendedDueDateKind, extendedDueDateSourceDocumentId: extendedDueDateKind === "statutory" ? orNull(extendedDueDateSourceDocumentId) : null } : {}),
+          } : {}),
           ...(status === "not_required"
             ? {
                 reason: orNull(reason),
@@ -690,9 +716,19 @@ export function FilingStatusForm({
           </Field>
         )}
         {status === "extension_filed" && (
+          <>
           <Field label="New due date">
             <Input type="date" value={extendedDueDate} onChange={(e) => setExtendedDueDate(e.target.value)} required />
           </Field>
+          <Field label="Extension date basis" hint="A planned internal date does not claim a legal extension deadline.">
+            <Select value={extendedDueDateKind} onChange={(e) => setExtendedDueDateKind(e.target.value)} required
+              options={[...(filing.extendedDueDateKind === "unknown" && filing.extendedDueDate ? [{ value: "unknown", label: filingDateKindLabel("unknown") }] : []), ...FILING_DATE_KINDS.map((value) => ({ value, label: filingDateKindLabel(value) }))]}
+              placeholder="Choose a date basis" />
+          </Field>
+          {extendedDueDateKind === "statutory" && <Field label="Extension deadline source document">
+            <Select value={extendedDueDateSourceDocumentId} onChange={(e) => setExtendedDueDateSourceDocumentId(e.target.value)} options={deadlineDocumentOptions(documents, filing.extendedDueDateSourceDocumentId, filing.extendedDueDateSourceTitle)} placeholder="Choose a source document" required />
+          </Field>}
+          </>
         )}
       </div>
       {status === "not_required" && (

@@ -14,7 +14,7 @@
  *    written reason and a professional or official source.
  */
 
-import type { FilingStatus, StatusField, StatusSource } from "./domain.js";
+import type { FilingDateKind, FilingStatus, StatusField, StatusSource } from "./domain.js";
 import {
   CLOSED_FILING_STATUSES,
   FILING_STATUSES,
@@ -39,6 +39,16 @@ export function documentProblem(doc: DocLookup | null, businessId: string): stri
   if (doc.business_id !== businessId) return "that document belongs to a different business";
   if (doc.replaced_by) return "that document has been replaced by a newer version; cite the current one";
   return null;
+}
+
+/** A deadline citation is separate from proof that the filing was submitted. */
+export function checkFilingDateSource(kind: FilingDateKind, documentId: string | null, doc: DocLookup | null, businessId: string, field: string): void {
+  if (kind === "statutory") {
+    const problem = documentProblem(doc, businessId);
+    if (!documentId || problem) throw new RecordsError("EDEADLINE_SOURCE_REQUIRED", `${field} requires an existing current source document for this business${problem ? `: ${problem}` : ""}.`);
+  } else if (documentId) {
+    throw invalid(`${field} source document is only used for a statutory deadline.`);
+  }
 }
 
 export function statusNeedsProof(field: StatusField, value: string): boolean {

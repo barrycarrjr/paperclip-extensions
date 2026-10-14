@@ -60,6 +60,8 @@ const NOT_FREE_TEXT_KEYS = new Set([
   "documentId",
   "replacesDocumentId",
   "proofDocumentId",
+  "dueDateSourceDocumentId",
+  "extendedDueDateSourceDocumentId",
   "filingId",
   "issueId",
   "linkedCompanyIds",

@@ -323,16 +323,16 @@ if (!DATABASE_URL) {
   test("filings: one row per period, proof required, and rolling forward twice creates one next period", async () => {
     const biz = await createBusiness(A, "Example Filings LLC");
     const key = { businessId: biz.id, filing: "Federal S corporation return (Form 1120-S)", authority: "IRS", periodLabel: "2025" };
-    const created = await service.upsertFiling(A, { ...key, periodStart: "2025-01-01", periodEnd: "2025-12-31", dueDate: "2026-03-16", preparer: "cpa", issueId: ISSUE_A2 });
+    const created = await service.upsertFiling(A, { ...key, periodStart: "2025-01-01", periodEnd: "2025-12-31", dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2026-03-16", preparer: "cpa", issueId: ISSUE_A2 });
     assert.equal(created.data.created, true);
-    const again = await service.upsertFiling(A, { ...key, filing: key.filing.toUpperCase(), authority: "irs", dueDate: "2026-03-16" });
+    const again = await service.upsertFiling(A, { ...key, filing: key.filing.toUpperCase(), authority: "irs", dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2026-03-16" });
     assert.equal(again.data.created, false);
     assert.equal(again.data.filing.id, created.data.filing.id);
     assert.deepEqual(again.data.changed, []);
     assert.equal(await count("business_filings", "business_id = $1", [biz.id]), 1);
 
     // The raw insert builder is idempotent on the unique key.
-    const next = { businessId: biz.id, filing: key.filing, authority: "IRS", periodLabel: "2099", periodStart: null, periodEnd: null, dueDate: "2100-03-15", preparer: null, issueId: null, notes: null };
+    const next = { businessId: biz.id, filing: key.filing, authority: "IRS", periodLabel: "2099", periodStart: null, periodEnd: null, dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2100-03-15", preparer: null, issueId: null, notes: null };
     const first = buildInsertFiling(schema, COMPANY_A, { id: randomUUID(), ...next });
     const second = buildInsertFiling(schema, COMPANY_A, { id: randomUUID(), ...next });
     assert.equal((await db.execute(first.text, first.params)).rowCount, 1);
@@ -344,7 +344,7 @@ if (!DATABASE_URL) {
     assert.equal(await count("business_history", "subject_id = $1 AND kind = 'filing_status_change'", [filingId]), 0);
 
     const proof = await addDoc(A, biz.id, { docType: "filing_confirmation", title: "2025 return e-file confirmation" });
-    const nextPeriod = { periodLabel: "2026", periodStart: "2026-01-01", periodEnd: "2026-12-31", dueDate: "2027-03-15" };
+    const nextPeriod = { periodLabel: "2026", periodStart: "2026-01-01", periodEnd: "2026-12-31", dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2027-03-15" };
     const filed = await service.setFilingStatus(A, { filingId, status: "filed", proofDocumentId: proof.id, asOf: "2026-03-10", nextPeriod });
     assert.equal(filed.data.changed, true);
     assert.equal(filed.data.filing.status, "filed");
@@ -359,21 +359,111 @@ if (!DATABASE_URL) {
     assert.equal(await count("business_history", "subject_id = $1 AND kind = 'filing_status_change'", [filingId]), 1);
   });
 
+  test("statutory dates, internal targets and legacy unknown dates retain truthful separate provenance", async () => {
+    const biz = await createBusiness(A, "Deadline evidence LLC");
+    const other = await createBusiness(A, "Other deadline business");
+    const guide = await addDoc(A, biz.id, { title: "Official filing date instructions", docType: "government_notice" });
+    const wrong = await addDoc(A, other.id);
+    const foreignBiz = await createBusiness(B, "Foreign deadline business");
+    const foreign = await addDoc(B, foreignBiz.id);
+    const key = { businessId: biz.id, filing: "Annual filing", authority: "Example authority", periodLabel: "2026", dueDate: "2026-10-01", dueDateKind: "statutory" };
+    const before = await count("business_filings", "business_id = $1", [biz.id]);
+    for (const source of [undefined, randomUUID(), wrong.id, foreign.id]) {
+      assert.equal(await codeOf(service.upsertFiling(A, { ...key, dueDateSourceDocumentId: source })), "EDEADLINE_SOURCE_REQUIRED");
+    }
+    assert.equal(await count("business_filings", "business_id = $1", [biz.id]), before);
+    const statutory = await service.upsertFiling(A, { ...key, dueDateSourceDocumentId: guide.id });
+    assert.equal(statutory.data.filing.dueDateKind, "statutory");
+    assert.equal(statutory.data.filing.dueDateSourceTitle, guide.title);
+    const id = statutory.data.filing.id;
+    const historyBefore = await count("business_history", "subject_id = $1", [id]);
+    assert.equal(await codeOf(service.upsertFiling(A, { filingId: id, dueDate: "2026-11-01" })), "EDEADLINE_SOURCE_REQUIRED");
+    assert.equal(await count("business_history", "subject_id = $1", [id]), historyBefore);
+    assert.equal((await service.listFilings(A, { businessId: biz.id })).data.filings[0].dueDate, "2026-10-01");
+    const moved = await service.upsertFiling(A, { filingId: id, dueDate: "2026-11-01", dueDateSourceDocumentId: guide.id });
+    assert.equal(moved.data.filing.dueDateSourceDocumentId, guide.id);
+    assert.equal(await codeOf(service.removeDocument(A, { documentId: guide.id })), "EDOCUMENT_IN_USE");
+    const planned = await service.upsertFiling(A, { filingId: id, dueDateKind: "internal_planned" });
+    assert.equal(planned.data.filing.dueDateSourceDocumentId, null);
+    const listed = await service.listFilings(A, { businessId: biz.id });
+    assert.match(listed.summary, /Internal planned date/);
+    assert.doesNotMatch(listed.summary, /Statutory deadline/);
+    await service.removeDocument(A, { documentId: guide.id });
+    assert.equal(await codeOf(service.upsertFiling(A, { filingId: id, dueDateKind: "statutory", dueDateSourceDocumentId: guide.id })), "EDEADLINE_SOURCE_REQUIRED");
+
+    const legacyId = randomUUID();
+    await pool.query(`INSERT INTO ${schema}.business_filings (id, company_id, business_id, filing, authority, period_label, due_date, due_date_kind) VALUES ($1, $2, $3, 'Legacy filing', 'Example authority', '2025', '2026-01-01', 'unknown')`, [legacyId, COMPANY_A, biz.id]);
+    const legacy = await service.upsertFiling(A, { filingId: legacyId, notes: "Unrelated edit" });
+    assert.equal(legacy.data.filing.dueDateKind, "unknown");
+    assert.equal(legacy.data.filing.dueDateSourceDocumentId, null);
+    assert.equal(await codeOf(service.upsertFiling(A, { filingId: legacyId, dueDate: "2026-02-01" })), "EINVALID_INPUT");
+    assert.equal((await service.businessDetail(A, biz.id)).filings.find((f) => f.id === legacyId)!.dueDate, "2026-01-01");
+  });
+
+  test("roll-forward and extension date evidence validates before any status/history mutation", async () => {
+    const biz = await createBusiness(A, "Rollforward evidence LLC");
+    const base = (await service.upsertFiling(A, { businessId: biz.id, filing: "Annual filing", authority: "Example authority", periodLabel: "2026", dueDate: "2026-10-01", dueDateKind: "internal_planned" })).data.filing;
+    const proof = await addDoc(A, biz.id, { docType: "filing_confirmation", title: "Filing submitted" });
+    const guide = await addDoc(A, biz.id, { docType: "government_notice", title: "Deadline notice" });
+    const historyBefore = await count("business_history", "subject_id = $1", [base.id]);
+    const next = { periodLabel: "2027", dueDate: "2027-10-01", dueDateKind: "statutory" };
+    assert.equal(await codeOf(service.setFilingStatus(A, { filingId: base.id, status: "filed", proofDocumentId: proof.id, nextPeriod: next })), "EDEADLINE_SOURCE_REQUIRED");
+    assert.equal(await count("business_history", "subject_id = $1", [base.id]), historyBefore);
+    assert.equal((await service.businessDetail(A, biz.id)).filings[0].status, "upcoming");
+    const filed = await service.setFilingStatus(A, { filingId: base.id, status: "filed", proofDocumentId: proof.id, nextPeriod: { ...next, dueDateSourceDocumentId: guide.id } });
+    assert.equal(filed.data.nextPeriod!.filing.dueDateSourceDocumentId, guide.id);
+    assert.equal(filed.data.nextPeriod!.created, true);
+    const repeat = await service.setFilingStatus(A, { filingId: base.id, status: "filed", proofDocumentId: proof.id, nextPeriod: { ...next, dueDateSourceDocumentId: guide.id } });
+    assert.equal(repeat.data.nextPeriod!.created, false);
+    const historyAfter = await count("business_history", "subject_id = $1", [base.id]);
+    assert.equal(await codeOf(service.setFilingStatus(A, { filingId: base.id, status: "accepted", proofDocumentId: proof.id, nextPeriod: { ...next, dueDate: "2027-11-01", dueDateSourceDocumentId: guide.id } })), "ECONFLICT");
+    assert.equal(await count("business_history", "subject_id = $1", [base.id]), historyAfter);
+
+    const nextId = filed.data.nextPeriod!.filing.id;
+    const extension = await addDoc(A, biz.id, { docType: "extension_confirmation", title: "Extension submitted" });
+    assert.equal(await codeOf(service.setFilingStatus(A, { filingId: nextId, status: "extension_filed", proofDocumentId: extension.id, extendedDueDate: "2028-01-01", extendedDueDateKind: "statutory" })), "EDEADLINE_SOURCE_REQUIRED");
+    const extended = await service.setFilingStatus(A, { filingId: nextId, status: "extension_filed", proofDocumentId: extension.id, extendedDueDate: "2028-01-01", extendedDueDateKind: "statutory", extendedDueDateSourceDocumentId: guide.id });
+    assert.equal(extended.data.filing.effectiveDueDateKind, "statutory");
+    assert.equal(extended.data.filing.extendedDueDateSourceDocumentId, guide.id);
+    assert.equal(extended.data.filing.proofDocumentId, extension.id);
+    assert.equal(await codeOf(service.removeDocument(A, { documentId: guide.id })), "EDOCUMENT_IN_USE");
+    assert.equal(await codeOf(service.setFilingStatus(A, { filingId: nextId, status: "extension_filed", proofDocumentId: extension.id, extendedDueDate: "2028-02-01" })), "EDEADLINE_SOURCE_REQUIRED");
+  });
+
+  test("date/source mutations refuse a source removed after preflight without changing filing dates or history", async () => {
+    const biz = await createBusiness(A, "Concurrent source check LLC");
+    const guide = await addDoc(A, biz.id, { title: "Deadline source" });
+    const base = (await service.upsertFiling(A, { businessId: biz.id, filing: "Annual filing", authority: "Example authority", periodLabel: "2026", dueDate: "2026-10-01", dueDateKind: "statutory", dueDateSourceDocumentId: guide.id })).data.filing;
+    const historyBefore = await count("business_history", "subject_id = $1", [base.id]);
+    let changed = false;
+    const racing = createRecordsService({ db: { ...db, execute: async (text, params) => {
+      if (!changed && text.startsWith(`UPDATE ${schema}.business_filings`)) {
+        changed = true;
+        await pool.query(`UPDATE ${schema}.business_documents SET removed_at = now() WHERE id = $1`, [guide.id]);
+      }
+      return db.execute(text, params);
+    } }, getIssue, today: () => TODAY });
+    assert.equal(await codeOf(racing.upsertFiling(A, { filingId: base.id, dueDate: "2026-11-01", dueDateSourceDocumentId: guide.id })), "ECONFLICT");
+    assert.equal((await service.businessDetail(A, biz.id)).filings[0].dueDate, "2026-10-01");
+    assert.equal(await count("business_history", "subject_id = $1", [base.id]), historyBefore);
+    assert.equal(changed, true);
+  });
+
   test("an extension moves the due date only with its proof, and the due and overdue filters find the right filings", async () => {
     const biz = await createBusiness(A, "Example Calendar LLC");
     const mk = async (periodLabel: string, dueDate: string) =>
-      (await service.upsertFiling(A, { businessId: biz.id, filing: "State annual report", authority: "Example State", periodLabel, dueDate })).data.filing;
+      (await service.upsertFiling(A, { businessId: biz.id, filing: "State annual report", authority: "Example State", periodLabel, dueDate, dueDateKind: "internal_planned" })).data.filing;
     const overdue = await mk("2026-A", "2026-09-01");
     const soon = await mk("2026-B", "2026-10-10");
     const later = await mk("2026-C", "2026-12-31");
     const extended = await mk("2026-D", "2026-09-15");
 
     assert.equal(
-      await codeOf(service.setFilingStatus(A, { filingId: extended.id, status: "extension_filed", extendedDueDate: "2026-10-15" })),
+      await codeOf(service.setFilingStatus(A, { filingId: extended.id, status: "extension_filed", extendedDueDateKind: "internal_planned", extendedDueDate: "2026-10-15" })),
       "EPROOF_REQUIRED",
     );
     const ext = await addDoc(A, biz.id, { docType: "extension_confirmation", title: "Extension confirmation" });
-    const moved = await service.setFilingStatus(A, { filingId: extended.id, status: "extension_filed", proofDocumentId: ext.id, extendedDueDate: "2026-10-15" });
+    const moved = await service.setFilingStatus(A, { filingId: extended.id, status: "extension_filed", proofDocumentId: ext.id, extendedDueDateKind: "internal_planned", extendedDueDate: "2026-10-15" });
     assert.equal(moved.data.filing.effectiveDueDate, "2026-10-15");
     assert.equal(moved.data.filing.dueDate, "2026-09-15", "the original due date is kept");
 
@@ -390,7 +480,7 @@ if (!DATABASE_URL) {
 
   test("not_required needs a reason and a professional or official source", async () => {
     const biz = await createBusiness(A, "Example Exempt LLC");
-    const f = (await service.upsertFiling(A, { businessId: biz.id, filing: "Local business tax return", authority: "Example City", periodLabel: "2025", dueDate: "2026-04-15" })).data.filing;
+    const f = (await service.upsertFiling(A, { businessId: biz.id, filing: "Local business tax return", authority: "Example City", periodLabel: "2025", dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2026-04-15" })).data.filing;
     assert.equal(
       await codeOf(service.setFilingStatus(A, { filingId: f.id, status: "not_required", reason: "Owner says not needed", source: { kind: "user_reported" } })),
       "EREASON_SOURCE_REQUIRED",
@@ -442,7 +532,7 @@ if (!DATABASE_URL) {
   test("company B cannot see or use any of company A's rows", async () => {
     const aBiz = await createBusiness(A, "Example Private LLC");
     const aDoc = await addDoc(A, aBiz.id);
-    const aFiling = (await service.upsertFiling(A, { businessId: aBiz.id, filing: "Annual report", authority: "Example State", periodLabel: "2026", dueDate: "2026-09-01" })).data.filing;
+    const aFiling = (await service.upsertFiling(A, { businessId: aBiz.id, filing: "Annual report", authority: "Example State", periodLabel: "2026", dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2026-09-01" })).data.filing;
     await service.linkIssue(A, { businessId: aBiz.id, issueId: ISSUE_A, role: "records" });
 
     const listB = await service.listBusinesses(B, {});
@@ -521,7 +611,7 @@ if (!DATABASE_URL) {
       filing: "Annual report",
       authority: "State",
       periodLabel: "2026",
-      dueDate: "2026-06-30",
+      dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2026-06-30",
     });
     await service.setFilingStatus(A, { filingId: filing.data.filing.id, status: "filed", proofDocumentId: confirmation.id });
     assert.equal(await codeOf(service.removeDocument(A, { documentId: confirmation.id })), "EDOCUMENT_IN_USE");

@@ -66,8 +66,15 @@ export function readableError(message: string): string {
     .replace(/\buser_reported\b/g, "your own word")
     .replace(/\bagent_inference\b/g, "the agent's inference")
     .replace(/\bproofDocumentId:\s*/g, "")
-    .replace(/\bproofDocumentId\b/g, "a proof document");
+    .replace(/\bproofDocumentId\b/g, "a proof document")
+    .replace(/\bnextPeriod\.dueDateSourceDocumentId\b/g, "the next-period deadline source document")
+    .replace(/\bextendedDueDateSourceDocumentId\b/g, "the extension deadline source document")
+    .replace(/\bdueDateSourceDocumentId\b/g, "the deadline source document")
+    .replace(/\bnextPeriod\.dueDateKind\b/g, "the next-period date basis")
+    .replace(/\bextendedDueDateKind\b/g, "the extension date basis")
+    .replace(/\bdueDateKind\b/g, "the date basis");
   if (code === "EPROOF_REQUIRED") text += " Add the proof under Documents first, then choose it here.";
+  if (code === "EDEADLINE_SOURCE_REQUIRED") text += " Add the deadline source under Documents first, then select it in the date form.";
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 

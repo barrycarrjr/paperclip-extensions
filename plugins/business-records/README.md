@@ -15,6 +15,9 @@ trusting to a prompt:
 - A filing cannot be marked **filed**, **accepted** or **extension filed**
   without a proof document on file, and cannot be marked **not required**
   without a written reason and a professional or official source.
+- A new or actually changed statutory filing deadline requires a current
+  source document indexed for the same company and business. Internal planned
+  dates are allowed and are labeled as scheduling targets, not legal deadlines.
 - Only the last four digits of a tax id are ever stored. Anything shaped like a
   full EIN or SSN is refused.
 - Everything is scoped to the calling company, and the plugin is meant to be
@@ -286,6 +289,22 @@ its key (business, filing, authority, period label). Updatable: `periodStart`,
 filing are written to history as `business_updated` rows with field
 `filing.<name>`.
 
+Every new date must specify `dueDateKind: "statutory"` or
+`"internal_planned"`. Statutory creation, changing the date, or reclassifying it
+as statutory requires an explicit `dueDateSourceDocumentId`. Add the source
+document first with `business_add_document`. The source must be current, not
+removed or replaced, and belong to this company and this business. A note,
+filename, URL, or filing-submission proof alone does not supply that citation.
+Changing an already statutory date requires explicitly citing its source again,
+even if the same document supports the corrected date.
+
+`dueDateSourceDocumentId` is separate from `proofDocumentId`: one supports when
+the filing is due, the other supports that it was submitted. Internal planned
+dates do not carry a statutory source; reclassifying a date as internal clears
+that citation. Old dates migrate to read-only `unknown` classification without
+inventing a source. They remain readable and accept unrelated edits; changing
+one requires explicit classification. This includes lookup by the natural key.
+
 ```json
 { "tool": "business-records.business_filing_upsert",
   "params": {
@@ -296,6 +315,8 @@ filing are written to history as `business_updated` rows with field
     "periodStart": "2026-01-01",
     "periodEnd": "2026-12-31",
     "dueDate": "2027-03-15",
+    "dueDateKind": "statutory",
+    "dueDateSourceDocumentId": "<uuid of the indexed source instructions>",
     "preparer": "cpa",
     "notes": "Due date per the IRS instructions for Form 1120-S."
   },
@@ -311,7 +332,7 @@ filing are written to history as `business_updated` rows with field
     "status": "filed",
     "proofDocumentId": "<uuid of the e-file confirmation>",
     "asOf": "2027-03-10",
-    "nextPeriod": { "periodLabel": "2027", "periodStart": "2027-01-01", "periodEnd": "2027-12-31", "dueDate": "2028-03-15" }
+    "nextPeriod": { "periodLabel": "2027", "periodStart": "2027-01-01", "periodEnd": "2027-12-31", "dueDate": "2028-03-15", "dueDateKind": "statutory", "dueDateSourceDocumentId": "<uuid of the source for the next period>" }
   },
   "runContext": { "agentId": "...", "runId": "...", "companyId": "<HQ company id>" } }
 ```
@@ -326,6 +347,20 @@ Not required:
     "source": { "kind": "official_guidance", "url": "https://example.gov/threshold-rule" }
 } }
 ```
+
+New extension dates carry `extendedDueDateKind` and, for statutory dates,
+`extendedDueDateSourceDocumentId`. These are checked independently of the
+extension-submission `proofDocumentId`. For example, an internal planned
+extension date can use `extendedDueDateKind: "internal_planned"` without
+claiming an official extended deadline. Both classifications still require the
+existing extension proof/status rules. The original date keeps its own basis
+and source.
+
+Next-period dates use the same classification/source contract. All supplied
+date classifications and sources are validated before any current status or
+history is changed. An existing next period with different dates or provenance
+is refused with `[ECONFLICT]`; edit that row explicitly. An identical repeat
+does not create a second row.
 
 ### business_list_filings
 
@@ -392,7 +427,7 @@ refusal shows in the form in plain words, with tool names left out.
 
 **Removing a document** is soft: the row stays for history and the file stays
 on its issue, but it is no longer listed or counted and cannot be cited as
-proof. Removal is refused while a status or a filing cites the document
+proof. Removal is refused while a status, filing proof, or statutory date cites the document
 (`[EDOCUMENT_IN_USE]`), so proof can never disappear from under a proven
 status. If the removed document had replaced an older one, the older one is
 current again. Adding the same file again brings the removed record back.
@@ -405,6 +440,7 @@ current again. Adding the same file again brings the removed record back.
 | `[EINVALID_INPUT]` | A field is missing or malformed (bad date, unknown enum value, not a UUID, statuses sent to `business_upsert` for an existing business, and so on). The message names the field. |
 | `[ESENSITIVE_ID]` | A field contains something shaped like a full tax id or SSN, or `taxIdLast4` is not exactly four digits. |
 | `[EPROOF_REQUIRED]` | A proof-only status or a filed/accepted/extension status was sent without a current document of the same business. |
+| `[EDEADLINE_SOURCE_REQUIRED]` | A new or changed statutory deadline lacks an explicitly cited current source document for this company and business. Applies to original, extension and next-period dates. |
 | `[EREASON_SOURCE_REQUIRED]` | `not_required` without a reason, with a zero-revenue-only reason, or without an acceptable source. |
 | `[EISSUE_NOT_FOUND]` | The issue does not exist in the calling company. |
 | `[EBUSINESS_NOT_FOUND]` | No business with that id in the calling company (including ids that belong to another company). |
@@ -428,12 +464,23 @@ current again. Adding the same file again brings the removed record back.
   document type against the status (for example that `dissolved` cites a
   dissolution certificate). The agent's skill is responsible for citing the
   right one.
+- **Deadline citations verify identity and currentness, not document content.**
+  The plugin does not read attachments, decide what the law requires, or compute
+  dates. The caller remains responsible for citing the section that supports
+  the exact deadline and period. Replacing a cited document does not rewrite
+  saved dates or invent replacement citations; a new or changed statutory date
+  must cite a current document.
 - **No transactions.** The host runs each plugin statement on its own. The
   write and its history row are two statements; status and filing updates
   carry the value they read in their WHERE clause, so a concurrent change is
   reported as `[ECONFLICT]` rather than recorded with a wrong old value.
   Duplicate detection for documents without an attachment reference is a read
   before the insert, not a database constraint.
+  Deadline changes also check the date/source state they read, and recheck
+  cited document currentness in their mutation statement. A roll-forward failure
+  after the current status was saved can still leave that status saved; it is
+  reported as a conflict, and a retry completes the next-period row. There is
+  no promise of a multi-statement rollback.
 - **Linked company ids are not checked** against the companies table; they are
   validated as UUIDs only.
 - **Agents cannot edit or remove documents.** Those two actions are on the page
@@ -455,7 +502,7 @@ pnpm build
 
 `pnpm test` runs the unit tests with no database. The Postgres tests in
 `src/service.pg.test.ts` run only when `BUSINESS_RECORDS_TEST_DATABASE_URL` is
-set; they create a randomly named schema from `migrations/001_init.sql`, run the
+set; they create a randomly named schema from all migrations in order, run the
 real service against it (checking every statement against a copy of the host's
 SQL rules), and drop the schema at the end.
 
@@ -467,6 +514,15 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 `vendor/sdk/` through `pnpm.overrides`.
 
 ## Recent changes
+
+- **0.2.2** (2026-10-14) Filing dates now distinguish statutory deadlines,
+  internal planned targets, and legacy dates with unknown basis. New or changed
+  statutory dates require a current same-company, same-business source document,
+  including extension dates and next-period roll-forward. All date/source checks
+  run before status/history writes. The page and agent/API results expose the
+  classification and citations; document removal protects cited dates. Migration
+  `004_filing_deadline_sources.sql` preserves old date values with unknown basis
+  and no inferred sources.
 
 - **v0.2.1** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 

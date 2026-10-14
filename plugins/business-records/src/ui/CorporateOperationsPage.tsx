@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useHostContext, type PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import type { BusinessApi, DocumentApi, FilingApi, HistoryApi, LinkApi, StatusField } from "../domain.js";
+import { filingDateKindLabel } from "../domain.js";
 import { Badge, Button, Dot, Empty, EmptyState, ErrorBanner, Input, Section, cn } from "./_primitives.js";
 import { hostApi, recordsApi, type BusinessDetail, type HostAttachment, type Overview } from "./api.js";
 import {
@@ -432,7 +433,7 @@ function FilingsPart({
     >
       {editing?.kind === "addFiling" && (
         <div className="mb-3">
-          <FilingForm companyId={companyId} business={business} onSaved={onSaved} onCancel={() => setEditing(null)} />
+          <FilingForm companyId={companyId} business={business} documents={documents} onSaved={onSaved} onCancel={() => setEditing(null)} />
         </div>
       )}
       {sorted.length === 0 ? (
@@ -455,7 +456,7 @@ function FilingsPart({
                 </div>
                 <div className={cn("text-xs", textTone)}>
                   {describeDue(f, today)}
-                  {f.extendedDueDate ? `, extended from ${formatDate(f.dueDate)}` : ""}
+                  {f.extendedDueDate ? `, original ${filingDateKindLabel(f.dueDateKind).toLowerCase()} ${formatDate(f.dueDate)}` : ""}
                   {f.preparer ? `, prepared by ${preparerLabel(f.preparer)}` : ""}
                   {f.issueId && (
                     <>
@@ -466,6 +467,8 @@ function FilingsPart({
                     </>
                   )}
                 </div>
+                {f.dueDateSourceDocumentId && <div className="text-xs text-muted-foreground">Original deadline source: {f.dueDateSourceTitle ?? f.dueDateSourceDocumentId} (document {f.dueDateSourceDocumentId})</div>}
+                {f.extendedDueDateSourceDocumentId && <div className="text-xs text-muted-foreground">Extension deadline source: {f.extendedDueDateSourceTitle ?? f.extendedDueDateSourceDocumentId} (document {f.extendedDueDateSourceDocumentId})</div>}
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                   <span>
                     {f.status === "not_required"
@@ -500,6 +503,7 @@ function FilingsPart({
                       companyId={companyId}
                       business={business}
                       filing={f}
+                      documents={documents}
                       onSaved={onSaved}
                       onCancel={() => setEditing(null)}
                     />

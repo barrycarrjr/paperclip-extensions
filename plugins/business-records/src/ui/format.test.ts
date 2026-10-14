@@ -77,10 +77,10 @@ test("relative days use everyday words", () => {
 });
 
 test("due dates say how far away they are, and overdue open filings say so", () => {
-  assert.equal(describeDue({ status: "upcoming", effectiveDueDate: "2026-10-19" }, TODAY), "Due Oct 19, 2026 (in 23 days)");
-  assert.equal(describeDue({ status: "upcoming", effectiveDueDate: "2026-09-14" }, TODAY), "Due Sep 14, 2026 (12 days overdue)");
-  assert.equal(describeDue({ status: "upcoming", effectiveDueDate: "2026-09-25" }, TODAY), "Due Sep 25, 2026 (1 day overdue)");
-  assert.equal(describeDue({ status: "filed", effectiveDueDate: "2026-09-14" }, TODAY), "Due Sep 14, 2026 (12 days ago)");
+  assert.equal(describeDue({ status: "upcoming", effectiveDueDate: "2026-10-19" }, TODAY), "Legacy date, basis unknown: Oct 19, 2026 (in 23 days)");
+  assert.equal(describeDue({ status: "upcoming", effectiveDueDate: "2026-09-14" }, TODAY), "Legacy date, basis unknown: Sep 14, 2026 (12 days overdue)");
+  assert.equal(describeDue({ status: "upcoming", effectiveDueDate: "2026-09-25" }, TODAY), "Legacy date, basis unknown: Sep 25, 2026 (1 day overdue)");
+  assert.equal(describeDue({ status: "filed", effectiveDueDate: "2026-09-14" }, TODAY), "Legacy date, basis unknown: Sep 14, 2026 (12 days ago)");
   assert.equal(dueTone({ status: "upcoming", effectiveDueDate: "2026-09-14" }, TODAY), "bad");
   assert.equal(dueTone({ status: "upcoming", effectiveDueDate: "2026-10-03" }, TODAY), "warn");
   assert.equal(dueTone({ status: "upcoming", effectiveDueDate: "2026-10-04" }, TODAY), null);

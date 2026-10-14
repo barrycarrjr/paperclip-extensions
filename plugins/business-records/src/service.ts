@@ -20,6 +20,7 @@ import type {
   FilingApi,
   FilingRow,
   FilingStatus,
+  FilingDateKind,
   HistoryApi,
   HistoryRow,
   LinkApi,
@@ -30,6 +31,8 @@ import type {
 import {
   DOC_TYPES,
   FILING_STATUSES,
+  FILING_DATE_KINDS,
+  filingDateKindLabel,
   PREPARERS,
   RELATIONSHIPS,
   STATUS_COLUMN,
@@ -40,7 +43,7 @@ import {
   historyToApi,
   linkToApi,
 } from "./domain.js";
-import { checkFilingStatusChange, checkStatusChange, type DocLookup } from "./guards.js";
+import { checkFilingDateSource, checkFilingStatusChange, checkStatusChange, type DocLookup } from "./guards.js";
 import {
   addDays,
   buildFindBusinessByName,
@@ -186,6 +189,25 @@ export function createRecordsService(deps: ServiceDeps) {
     if (!documentId) return null;
     const rows = await q<DocumentRow>(buildGetDocument(ns, companyId, documentId));
     return rows[0] ?? null;
+  }
+
+  async function dateBasis(call: CallContext, businessId: string, date: string, kindRaw: unknown, sourceRaw: unknown, field: string,
+    old?: { date: string | null; kind: FilingDateKind; source: string | null }) {
+    const suppliedKind = kindRaw === undefined ? undefined : parseEnum(kindRaw, FILING_DATE_KINDS, `${field}Kind`);
+    const suppliedSource = parseOptionalUuid(sourceRaw, `${field}SourceDocumentId`);
+    const kind = suppliedKind ?? old?.kind ?? "unknown";
+    const dateChanged = !old || date !== old.date;
+    const kindChanged = !old || kind !== old.kind;
+    const source = kind === "internal_planned" && suppliedSource === undefined ? null : suppliedSource === undefined ? old?.source ?? null : suppliedSource;
+    const changed = dateChanged || kindChanged || source !== (old?.source ?? null);
+    if (changed) {
+      if (kind === "unknown") throw invalid(`${field}Kind must explicitly classify a new or changed date as statutory or internal_planned.`);
+      if (kind === "statutory" && (dateChanged || kindChanged) && !suppliedSource) {
+        throw new RecordsError("EDEADLINE_SOURCE_REQUIRED", `${field}SourceDocumentId is required when saving a new or changed statutory deadline.`);
+      }
+      checkFilingDateSource(kind, source, await lookupDoc(call.companyId, source), businessId, field);
+    }
+    return { kind, source, changed };
   }
 
   async function requireIssue(companyId: string, issueId: string): Promise<IssueInfo> {
@@ -998,6 +1020,14 @@ export function createRecordsService(deps: ServiceDeps) {
     const start = patch.periodStart !== undefined ? patch.periodStart : existing?.period_start ?? null;
     const end = patch.periodEnd !== undefined ? patch.periodEnd : existing?.period_end ?? null;
     if (start && end && start > end) throw invalid("periodStart must be on or before periodEnd.");
+    const dueDate = patch.dueDate ?? existing?.due_date;
+    if (!dueDate) throw invalid("dueDate is required to create a filing.");
+    const basis = await dateBasis(call, businessId, dueDate, p.dueDateKind, p.dueDateSourceDocumentId, "dueDate",
+      existing ? { date: existing.due_date, kind: existing.due_date_kind ?? "unknown", source: existing.due_date_source_document_id ?? null } : undefined);
+    if (basis.changed || p.dueDateKind !== undefined || p.dueDateSourceDocumentId !== undefined) {
+      patch.dueDateKind = basis.kind;
+      patch.dueDateSourceDocumentId = basis.source;
+    }
 
     if (!existing) {
       if (!patch.dueDate) throw invalid("dueDate is required to create a filing.");
@@ -1013,6 +1043,8 @@ export function createRecordsService(deps: ServiceDeps) {
           periodStart: patch.periodStart ?? null,
           periodEnd: patch.periodEnd ?? null,
           dueDate: patch.dueDate,
+          dueDateKind: basis.kind,
+          dueDateSourceDocumentId: basis.source,
           preparer: (patch.preparer as FilingRow["preparer"]) ?? null,
           issueId: patch.issueId ?? null,
           notes: patch.notes ?? null,
@@ -1021,7 +1053,7 @@ export function createRecordsService(deps: ServiceDeps) {
       if (result.rowCount > 0) {
         const filing = filingToApi((await q<FilingRow>(buildGetFiling(ns, call.companyId, id)))[0]!);
         return {
-          summary: `Added filing ${filing.filing} (${filing.authority}, ${filing.periodLabel}) due ${filing.dueDate} for ${filing.businessName} [id ${filing.id}].`,
+          summary: `Added filing ${filing.filing} (${filing.authority}, ${filing.periodLabel}), ${filingDateKindLabel(filing.dueDateKind)} ${filing.dueDate}${filing.dueDateSourceDocumentId ? ` (source document ${filing.dueDateSourceDocumentId})` : ""} for ${filing.businessName} [id ${filing.id}].`,
           data: { filing, created: true, changed: [] },
         };
       }
@@ -1038,6 +1070,8 @@ export function createRecordsService(deps: ServiceDeps) {
       periodStart: existing.period_start,
       periodEnd: existing.period_end,
       dueDate: existing.due_date,
+      dueDateKind: existing.due_date_kind ?? "unknown",
+      dueDateSourceDocumentId: existing.due_date_source_document_id ?? null,
       preparer: existing.preparer,
       issueId: existing.issue_id,
       notes: existing.notes,
@@ -1055,7 +1089,10 @@ export function createRecordsService(deps: ServiceDeps) {
       };
     }
     if (changedPatch.issueId) await requireIssue(call.companyId, changedPatch.issueId);
-    await x(buildUpdateFiling(ns, call.companyId, existing.id, changedPatch)!);
+    const updated = await x(buildUpdateFiling(ns, call.companyId, existing.id, changedPatch, {
+      dueDate: existing.due_date, dueDateKind: existing.due_date_kind ?? "unknown", dueDateSourceDocumentId: existing.due_date_source_document_id ?? null,
+    })!);
+    if (updated.rowCount === 0) throw new RecordsError("ECONFLICT", "The filing or its cited source changed during this call. Read it again and retry.");
     for (const key of changed) {
       await writeHistory(call, {
         businessId: existing.business_id,
@@ -1064,6 +1101,7 @@ export function createRecordsService(deps: ServiceDeps) {
         field: `filing.${key}`,
         oldValue: current[key],
         newValue: changedPatch[key] ?? null,
+        source: basis.kind === "statutory" && basis.source ? { kind: "document", documentId: basis.source } : null,
       });
     }
     const filing = filingToApi((await q<FilingRow>(buildGetFiling(ns, call.companyId, existing.id)))[0]!);
@@ -1089,7 +1127,7 @@ export function createRecordsService(deps: ServiceDeps) {
     const source = p.source === undefined || p.source === null ? null : parseNotRequiredSource(p.source, "source");
     const asOf = parseOptionalDate(p.asOf, "asOf") ?? null;
 
-    let next: { periodLabel: string; periodStart: string | null; periodEnd: string | null; dueDate: string } | null =
+    let next: { periodLabel: string; periodStart: string | null; periodEnd: string | null; dueDate: string; dueDateKind?: unknown; dueDateSourceDocumentId?: unknown } | null =
       null;
     if (p.nextPeriod !== undefined && p.nextPeriod !== null) {
       const n = readParams(p.nextPeriod);
@@ -1098,6 +1136,8 @@ export function createRecordsService(deps: ServiceDeps) {
         periodStart: parseOptionalDate(n.periodStart, "nextPeriod.periodStart") ?? null,
         periodEnd: parseOptionalDate(n.periodEnd, "nextPeriod.periodEnd") ?? null,
         dueDate: parseDate(n.dueDate, "nextPeriod.dueDate"),
+        dueDateKind: n.dueDateKind,
+        dueDateSourceDocumentId: n.dueDateSourceDocumentId,
       };
       if (next.periodStart && next.periodEnd && next.periodStart > next.periodEnd) {
         throw invalid("nextPeriod.periodStart must be on or before nextPeriod.periodEnd.");
@@ -1108,6 +1148,10 @@ export function createRecordsService(deps: ServiceDeps) {
     if (!existing) throw NOT_FOUND_FILING();
     if (next && next.periodLabel === existing.period_label) {
       throw invalid("nextPeriod.periodLabel must differ from this filing's period.");
+    }
+
+    if (status !== "extension_filed" && (p.extendedDueDateKind !== undefined || p.extendedDueDateSourceDocumentId !== undefined)) {
+      throw invalid("extendedDueDateKind and extendedDueDateSourceDocumentId are only used with extension_filed.");
     }
 
     checkFilingStatusChange({
@@ -1123,10 +1167,27 @@ export function createRecordsService(deps: ServiceDeps) {
       hasNextPeriod: next !== null,
     });
 
+    const extensionBasis = status === "extension_filed" && extendedDueDate
+      ? await dateBasis(call, existing.business_id, extendedDueDate, p.extendedDueDateKind, p.extendedDueDateSourceDocumentId, "extendedDueDate", {
+          date: existing.extended_due_date, kind: existing.extended_due_date_kind ?? "unknown", source: existing.extended_due_date_source_document_id ?? null,
+        }) : null;
+    let nextBasis: Awaited<ReturnType<typeof dateBasis>> | null = null;
+    if (next) {
+      const nextExisting = (await q<FilingRow>(buildFindFilingByKey(ns, call.companyId, {
+        businessId: existing.business_id, filing: existing.filing, authority: existing.authority, periodLabel: next.periodLabel,
+      })))[0];
+      nextBasis = await dateBasis(call, existing.business_id, next.dueDate, next.dueDateKind, next.dueDateSourceDocumentId, "nextPeriod.dueDate",
+        nextExisting ? { date: nextExisting.due_date, kind: nextExisting.due_date_kind ?? "unknown", source: nextExisting.due_date_source_document_id ?? null } : undefined);
+      if (nextExisting && (nextBasis.changed || (next.periodStart && next.periodStart !== nextExisting.period_start) || (next.periodEnd && next.periodEnd !== nextExisting.period_end))) {
+        throw new RecordsError("ECONFLICT", "The next-period filing already exists with different dates or provenance. Edit that filing explicitly before retrying.");
+      }
+    }
+
     const unchanged =
       existing.status === status &&
       (!proofDocumentId || proofDocumentId === existing.proof_document_id) &&
       (!extendedDueDate || extendedDueDate === existing.extended_due_date) &&
+      !extensionBasis?.changed &&
       (status !== "not_required" ||
         (reason === existing.not_required_reason && stableSource(source) === stableSource(existing.not_required_source)));
 
@@ -1136,8 +1197,12 @@ export function createRecordsService(deps: ServiceDeps) {
           ns,
           call.companyId,
           filingId,
-          { status, proofDocumentId, extendedDueDate, reason, source },
+          { status, proofDocumentId, extendedDueDate, reason, source,
+            ...(extensionBasis ? { extendedDueDateKind: extensionBasis.kind, extendedDueDateSourceDocumentId: extensionBasis.source } : {}),
+          },
           existing.status as FilingStatus,
+          { dueDate: existing.due_date, dueDateKind: existing.due_date_kind ?? "unknown", dueDateSourceDocumentId: existing.due_date_source_document_id ?? null,
+            extendedDueDate: existing.extended_due_date, extendedDueDateKind: existing.extended_due_date_kind ?? "unknown", extendedDueDateSourceDocumentId: existing.extended_due_date_source_document_id ?? null },
         ),
       );
       if (result.rowCount === 0) {
@@ -1146,6 +1211,7 @@ export function createRecordsService(deps: ServiceDeps) {
       const historySource: Record<string, unknown> = {};
       if (proofDocumentId) historySource.proofDocumentId = proofDocumentId;
       if (extendedDueDate) historySource.extendedDueDate = extendedDueDate;
+      if (extensionBasis) { historySource.extendedDueDateKind = extensionBasis.kind; historySource.extendedDueDateSourceDocumentId = extensionBasis.source; }
       if (reason) historySource.reason = reason;
       if (source) historySource.source = source;
       await writeHistory(call, {
@@ -1176,6 +1242,8 @@ export function createRecordsService(deps: ServiceDeps) {
           periodStart: next.periodStart,
           periodEnd: next.periodEnd,
           dueDate: next.dueDate,
+          dueDateKind: nextBasis!.kind,
+          dueDateSourceDocumentId: nextBasis!.source,
           preparer: existing.preparer,
           issueId: null,
           notes: null,
@@ -1191,7 +1259,11 @@ export function createRecordsService(deps: ServiceDeps) {
           }),
         )
       )[0];
-      if (row) nextPeriod = { filing: filingToApi(row), created: r.rowCount > 0 };
+      if (!row || row.due_date !== next.dueDate || row.due_date_kind !== nextBasis!.kind || row.due_date_source_document_id !== nextBasis!.source
+        || (next.periodStart && row.period_start !== next.periodStart) || (next.periodEnd && row.period_end !== next.periodEnd)) {
+        throw new RecordsError("ECONFLICT", "The next period or its cited source changed during this call. Read it again and retry; the current filing status may already be saved.");
+      }
+      nextPeriod = { filing: filingToApi(row), created: r.rowCount > 0 };
     }
 
     const filing = filingToApi((await q<FilingRow>(buildGetFiling(ns, call.companyId, filingId)))[0]!);
@@ -1203,7 +1275,7 @@ export function createRecordsService(deps: ServiceDeps) {
     if (nextPeriod) {
       parts.push(
         nextPeriod.created
-          ? `Created next period ${nextPeriod.filing.periodLabel} due ${nextPeriod.filing.dueDate} [id ${nextPeriod.filing.id}].`
+          ? `Created next period ${nextPeriod.filing.periodLabel}, ${filingDateKindLabel(nextPeriod.filing.dueDateKind)} ${nextPeriod.filing.dueDate}${nextPeriod.filing.dueDateSourceDocumentId ? ` (source document ${nextPeriod.filing.dueDateSourceDocumentId})` : ""} [id ${nextPeriod.filing.id}].`
           : `Next period ${nextPeriod.filing.periodLabel} was already on the calendar [id ${nextPeriod.filing.id}].`,
       );
     }
@@ -1238,7 +1310,8 @@ export function createRecordsService(deps: ServiceDeps) {
         : filings
             .map((f) => {
               const late = f.effectiveDueDate < t && !["filed", "accepted", "not_required"].includes(f.status);
-              return `${f.businessName}: ${f.filing} (${f.authority}, ${f.periodLabel}) due ${f.effectiveDueDate}${f.extendedDueDate ? " (extended)" : ""}, ${f.status}${late ? ", OVERDUE with no proof of filing" : ""}${f.proofTitle ? `, proof: ${f.proofTitle}` : ""} [id ${f.id}]`;
+              const sourceId = f.extendedDueDate ? f.extendedDueDateSourceDocumentId : f.dueDateSourceDocumentId;
+              return `${f.businessName}: ${f.filing} (${f.authority}, ${f.periodLabel}), ${filingDateKindLabel(f.effectiveDueDateKind)} ${f.effectiveDueDate}${f.extendedDueDate ? " (extended)" : ""}${sourceId ? ` (source document ${sourceId})` : ""}, ${f.status}${late ? ", PAST RECORDED DATE with no proof of filing" : ""}${f.proofTitle ? `, proof: ${f.proofTitle}` : ""} [id ${f.id}]`;
             })
             .join("\n");
     return { summary, data: { filings } };

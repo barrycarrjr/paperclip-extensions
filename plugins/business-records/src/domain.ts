@@ -105,6 +105,13 @@ export const FILING_STATUSES = [
 ] as const;
 export type FilingStatus = (typeof FILING_STATUSES)[number];
 
+export const FILING_DATE_KINDS = ["statutory", "internal_planned"] as const;
+export type FilingDateKind = (typeof FILING_DATE_KINDS)[number] | "unknown";
+
+export function filingDateKindLabel(kind: FilingDateKind): string {
+  return kind === "statutory" ? "Statutory deadline" : kind === "internal_planned" ? "Internal planned date" : "Legacy date, basis unknown";
+}
+
 /** Statuses that close a filing. Anything else is still open and keeps being reported. */
 export const CLOSED_FILING_STATUSES: readonly FilingStatus[] = ["filed", "accepted", "not_required"];
 
@@ -249,7 +256,11 @@ export interface FilingRow {
   period_start: string | null;
   period_end: string | null;
   due_date: string;
+  due_date_kind: FilingDateKind;
+  due_date_source_document_id: string | null;
   extended_due_date: string | null;
+  extended_due_date_kind: FilingDateKind;
+  extended_due_date_source_document_id: string | null;
   preparer: Preparer | null;
   status: FilingStatus;
   proof_document_id: string | null;
@@ -261,6 +272,8 @@ export interface FilingRow {
   updated_at: string | Date;
   business_name?: string;
   proof_title?: string | null;
+  due_date_source_title?: string | null;
+  extended_due_date_source_title?: string | null;
 }
 
 export interface FilingApi {
@@ -273,9 +286,16 @@ export interface FilingApi {
   periodStart: string | null;
   periodEnd: string | null;
   dueDate: string;
+  dueDateKind: FilingDateKind;
+  dueDateSourceDocumentId: string | null;
+  dueDateSourceTitle: string | null;
   extendedDueDate: string | null;
+  extendedDueDateKind: FilingDateKind;
+  extendedDueDateSourceDocumentId: string | null;
+  extendedDueDateSourceTitle: string | null;
   /** The date that actually applies: the extended one when an extension is on file. */
   effectiveDueDate: string;
+  effectiveDueDateKind: FilingDateKind;
   preparer: Preparer | null;
   status: FilingStatus;
   proofDocumentId: string | null;
@@ -410,8 +430,15 @@ export function filingToApi(row: FilingRow): FilingApi {
     periodStart: row.period_start,
     periodEnd: row.period_end,
     dueDate: row.due_date,
+    dueDateKind: row.due_date_kind ?? "unknown",
+    dueDateSourceDocumentId: row.due_date_source_document_id ?? null,
+    dueDateSourceTitle: row.due_date_source_title ?? null,
     extendedDueDate: row.extended_due_date,
+    extendedDueDateKind: row.extended_due_date_kind ?? "unknown",
+    extendedDueDateSourceDocumentId: row.extended_due_date_source_document_id ?? null,
+    extendedDueDateSourceTitle: row.extended_due_date_source_title ?? null,
     effectiveDueDate: row.extended_due_date ?? row.due_date,
+    effectiveDueDateKind: (row.extended_due_date ? row.extended_due_date_kind : row.due_date_kind) ?? "unknown",
     preparer: row.preparer,
     status: row.status,
     proofDocumentId: row.proof_document_id,

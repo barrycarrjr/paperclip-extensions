@@ -481,7 +481,7 @@ export function buildFilingsCitingDocument(ns: string, companyId: string, docume
   const { p, c } = start(companyId);
   const id = p.add(documentId);
   return {
-    text: `SELECT f.id, f.filing, f.period_label FROM ${ns}.business_filings f WHERE f.company_id = ${c} AND (f.proof_document_id = ${id} OR f.not_required_source->>'documentId' = ${id}::text) ORDER BY f.due_date LIMIT 20`,
+    text: `SELECT f.id, f.filing, f.period_label FROM ${ns}.business_filings f WHERE f.company_id = ${c} AND (f.proof_document_id = ${id} OR f.not_required_source->>'documentId' = ${id}::text OR f.due_date_source_document_id = ${id} OR f.extended_due_date_source_document_id = ${id}) ORDER BY f.due_date LIMIT 20`,
     params: p.values,
   };
 }
@@ -491,14 +491,17 @@ export function buildFilingsCitingDocument(ns: string, companyId: string, docume
 
 const FILING_COLUMNS = `f.id, f.company_id, f.business_id, f.filing, f.authority, f.period_label,
   f.period_start::text AS period_start, f.period_end::text AS period_end, f.due_date::text AS due_date,
-  f.extended_due_date::text AS extended_due_date, f.preparer, f.status, f.proof_document_id,
+  f.extended_due_date::text AS extended_due_date, f.due_date_kind, f.due_date_source_document_id,
+  f.extended_due_date_kind, f.extended_due_date_source_document_id, f.preparer, f.status, f.proof_document_id,
   f.not_required_reason, f.not_required_source, f.issue_id, f.notes, f.created_at, f.updated_at,
-  b.name AS business_name, pd.title AS proof_title`;
+  b.name AS business_name, pd.title AS proof_title, dd.title AS due_date_source_title, ed.title AS extended_due_date_source_title`;
 
 function filingFrom(ns: string): string {
   return `${ns}.business_filings f
     JOIN ${ns}.businesses b ON b.id = f.business_id AND b.company_id = f.company_id
-    LEFT JOIN ${ns}.business_documents pd ON pd.id = f.proof_document_id AND pd.company_id = f.company_id`;
+    LEFT JOIN ${ns}.business_documents pd ON pd.id = f.proof_document_id AND pd.company_id = f.company_id
+    LEFT JOIN ${ns}.business_documents dd ON dd.id = f.due_date_source_document_id AND dd.company_id = f.company_id AND dd.business_id = f.business_id
+    LEFT JOIN ${ns}.business_documents ed ON ed.id = f.extended_due_date_source_document_id AND ed.company_id = f.company_id AND ed.business_id = f.business_id`;
 }
 
 export function buildGetFiling(ns: string, companyId: string, filingId: string): SqlStatement {
@@ -536,6 +539,8 @@ export interface FilingInsert {
   periodStart: string | null;
   periodEnd: string | null;
   dueDate: string;
+  dueDateKind: string;
+  dueDateSourceDocumentId: string | null;
   preparer: Preparer | null;
   issueId: string | null;
   notes: string | null;
@@ -558,12 +563,14 @@ export function buildInsertFiling(ns: string, companyId: string, f: FilingInsert
     `${p.add(f.periodStart)}::date`,
     `${p.add(f.periodEnd)}::date`,
     `${p.add(f.dueDate)}::date`,
+    p.add(f.dueDateKind),
+    p.add(f.dueDateSourceDocumentId),
     p.add(f.preparer),
     p.add(f.issueId),
     p.add(f.notes),
   ];
   return {
-    text: `INSERT INTO ${ns}.business_filings (id, company_id, business_id, filing, authority, period_label, period_start, period_end, due_date, preparer, issue_id, notes) VALUES (${vals.join(", ")}) ON CONFLICT DO NOTHING`,
+    text: `INSERT INTO ${ns}.business_filings (id, company_id, business_id, filing, authority, period_label, period_start, period_end, due_date, due_date_kind, due_date_source_document_id, preparer, issue_id, notes) SELECT ${vals.join(", ")} WHERE ${f.dueDateSourceDocumentId ? currentDateSource(ns, c, vals[2]!, vals[10]!) : "TRUE"} ON CONFLICT DO NOTHING`,
     params: p.values,
   };
 }
@@ -572,6 +579,8 @@ export const FILING_PATCH_COLUMNS = {
   periodStart: { col: "period_start", kind: "date" },
   periodEnd: { col: "period_end", kind: "date" },
   dueDate: { col: "due_date", kind: "date" },
+  dueDateKind: { col: "due_date_kind", kind: "text" },
+  dueDateSourceDocumentId: { col: "due_date_source_document_id", kind: "uuid" },
   preparer: { col: "preparer", kind: "text" },
   issueId: { col: "issue_id", kind: "uuid" },
   notes: { col: "notes", kind: "text" },
@@ -580,11 +589,22 @@ export const FILING_PATCH_COLUMNS = {
 export type FilingPatchKey = keyof typeof FILING_PATCH_COLUMNS;
 export type FilingPatch = Partial<Record<FilingPatchKey, string | null>>;
 
+/** Recheck a citation in the mutation statement if it changed after preflight. */
+function currentDateSource(ns: string, company: string, business: string, source: string): string {
+  return `EXISTS (SELECT 1 FROM ${ns}.business_documents ds WHERE ds.company_id = ${company} AND ds.business_id = ${business} AND ds.id = ${source}::uuid AND ds.replaced_by IS NULL AND ds.removed_at IS NULL)`;
+}
+
+export interface FilingDateSnapshot {
+  dueDate: string; dueDateKind: string; dueDateSourceDocumentId: string | null;
+  extendedDueDate?: string | null; extendedDueDateKind?: string; extendedDueDateSourceDocumentId?: string | null;
+}
+
 export function buildUpdateFiling(
   ns: string,
   companyId: string,
   filingId: string,
   patch: FilingPatch,
+  expected?: FilingDateSnapshot,
 ): SqlStatement | null {
   const { p, c } = start(companyId);
   const sets: string[] = [];
@@ -597,8 +617,13 @@ export function buildUpdateFiling(
   if (sets.length === 0) return null;
   sets.push("updated_at = now()");
   const id = p.add(filingId);
+  const predicates = [`company_id = ${c}`, `id = ${id}`];
+  if (expected) predicates.push(`due_date = ${p.add(expected.dueDate)}::date`, `due_date_kind = ${p.add(expected.dueDateKind)}`, `due_date_source_document_id IS NOT DISTINCT FROM ${p.add(expected.dueDateSourceDocumentId)}::uuid`);
+  const dateTouched = patch.dueDate !== undefined || patch.dueDateKind !== undefined || patch.dueDateSourceDocumentId !== undefined;
+  const sourceId = patch.dueDateSourceDocumentId === undefined ? expected?.dueDateSourceDocumentId : patch.dueDateSourceDocumentId;
+  if (dateTouched && sourceId && (patch.dueDateKind ?? expected?.dueDateKind) === "statutory") predicates.push(currentDateSource(ns, c, "business_filings.business_id", p.add(sourceId)));
   return {
-    text: `UPDATE ${ns}.business_filings SET ${sets.join(", ")} WHERE company_id = ${c} AND id = ${id}`,
+    text: `UPDATE ${ns}.business_filings SET ${sets.join(", ")} WHERE ${predicates.join(" AND ")}`,
     params: p.values,
   };
 }
@@ -616,15 +641,22 @@ export function buildSetFilingStatus(
     status: FilingStatus;
     proofDocumentId: string | null;
     extendedDueDate: string | null;
+    extendedDueDateKind?: string;
+    extendedDueDateSourceDocumentId?: string | null;
     reason: string | null;
     source: unknown;
   },
   expectedCurrent: FilingStatus,
+  expectedDate?: FilingDateSnapshot,
 ): SqlStatement {
   const { p, c } = start(companyId);
   const sets = [`status = ${p.add(next.status)}`];
   if (next.proofDocumentId) sets.push(`proof_document_id = ${p.add(next.proofDocumentId)}::uuid`);
   if (next.extendedDueDate) sets.push(`extended_due_date = ${p.add(next.extendedDueDate)}::date`);
+  if (next.extendedDueDateKind !== undefined) {
+    sets.push(`extended_due_date_kind = ${p.add(next.extendedDueDateKind)}`);
+    sets.push(`extended_due_date_source_document_id = ${p.add(next.extendedDueDateSourceDocumentId ?? null)}::uuid`);
+  }
   if (next.status === "not_required") {
     sets.push(`not_required_reason = ${p.add(next.reason)}`);
     sets.push(`not_required_source = ${p.add(jsonText(next.source))}::jsonb`);
@@ -634,8 +666,11 @@ export function buildSetFilingStatus(
   sets.push("updated_at = now()");
   const id = p.add(filingId);
   const e = p.add(expectedCurrent);
+  const predicates = [`company_id = ${c}`, `id = ${id}`, `status = ${e}`];
+  if (expectedDate) predicates.push(`due_date = ${p.add(expectedDate.dueDate)}::date`, `extended_due_date IS NOT DISTINCT FROM ${p.add(expectedDate.extendedDueDate ?? null)}::date`, `extended_due_date_kind = ${p.add(expectedDate.extendedDueDateKind ?? "unknown")}`, `extended_due_date_source_document_id IS NOT DISTINCT FROM ${p.add(expectedDate.extendedDueDateSourceDocumentId ?? null)}::uuid`);
+  if (next.extendedDueDateSourceDocumentId) predicates.push(currentDateSource(ns, c, "business_filings.business_id", p.add(next.extendedDueDateSourceDocumentId)));
   return {
-    text: `UPDATE ${ns}.business_filings SET ${sets.join(", ")} WHERE company_id = ${c} AND id = ${id} AND status = ${e}`,
+    text: `UPDATE ${ns}.business_filings SET ${sets.join(", ")} WHERE ${predicates.join(" AND ")}`,
     params: p.values,
   };
 }

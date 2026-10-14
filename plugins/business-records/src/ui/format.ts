@@ -2,6 +2,7 @@
  * Display rules for the page, kept free of React so they can be unit tested.
  */
 import type { BusinessApi, FilingApi, HistoryApi, StatusField, StatusSource } from "../domain.js";
+import { filingDateKindLabel } from "../domain.js";
 
 export const RENEWAL_WINDOW_DAYS = 60;
 /** A filing due within this many days is highlighted as coming up. */
@@ -92,7 +93,7 @@ export function dueTone(f: Pick<FilingApi, "status" | "effectiveDueDate">, today
 }
 
 /** "Due Oct 19, 2026 (in 23 days)", or "(12 days overdue)" for an open filing past its date. */
-export function describeDue(f: Pick<FilingApi, "status" | "effectiveDueDate">, today: string): string {
+export function describeDue(f: Pick<FilingApi, "status" | "effectiveDueDate"> & Partial<Pick<FilingApi, "effectiveDueDateKind">>, today: string): string {
   const days = daysUntil(f.effectiveDueDate, today);
   const detail =
     isFilingOpen(f) && days < 0
@@ -100,7 +101,7 @@ export function describeDue(f: Pick<FilingApi, "status" | "effectiveDueDate">, t
         ? "1 day overdue"
         : `${-days} days overdue`
       : relativeDays(f.effectiveDueDate, today);
-  return `Due ${formatDate(f.effectiveDueDate)} (${detail})`;
+  return `${filingDateKindLabel(f.effectiveDueDateKind ?? "unknown")}: ${formatDate(f.effectiveDueDate)} (${detail})`;
 }
 
 /** Next due first; ties by name. Returns a new array. */

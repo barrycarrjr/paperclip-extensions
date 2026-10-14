@@ -5,7 +5,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 // manifest.test.ts fails if the two ever drift apart.
 
 const PLUGIN_ID = "business-records";
-const PLUGIN_VERSION = "0.2.1";
+const PLUGIN_VERSION = "0.2.2";
 
 const RELATIONSHIPS = ["owned", "prospect", "former", "other"];
 const STATUS_FIELDS = ["operating", "legal", "tax_account"];
@@ -386,7 +386,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       name: "business_filing_upsert",
       displayName: "Create or update a filing",
       description:
-        `Add a filing to a business's calendar, one row per filing per period, or update one. A filing is identified by business, filing name, authority and periodLabel (for example "Federal S corporation return (Form 1120-S)", "IRS", "2026"); calling again with the same four finds the same row, so it can never be duplicated. New rows start as upcoming; change status only with business_filing_set_status. Cite the source of each due date in notes, and do not guess a due date you could not confirm. issueId, when given, must be an issue in this company. ${SENSITIVE_RULE_TEXT}`,
+        `Add or update one filing per business, name, authority and period. New dates require dueDateKind statutory or internal_planned. New or actually changed statutory deadlines require dueDateSourceDocumentId, a current indexed document of this company and business, else [EDEADLINE_SOURCE_REQUIRED]. A notes citation alone is insufficient; the plugin verifies document identity and currentness, not its contents. Internal planned dates are scheduling targets, not legal claims. Existing unclassified dates remain unknown until explicitly classified; unrelated edits preserve them. New rows start upcoming; change status only with business_filing_set_status. issueId must exist in this company. ${SENSITIVE_RULE_TEXT}`,
       parametersSchema: {
         type: "object",
         additionalProperties: false,
@@ -399,6 +399,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           periodStart: DATE,
           periodEnd: DATE,
           dueDate: DATE,
+          dueDateKind: { type: "string", enum: ["statutory", "internal_planned"], description: "Required for new dates or changed legacy dates; unknown is read-only legacy data." },
+          dueDateSourceDocumentId: { ...UUID, description: "Current same-business document supporting the statutory date, separate from filing proof." },
           preparer: { type: "string", enum: PREPARERS },
           issueId: UUID,
           notes: { type: "string" },
@@ -410,7 +412,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       name: "business_filing_set_status",
       displayName: "Set a filing status",
       description:
-        "Move a filing to upcoming, in_preparation, extension_filed, filed, accepted or not_required. Rules, enforced in code: filed, accepted and extension_filed need proofDocumentId (the confirmation, acceptance or extension confirmation, added first with business_add_document), else [EPROOF_REQUIRED]. extension_filed also needs extendedDueDate later than the original due date. not_required needs a written reason and a source of kind document, professional_advice or official_guidance with either documentId or an https:// url, else [EREASON_SOURCE_REQUIRED]; zero revenue is never on its own a reason. When marking filed or accepted, pass nextPeriod {periodLabel, periodStart, periodEnd, dueDate} to put the next period on the calendar; repeating the call never creates a second one. Writes one history row per change.",
+        "Move a filing to upcoming, in_preparation, extension_filed, filed, accepted or not_required. Filed, accepted and extension_filed require proofDocumentId, else [EPROOF_REQUIRED]. A new extension date needs extendedDueDate later than the original and extendedDueDateKind; statutory extensions also need extendedDueDateSourceDocumentId from a current same-company/same-business document. New nextPeriod dates require dueDateKind and statutory dates require dueDateSourceDocumentId. All date/source checks run before the status/history changes. An existing conflicting next period is refused. Internal planned dates are scheduling targets, not legal deadlines. not_required requires reason and a document, professional_advice or official_guidance source (documentId or https url), else [EREASON_SOURCE_REQUIRED]; zero revenue alone is insufficient. Repeated identical calls do not duplicate the next period.",
       parametersSchema: {
         type: "object",
         additionalProperties: false,
@@ -419,6 +421,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           status: { type: "string", enum: FILING_STATUSES },
           proofDocumentId: UUID,
           extendedDueDate: DATE,
+          extendedDueDateKind: { type: "string", enum: ["statutory", "internal_planned"] },
+          extendedDueDateSourceDocumentId: UUID,
           reason: { type: "string" },
           source: {
             type: "object",
@@ -440,6 +444,8 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
               periodStart: DATE,
               periodEnd: DATE,
               dueDate: DATE,
+              dueDateKind: { type: "string", enum: ["statutory", "internal_planned"] },
+              dueDateSourceDocumentId: UUID,
             },
             required: ["periodLabel", "dueDate"],
           },

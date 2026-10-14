@@ -97,4 +97,20 @@ if (!DATABASE_URL) {
       /business_history_kind_check/,
     );
   });
+
+  test("004 preserves old dates as unknown, invents no sources, and requires a basis for new rows", async () => {
+    await pool.query(`UPDATE ${schema}.business_filings SET extended_due_date = '2027-01-01' WHERE period_label = '2024'`);
+    await migration("004_filing_deadline_sources.sql");
+    const rows = (await pool.query(`SELECT due_date::text, due_date_kind, due_date_source_document_id, extended_due_date::text, extended_due_date_kind, extended_due_date_source_document_id FROM ${schema}.business_filings ORDER BY period_label`)).rows;
+    assert.ok(rows.length > 0);
+    for (const row of rows) {
+      assert.equal(row.due_date, "2026-12-31");
+      assert.equal(row.due_date_kind, "unknown"); assert.equal(row.due_date_source_document_id, null);
+      assert.equal(row.extended_due_date_kind, "unknown"); assert.equal(row.extended_due_date_source_document_id, null);
+    }
+    assert.equal(rows[0].extended_due_date, "2027-01-01");
+    const existing = (await pool.query(`SELECT company_id, business_id FROM ${schema}.business_filings LIMIT 1`)).rows[0];
+    await assert.rejects(pool.query(`INSERT INTO ${schema}.business_filings (company_id, business_id, filing, authority, period_label, due_date) VALUES ($1, $2, 'New', 'Example', '2099', '2100-01-01')`, [existing.company_id, existing.business_id]), /due_date_kind/);
+    await assert.rejects(pool.query(`INSERT INTO ${schema}.business_filings (company_id, business_id, filing, authority, period_label, due_date, due_date_kind) VALUES ($1, $2, 'New', 'Example', '2099', '2100-01-01', 'statutory')`, [existing.company_id, existing.business_id]), /filing_due_date_basis_check/);
+  });
 }

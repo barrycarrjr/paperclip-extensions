@@ -245,7 +245,7 @@ test("a filing tracked by an issue from another company is refused before any wr
   const { db, writes } = fakeDb();
   const service = createRecordsService({ db, getIssue: issueOnlyInOther });
   const code = await codeOf(
-    service.upsertFiling(HQ_CALL, { businessId: BIZ, filing: "Annual report", authority: "Example State", periodLabel: "2026", dueDate: "2026-06-30", issueId: ISSUE }),
+    service.upsertFiling(HQ_CALL, { businessId: BIZ, filing: "Annual report", authority: "Example State", periodLabel: "2026", dueDate: "2026-06-30", dueDateKind: "internal_planned", issueId: ISSUE }),
   );
   assert.equal(code, "EISSUE_NOT_FOUND");
   assert.deepEqual(writes, []);

@@ -135,9 +135,9 @@ const WRITES: Array<{ name: string; stmt: SqlStatement }> = [
   { name: "markReplaced", stmt: buildMarkReplaced(NS, CO, BIZ, ID2, BIZ) },
   {
     name: "insertFiling",
-    stmt: buildInsertFiling(NS, CO, { id: ID2, businessId: BIZ, filing: "F", authority: "IRS", periodLabel: "2026", periodStart: null, periodEnd: null, dueDate: "2027-03-15", preparer: "cpa", issueId: null, notes: null }),
+    stmt: buildInsertFiling(NS, CO, { id: ID2, businessId: BIZ, filing: "F", authority: "IRS", periodLabel: "2026", periodStart: null, periodEnd: null, dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2027-03-15", preparer: "cpa", issueId: null, notes: null }),
   },
-  { name: "updateFiling", stmt: buildUpdateFiling(NS, CO, ID2, { dueDate: "2027-03-16", issueId: null, notes: "n" })! },
+  { name: "updateFiling", stmt: buildUpdateFiling(NS, CO, ID2, { dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2027-03-16", issueId: null, notes: "n" })! },
   { name: "setFilingStatus (filed)", stmt: buildSetFilingStatus(NS, CO, ID2, { status: "filed", proofDocumentId: BIZ, extendedDueDate: null, reason: null, source: null }, "upcoming") },
   {
     name: "setFilingStatus (not_required)",
@@ -196,7 +196,7 @@ test("the filing insert is idempotent: ON CONFLICT DO NOTHING against the period
   assert.match(MIGRATION, /CREATE UNIQUE INDEX business_filings_period_uq\s+ON \S+\.business_filings \(business_id, lower\(filing\), lower\(authority\), period_label\)/);
   // Two calls for the same period differ only in the generated row id, so the
   // second one lands on the unique key and inserts nothing.
-  const next = { businessId: BIZ, filing: "F", authority: "IRS", periodLabel: "2027", periodStart: null, periodEnd: null, dueDate: "2028-03-15", preparer: null, issueId: null, notes: null };
+  const next = { businessId: BIZ, filing: "F", authority: "IRS", periodLabel: "2027", periodStart: null, periodEnd: null, dueDateKind: "internal_planned", dueDateSourceDocumentId: null, dueDate: "2028-03-15", preparer: null, issueId: null, notes: null };
   const a = buildInsertFiling(NS, CO, { id: "x", ...next });
   const b = buildInsertFiling(NS, CO, { id: "y", ...next });
   assert.equal(a.text, b.text);
