@@ -12,6 +12,7 @@ import { registerDriveTools } from "./tools/drive.js";
 import { registerBackupObservations } from "./support-backups.js";
 import { registerOAuthFlow } from "./oauthFlow.js";
 
+let stopOAuth: (() => void) | undefined;
 const plugin = definePlugin({
   async setup(ctx: PluginContext) {
     ctx.logger.info("google-workspace plugin setup");
@@ -61,8 +62,11 @@ const plugin = definePlugin({
     registerSheetsTools(ctx);
     registerDriveTools(ctx);
     registerBackupObservations(ctx);
-    registerOAuthFlow(ctx);
+    stopOAuth?.();
+    stopOAuth = registerOAuthFlow(ctx);
   },
+
+  async onShutdown() { stopOAuth?.(); },
 
   async onHealth() {
     return { status: "ok", message: "google-workspace ready" };

@@ -2,66 +2,68 @@
 
 Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. Multi-account, per-company isolation, OAuth-driven.
 
-> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab — including the in-browser **Connect a Google account** wizard that walks the entire OAuth flow with no terminal needed. This README is an overview of capabilities and a reference for tool/event shapes.
+> **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab - including the in-browser **Connect a Google account** wizard that walks the entire OAuth flow with no terminal needed. This README is an overview of capabilities and a reference for tool/event shapes.
 
 ## Recent changes
+
+- **v0.3.29** - Replace unsupported device consent with Desktop app loopback authorization, state and PKCE validation, one-use expiring sessions and a private pasted-callback fallback for remote browsers or Docker workers. Fix wizard routes and portable secret names; preserve existing config fields and keep mutations off by default.
 
 - **v0.3.28** - Add scoped Support Desk verification of worker-host Markdown copies against an exact Drive folder, bounded downloads and disposable restore/read-back/cleanup. Counts only; no upload or in-place restore.
 
 - Development: scoped Support Desk Markdown cloud backup verification. An exact company/account opt-in binds a local source root **on this Google worker host** and a Drive backup folder. Compares file metadata and actual downloaded contents, tests a temporary local restore, removes temporary files, and emits counts without file text, names, paths or hashes. Current configuration is rechecked throughout. No upload, in-place restore, execution or provider changes. The existing Google tools keep their prior behavior.
 
 
-- **v0.3.27** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.27** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.26** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.26** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.25** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.25** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.24** — Declares a Google Calendar connector, so Paperclip's Calendar pages can show per company whether a Google account is actually hooked up and link back here to fix it. `refreshTokenRef` is marked required, so an account added before its refresh token has been fetched reads as not connected rather than passing as set up. No change to tools or behaviour.
+- **v0.3.24** - Declares a Google Calendar connector, so Paperclip's Calendar pages can show per company whether a Google account is actually hooked up and link back here to fix it. `refreshTokenRef` is marked required, so an account added before its refresh token has been fetched reads as not connected rather than passing as set up. No change to tools or behaviour.
 
-- **v0.3.23** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.23** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.22** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.22** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.21** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.21** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.20** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.20** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.19** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.19** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.18** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.18** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.17** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.17** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.16** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.16** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.15** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.15** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.14** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.14** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.13** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.13** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.12** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.12** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.11** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.11** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.10** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.10** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.9** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.9** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.8** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.8** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.7** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.7** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.6** — Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
+- **v0.3.6** - Harden instanceConfigSchema with additionalProperties: false to reject unknown keys on config POST.
 
-- **v0.3.5** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.5** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.4** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.4** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.3** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.3** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
-- **v0.3.2** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+- **v0.3.2** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 ## What this plugin registers
 
@@ -93,7 +95,7 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 | `gdrive_create_folder` | Create a Drive folder. | yes |
 | `gdrive_upload_file` | Upload a file (inline base64 or `localPath`). | yes |
 
-Mutation tools require the **"Allow create/update/delete tools"** master switch on the plugin settings page (off by default — fresh installs are read-only).
+Mutation tools require the **"Allow create/update/delete tools"** master switch on the plugin settings page (off by default - fresh installs are read-only).
 
 ## Setup
 
@@ -102,53 +104,55 @@ Mutation tools require the **"Allow create/update/delete tools"** master switch 
 The plugin ships a UI-driven setup wizard at:
 
 ```
-/<company>/plugins/google-workspace/setup-account
+/<company>/setup-account
 ```
 
-(Any company in the URL works — the wizard is for adding instance-level accounts; pick whichever company URL you happen to be on.)
+(Any company in the URL works - the wizard is for adding instance-level accounts; pick whichever company URL you happen to be on.)
 
-The wizard handles steps 2–4 below for you: it runs Google's OAuth device flow, creates the 3 secrets in the company you pick, and registers the account on the plugin. You only need to do **step 1** (creating the OAuth client in Google Cloud) yourself, because that's on Google's side, not Paperclip's.
+The wizard handles Google consent, secret creation and account registration for you: it runs Google's Desktop app authorization flow, creates the 3 secrets in the company you pick, and registers the account on the plugin. You only need to do **step 1** (creating the OAuth client in Google Cloud) yourself, because that's on Google's side, not Paperclip's.
 
 ### 1. Create a Google Cloud OAuth client
 
 Once per Google account family (your personal, an LLC's, etc.). One OAuth client can grant any number of accounts under it.
 
 1. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials).
-2. Pick (or create) a project. The project doesn't have to match your Workspace org — it just owns the OAuth client.
+2. Pick (or create) a project. The project doesn't have to match your Workspace org - it just owns the OAuth client.
 3. **Enable APIs** (APIs & Services → Library): Calendar API, Tasks API, Sheets API, Drive API.
-4. **Configure OAuth consent screen** — pick "External" (unless you're using a Google Workspace and want "Internal"). Add your email under "Test users" while the app is in test mode. The plugin doesn't need verification because each operator only authorizes their own accounts.
+4. **Configure OAuth consent screen** - pick "External" (unless you're using a Google Workspace and want "Internal"). Add your email under "Test users" while the app is in test mode. Google may require verification for External apps using sensitive or restricted scopes. In Testing status, add each authorizing email as a test user; these grants normally expire after seven days. Internal apps are limited to their Workspace organization.
 5. **Create OAuth 2.0 Client ID**:
-   - Application type: **TVs and Limited Input devices** if you'll use the in-Paperclip wizard (recommended). This is required for the device flow that the wizard runs.
-   - **Desktop app** if you'll use the CLI helper as a fallback (loopback redirect, redirect URI doesn't need to be allowlisted).
-6. Note the resulting **Client ID** and **Client Secret**. These are the only things you'll paste — the wizard takes care of everything else.
+   - Application type: **Desktop app** for both the wizard and CLI helper. The wizard chooses a random local port; Desktop clients need no redirect URI allowlist. TVs and Limited Input devices cannot request the Calendar, Tasks, Sheets and full Drive scopes used here.
+6. Note the resulting **Client ID** and **Client Secret**. These are the only things you'll paste - the wizard takes care of everything else.
 
 ### 2. Run the wizard
 
-Open `/<company>/plugins/google-workspace/setup-account` in Paperclip. Steps:
+Open `/<company>/setup-account` in Paperclip. Steps:
 
-1. Pick an **account identifier** (e.g. `personal`, `acme-print`) — this is the short ID agents pass as the `account` param.
+1. Pick an **account identifier** (e.g. `personal`, `acme-print`) - this is the short ID agents pass as the `account` param.
 2. Paste the **Client ID** and **Client Secret** from step 1.
-3. Pick the **owner company** — where the 3 secrets get stored.
-4. Tick the **allowed companies** — which companies' agents may use this account.
+3. Pick the **owner company** - where the 3 secrets get stored.
+4. Tick the **allowed companies** - which companies' agents may use this account.
 5. Click **"Connect Google account"**. The wizard:
-   - Calls Google's device-flow endpoint, displays a short user code and a verification URL.
-   - You open the URL on any device (this browser tab, your phone, doesn't matter), enter the code, and grant access as the Google account you want this account to act as.
-   - The wizard polls Google until you grant, then exchanges the code for a refresh token.
-   - Creates the 3 secrets in the owner company (named `google-<key>-client-id`, `google-<key>-client-secret`, `google-<key>-refresh-token`).
-   - Adds the account entry on the plugin's instance config with the secret UUIDs filled in.
+   - Starts a ten-minute Desktop app consent session with a random loopback port, state and PKCE (a one-use code verifier). Open **Google consent** and grant access as the Google account you want to connect.
+   - If the browser and worker share a host, the callback completes automatically. If the worker is remote or in Docker and the final local page cannot be reached, copy its complete `http://127.0.0.1:<port>/oauth/callback?...` URL from the address bar into the wizard's callback field. Keep this temporary URL private; it contains the authorization code. Do not paste it into logs or messages.
+   - The worker validates the original callback address and state, exchanges the code once, and returns the refresh token to the wizard. Cancel, expiry and worker shutdown remove the session and close the listener. At most eight sessions can be active.
+   - Creates the 3 secrets in the owner company (named `google_<key>_client_id`, `google_<key>_client_secret`, `google_<key>_refresh_token`; account-key hyphens become underscores, so `acme-print` uses `google_acme_print_*`). Secret names must match `^[A-Za-z_][A-Za-z0-9_]*$`.
+   - If any standard secret name already exists, appends a random suffix to all three new names instead of rotating old secrets that other accounts may share. The completion page shows their actual names. Reusing an account identifier replaces that account's refs, allowed companies and scope selection while preserving other account fields and instance settings.
+   - Adds or reconnects the account on the plugin's instance config with the new secret UUIDs filled in.
 
 After the wizard finishes, the read-only tools (`gcal_list_events`, `gtasks_list_lists`, etc.) work immediately. Flip **"Allow create/update/delete tools"** on at the top of `/instance/settings/plugins/google-workspace` when you want mutation tools active.
 
+The wizard follows [Google's installed-app authorization guidance](https://developers.google.com/identity/protocols/oauth2/native-app).
+
 ### Fallback: CLI helper
 
-If the device flow doesn't fit (e.g. headless setup, scripting), the original CLI helper still works for OAuth Desktop clients:
+For terminal setup, use the CLI helper with the same Desktop app client:
 
 ```bash
 cd /path/to/paperclip-extensions/plugins/google-workspace
 GOOGLE_CLIENT_ID="…" GOOGLE_CLIENT_SECRET="…" pnpm grant <account-key>
 ```
 
-It opens a localhost listener, runs the OAuth consent in your browser, and prints the refresh token with copy-paste instructions for creating the 3 secrets manually on the Secrets page and pasting the UUIDs into the plugin settings page.
+It opens a localhost listener, runs the OAuth consent in your browser, and prints the refresh token with copy-paste instructions for creating the 3 secrets at `/<company>/company/settings/secrets` and choosing them using **Pick from your secrets** in the plugin Configuration tab. The dropdown stores their UUID references.
 
 ### (Optional) Tighten scopes
 
@@ -157,16 +161,16 @@ The plugin defaults to:
 - `https://www.googleapis.com/auth/calendar`
 - `https://www.googleapis.com/auth/tasks`
 - `https://www.googleapis.com/auth/spreadsheets`
-- `https://www.googleapis.com/auth/drive` (full Drive — chosen so `document-filing` skills can write into existing personal folders without the share-the-folder dance that `drive.file` would require)
+- `https://www.googleapis.com/auth/drive` (full Drive - chosen so `document-filing` skills can write into existing personal folders without the share-the-folder dance that `drive.file` would require)
 - `https://www.googleapis.com/auth/userinfo.email` and `userinfo.profile` (for `google_test_auth`)
 
-If you don't need Drive, set `scopes` on the account to a narrower list and re-run the grant script with `GOOGLE_SCOPES="space,separated,scope,urls"` to obtain a fresh refresh token bound to those scopes. The new refresh token replaces the old one — update the secret value.
+If you don't need Drive, set `scopes` on the account to a narrower list and re-run the grant script with `GOOGLE_SCOPES="space,separated,scope,urls"` to obtain a fresh refresh token bound to those scopes. The new refresh token replaces the old one - update the secret value.
 
 ## Sample tool calls
 
 All examples assume `account: "personal"` is configured.
 
-### Calendar — list events for the next 24 hours
+### Calendar - list events for the next 24 hours
 
 ```json
 {
@@ -179,7 +183,7 @@ All examples assume `account: "personal"` is configured.
 }
 ```
 
-### Calendar — create an event
+### Calendar - create an event
 
 ```json
 {
@@ -197,7 +201,7 @@ All examples assume `account: "personal"` is configured.
 
 Requires `allowMutations: true`.
 
-### Tasks — list tasks in a list
+### Tasks - list tasks in a list
 
 ```json
 {
@@ -212,7 +216,7 @@ Requires `allowMutations: true`.
 
 (Find the `listId` first via `gtasks_list_lists`.)
 
-### Tasks — create a task
+### Tasks - create a task
 
 ```json
 {
@@ -226,7 +230,7 @@ Requires `allowMutations: true`.
 }
 ```
 
-### Sheets — read a range
+### Sheets - read a range
 
 ```json
 {
@@ -239,7 +243,7 @@ Requires `allowMutations: true`.
 }
 ```
 
-### Sheets — append a row
+### Sheets - append a row
 
 ```json
 {
@@ -253,7 +257,7 @@ Requires `allowMutations: true`.
 }
 ```
 
-### Drive — search
+### Drive - search
 
 ```json
 {
@@ -265,7 +269,7 @@ Requires `allowMutations: true`.
 }
 ```
 
-### Drive — upload from local path
+### Drive - upload from local path
 
 ```json
 {
@@ -308,19 +312,19 @@ When an agent in company A invokes a tool addressing an account that isn't allow
 ## Bundle and runtime notes
 
 - The worker bundle is ~1.7 MB (per-API `@googleapis/*` packages, not the umbrella `googleapis`).
-- OAuth tokens auto-refresh — `google-auth-library` handles the access-token round-trip. Only the long-lived refresh token is stored in Paperclip secrets.
+- OAuth tokens auto-refresh - `google-auth-library` handles the access-token round-trip. Only the long-lived refresh token is stored in Paperclip secrets.
 - An OAuth2 client is cached per `(companyId, accountKey)` tuple. Re-resolving secrets after they change in Paperclip's secret store happens transparently when the cache key's secret refs change.
 - Idempotency keys on mutation tools are best-effort (in-memory, 30-min TTL, 1000-entry LRU). Worker restart wipes the cache. Google APIs don't support native idempotency keys, so this is the closest practical implementation.
 
 ## Migration / future work
 
-- **In-app OAuth consent flow.** The current setup requires running the CLI helper. A v0.2 follow-up could add a Paperclip-core route that hosts the OAuth callback so the consent dance can happen inside the settings page. Pending core SDK work (plugin-owned HTTP routes).
-- **Service-account flow.** Useful for Workspace shared inboxes (no per-user consent). Deferred to v0.2 — refresh-token works for shared inboxes too, just less elegant.
+- **Hosted callback option.** The wizard currently uses a worker loopback listener with a private paste fallback for remote browsers. A future host-owned HTTPS callback could remove that manual step.
+- **Service-account flow.** Useful for Workspace shared inboxes (no per-user consent). Deferred to v0.2 - refresh-token works for shared inboxes too, just less elegant.
 - **Audit logging of `[ECOMPANY_NOT_ALLOWED]` rejections.** Currently logged at warn level only; could write `activity_log` entries when the SDK exposes that helper.
 
 ## Versioning
 
-- `0.1.0` — initial release: Calendar, Tasks, Sheets, Drive, Auth.
+- `0.1.0` - initial release: Calendar, Tasks, Sheets, Drive, Auth.
 
 ## Support Desk backup verification
 

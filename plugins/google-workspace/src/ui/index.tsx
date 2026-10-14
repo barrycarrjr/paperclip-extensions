@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { allocateGoogleSecretNames, googleSecretNames } from "../setupNames.js";
+import { accountFromGoogleSetup, mergeGoogleAccount, snapshotGoogleSetupInput, type GoogleSetupInput, type PluginConfig } from "../setupConfig.js";
 import {
   useHostContext,
   usePluginAction,
@@ -13,28 +15,24 @@ interface CompanyRecord {
   name: string;
 }
 
-interface DeviceFlowStart {
-  deviceCode: string;
-  userCode: string;
-  verificationUrl: string;
-  interval: number;
+interface LoopbackFlowStart {
+  sessionId: string;
+  authorizationUrl: string;
   expiresIn: number;
   scopes: string[];
 }
 
 interface PollResultPending {
   status: "pending";
-  slowDown?: boolean;
 }
 interface PollResultGranted {
   status: "granted";
   refreshToken: string;
-  accessToken?: string;
-  expiresIn?: number;
-  scope?: string;
+  user: UserInfo;
 }
 interface PollResultDeniedOrExpired {
-  status: "denied" | "expired";
+  status: "denied" | "expired" | "failed";
+  error?: string;
 }
 type PollResult = PollResultPending | PollResultGranted | PollResultDeniedOrExpired;
 
@@ -44,24 +42,7 @@ interface UserInfo {
   verified: boolean | null;
 }
 
-interface PluginAccount {
-  key?: string;
-  displayName?: string;
-  userEmail?: string;
-  clientIdRef?: string;
-  clientSecretRef?: string;
-  refreshTokenRef?: string;
-  scopes?: string[];
-  allowedCompanies?: string[];
-}
-
-interface PluginConfig {
-  allowMutations?: boolean;
-  defaultAccount?: string;
-  accounts?: PluginAccount[];
-}
-
-type WizardStep = "form" | "device" | "creating" | "done";
+type WizardStep = "form" | "authorizing" | "creating" | "done";
 
 // ---------------------------------------------------------------------------
 // Styles (mirroring kitchen-sink CSS-variable convention)
@@ -142,14 +123,11 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     try {
       body = JSON.parse(text);
     } catch {
-      throw new Error(`Non-JSON response from ${url}: ${text.slice(0, 200)}`);
+      throw new Error(`Non-JSON response from ${url}.`);
     }
   }
   if (!res.ok) {
-    const msg = (body && typeof body === "object" && "error" in body && typeof (body as Record<string, unknown>).error === "string")
-      ? (body as { error: string }).error
-      : `HTTP ${res.status}`;
-    throw new Error(msg);
+    throw new Error(`Paperclip request failed (HTTP ${res.status}) for ${url}. Check the settings and retry.`);
   }
   return body as T;
 }
@@ -192,9 +170,12 @@ async function createSecret(
 export function SetupAccountPage(_props: PluginPageProps) {
   const ctx = useHostContext();
 
-  const startDeviceFlow = usePluginAction("oauth_start_device_flow");
-  const pollDeviceFlow = usePluginAction("oauth_poll_device_flow");
-  const lookupUser = usePluginAction("oauth_lookup_user");
+  const startLoopbackFlow = usePluginAction("oauth_start_loopback_flow");
+  const pollLoopbackFlow = usePluginAction("oauth_poll_loopback_flow");
+  const cancelLoopbackFlow = usePluginAction("oauth_cancel_loopback_flow");
+  const submitCallback = usePluginAction("oauth_submit_callback");
+  const activeSession = useRef<string | null>(null);
+  const startAttempt = useRef(0);
 
   const [step, setStep] = useState<WizardStep>("form");
   const [error, setError] = useState<string | null>(null);
@@ -210,8 +191,12 @@ export function SetupAccountPage(_props: PluginPageProps) {
   const [scopesText, setScopesText] = useState("");
   const [setAsDefault, setSetAsDefault] = useState(false);
 
-  // Device-flow state
-  const [device, setDevice] = useState<DeviceFlowStart | null>(null);
+  // Consent-session state
+  const [flow, setFlow] = useState<LoopbackFlowStart | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [callbackUrl, setCallbackUrl] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [consentInput, setConsentInput] = useState<Readonly<GoogleSetupInput> | null>(null);
   const [pollMessage, setPollMessage] = useState<string>("Waiting for you to grant access on Google…");
   const [resolvedRefreshToken, setResolvedRefreshToken] = useState<string | null>(null);
   const [resolvedUser, setResolvedUser] = useState<UserInfo | null>(null);
@@ -222,10 +207,17 @@ export function SetupAccountPage(_props: PluginPageProps) {
     clientSecretRef: string;
     refreshTokenRef: string;
   } | null>(null);
+  const [createdSecretNames, setCreatedSecretNames] = useState<ReturnType<typeof googleSecretNames> | null>(null);
 
   useEffect(() => {
     listCompanies().then(setCompanies).catch((err) => setError(getErrorMessage(err)));
   }, []);
+
+  useEffect(() => () => {
+    startAttempt.current++;
+    if (activeSession.current) void cancelLoopbackFlow({ sessionId: activeSession.current }).catch(() => {});
+    activeSession.current = null;
+  }, [cancelLoopbackFlow]);
 
   // Toggle a company in the allowed-companies set.
   function toggleAllowed(id: string): void {
@@ -238,13 +230,16 @@ export function SetupAccountPage(_props: PluginPageProps) {
   }
 
   // ---------------------------------------------------------------------------
-  // Step 1: validate form, start device flow
+  // Step 1: validate form, start Desktop app consent
 
   async function handleStart(): Promise<void> {
+    if (starting) return;
     setError(null);
     if (!accountKey.trim()) return setError("Account identifier is required.");
     if (!/^[a-z0-9-]+$/.test(accountKey.trim()))
       return setError("Account identifier must be lowercase letters, digits, and hyphens only.");
+    try { googleSecretNames(accountKey, "0".repeat(16)); }
+    catch (err) { return setError(getErrorMessage(err)); }
     if (!clientId.trim()) return setError("Client ID is required.");
     if (!clientSecret.trim()) return setError("Client Secret is required.");
     if (!ownerCompanyId) return setError("Pick a company to own the secrets.");
@@ -255,156 +250,162 @@ export function SetupAccountPage(_props: PluginPageProps) {
       .split(/[\s,]+/)
       .map((s) => s.trim())
       .filter(Boolean);
+    const input = snapshotGoogleSetupInput({
+      accountKey: accountKey.trim(), displayName: displayName.trim(),
+      clientId: clientId.trim(), clientSecret: clientSecret.trim(), ownerCompanyId,
+      allowedCompanies: Array.from(allowedCompanyIds), scopes, setAsDefault,
+    });
+    setConsentInput(input);
 
-    setStep("device");
-    setPollMessage("Requesting device code from Google…");
+    setStarting(true);
+    const attempt = ++startAttempt.current;
 
-    let started: DeviceFlowStart;
+    let started: LoopbackFlowStart;
     try {
-      started = (await startDeviceFlow({
-        clientId: clientId.trim(),
-        clientSecret: clientSecret.trim(),
-        scopes: scopes.length > 0 ? scopes : undefined,
-      })) as DeviceFlowStart;
+      started = (await startLoopbackFlow({
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+        scopes: input.scopes.length > 0 ? input.scopes : undefined,
+      })) as LoopbackFlowStart;
+      if (attempt !== startAttempt.current) {
+        void cancelLoopbackFlow({ sessionId: started.sessionId }).catch(() => {});
+        return;
+      }
     } catch (err) {
+      if (attempt !== startAttempt.current) return;
       setError(getErrorMessage(err));
-      setStep("form");
       return;
+    } finally {
+      setStarting(false);
     }
-    setDevice(started);
+    activeSession.current = started.sessionId;
+    setFlow(started);
+    setStep("authorizing");
     setPollMessage("Waiting for you to grant access on Google…");
   }
 
   // ---------------------------------------------------------------------------
-  // Step 2: poll the device-flow until granted/denied/expired
+  // Step 2: poll the worker session. Google calls the listener or the operator pastes its URL.
 
   useEffect(() => {
-    if (step !== "device" || !device) return;
+    if (step !== "authorizing" || !flow) return;
 
     let cancelled = false;
-    let intervalMs = device.interval * 1000;
+    let timer: ReturnType<typeof setTimeout>;
     const startedAt = Date.now();
-    const expiresAtMs = startedAt + device.expiresIn * 1000;
+    const expiresAtMs = startedAt + flow.expiresIn * 1000;
 
     async function tick(): Promise<void> {
       if (cancelled) return;
       if (Date.now() > expiresAtMs) {
-        setError("Device code expired. Click 'Start over' to retry.");
+        void cancelLoopbackFlow({ sessionId: flow!.sessionId }).catch(() => {});
+        activeSession.current = null;
+        setError("Consent session expired. Start again to retry.");
         setStep("form");
-        setDevice(null);
+        setFlow(null);
         return;
       }
       try {
-        const r = (await pollDeviceFlow({
-          clientId: clientId.trim(),
-          clientSecret: clientSecret.trim(),
-          deviceCode: device!.deviceCode,
+        const r = (await pollLoopbackFlow({
+          sessionId: flow!.sessionId,
         })) as PollResult;
         if (cancelled) return;
         if (r.status === "pending") {
-          if (r.slowDown) intervalMs = Math.min(intervalMs * 2, 30000);
-          setPollMessage("Still waiting on Google…");
-          setTimeout(tick, intervalMs);
+          timer = setTimeout(tick, 1500);
           return;
         }
         if (r.status === "denied") {
-          setError("You denied access on Google's consent screen. Click 'Start over' to retry.");
+          activeSession.current = null;
+          setError("You denied access on Google's consent screen. Start again to retry.");
           setStep("form");
-          setDevice(null);
+          setFlow(null);
           return;
         }
-        if (r.status === "expired") {
-          setError("Device code expired before you granted access. Click 'Start over' to retry.");
+        if (r.status === "expired" || r.status === "failed") {
+          activeSession.current = null;
+          setError(r.error ?? "Consent session expired. Start again to retry.");
           setStep("form");
-          setDevice(null);
+          setFlow(null);
           return;
         }
         if (r.status !== "granted") return;
-        const refreshToken = r.refreshToken;
-        setResolvedRefreshToken(refreshToken);
-        setPollMessage("Got the refresh token — looking up account email…");
-        try {
-          const info = (await lookupUser({
-            clientId: clientId.trim(),
-            clientSecret: clientSecret.trim(),
-            refreshToken,
-          })) as UserInfo;
-          setResolvedUser(info);
-        } catch {
-          setResolvedUser({ email: null, name: null, verified: null });
-        }
+        activeSession.current = null;
+        setCallbackUrl("");
+        setResolvedRefreshToken(r.refreshToken);
+        setResolvedUser(r.user);
         setStep("creating");
       } catch (err) {
         if (cancelled) return;
         setError(getErrorMessage(err));
         setStep("form");
-        setDevice(null);
+        void cancelLoopbackFlow({ sessionId: flow!.sessionId }).catch(() => {});
+        activeSession.current = null;
+        setFlow(null);
       }
     }
 
-    void tick();
+    timer = setTimeout(tick, 0);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [step, device, clientId, clientSecret, pollDeviceFlow, lookupUser]);
+  }, [step, flow, pollLoopbackFlow, cancelLoopbackFlow]);
+
+  async function handleCallback(): Promise<void> {
+    if (!flow || submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await submitCallback({ sessionId: flow.sessionId, callbackUrl });
+      setCallbackUrl("");
+    } catch (err) { setError(getErrorMessage(err)); }
+    finally { setSubmitting(false); }
+  }
 
   // ---------------------------------------------------------------------------
   // Step 3: create the 3 secrets, update plugin config
 
   useEffect(() => {
-    if (step !== "creating" || !resolvedRefreshToken) return;
+    if (step !== "creating" || !resolvedRefreshToken || !consentInput) return;
+    const input = consentInput;
 
     let cancelled = false;
     (async () => {
       try {
-        const namePrefix = `google-${accountKey.trim()}`;
+        const existingSecrets = await fetchJson<{ name: string }[]>(`/api/companies/${input.ownerCompanyId}/secrets`);
+        if (cancelled) return;
+        const suffix = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, "0")).join("");
+        const names = allocateGoogleSecretNames(input.accountKey, existingSecrets.map(s => s.name), suffix);
         const cidSecret = await createSecret(
-          ownerCompanyId,
-          `${namePrefix}-client-id`,
-          clientId.trim(),
-          `Google OAuth client ID for ${accountKey.trim()}`,
+          input.ownerCompanyId,
+          names.clientId,
+          input.clientId,
+          `Google OAuth client ID for ${input.accountKey}`,
         );
         if (cancelled) return;
         const csSecret = await createSecret(
-          ownerCompanyId,
-          `${namePrefix}-client-secret`,
-          clientSecret.trim(),
-          `Google OAuth client secret for ${accountKey.trim()}`,
+          input.ownerCompanyId,
+          names.clientSecret,
+          input.clientSecret,
+          `Google OAuth client secret for ${input.accountKey}`,
         );
         if (cancelled) return;
         const rtSecret = await createSecret(
-          ownerCompanyId,
-          `${namePrefix}-refresh-token`,
+          input.ownerCompanyId,
+          names.refreshToken,
           resolvedRefreshToken,
-          `Google OAuth refresh token for ${accountKey.trim()}`,
+          `Google OAuth refresh token for ${input.accountKey}`,
         );
         if (cancelled) return;
 
         const existing = await readPluginConfig("google-workspace");
-        const existingAccounts = existing.accounts ?? [];
-        const filtered = existingAccounts.filter(
-          (a) => (a.key ?? "").toLowerCase() !== accountKey.trim().toLowerCase(),
-        );
-        const scopes = scopesText
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        const newAccount: PluginAccount = {
-          key: accountKey.trim(),
-          displayName: displayName.trim() || undefined,
-          userEmail: resolvedUser?.email ?? undefined,
+        const newAccount = accountFromGoogleSetup(input, {
           clientIdRef: cidSecret.id,
           clientSecretRef: csSecret.id,
           refreshTokenRef: rtSecret.id,
-          scopes: scopes.length > 0 ? scopes : undefined,
-          allowedCompanies: Array.from(allowedCompanyIds),
-        };
+        }, resolvedUser?.email);
 
-        const nextConfig: PluginConfig = {
-          allowMutations: existing.allowMutations ?? false,
-          defaultAccount: setAsDefault ? accountKey.trim() : existing.defaultAccount,
-          accounts: [...filtered, newAccount],
-        };
+        const nextConfig = mergeGoogleAccount(existing, newAccount, input.setAsDefault);
         await writePluginConfig("google-workspace", nextConfig);
 
         if (cancelled) return;
@@ -413,7 +414,11 @@ export function SetupAccountPage(_props: PluginPageProps) {
           clientSecretRef: csSecret.id,
           refreshTokenRef: rtSecret.id,
         });
+        setCreatedSecretNames(names);
         setStep("done");
+        setResolvedRefreshToken(null);
+        setClientSecret("");
+        setConsentInput(snapshotGoogleSetupInput({ ...input, clientSecret: "" }));
       } catch (err) {
         if (cancelled) return;
         setError(getErrorMessage(err));
@@ -427,14 +432,7 @@ export function SetupAccountPage(_props: PluginPageProps) {
   }, [
     step,
     resolvedRefreshToken,
-    accountKey,
-    displayName,
-    clientId,
-    clientSecret,
-    ownerCompanyId,
-    allowedCompanyIds,
-    scopesText,
-    setAsDefault,
+    consentInput,
     resolvedUser,
   ]);
 
@@ -442,12 +440,18 @@ export function SetupAccountPage(_props: PluginPageProps) {
   // Render helpers
 
   function startOver(): void {
+    startAttempt.current++;
+    if (activeSession.current) void cancelLoopbackFlow({ sessionId: activeSession.current }).catch(() => {});
+    activeSession.current = null;
     setStep("form");
     setError(null);
-    setDevice(null);
+    setFlow(null);
+    setConsentInput(null);
+    setCallbackUrl("");
     setResolvedRefreshToken(null);
     setResolvedUser(null);
     setCreatedSecretIds(null);
+    setCreatedSecretNames(null);
   }
 
   function ownerNameFor(id: string): string {
@@ -479,29 +483,32 @@ export function SetupAccountPage(_props: PluginPageProps) {
         setAsDefault={setAsDefault}
         onSetAsDefault={setSetAsDefault}
         onSubmit={handleStart}
+        starting={starting}
       />
     );
-  } else if (step === "device" && device) {
-    body = <DeviceStep device={device} pollMessage={pollMessage} onCancel={startOver} />;
+  } else if (step === "authorizing" && flow) {
+    body = <ConsentStep flow={flow} pollMessage={pollMessage} onCancel={startOver}
+      callbackUrl={callbackUrl} onCallbackUrl={setCallbackUrl} onSubmitCallback={handleCallback} submitting={submitting} />;
   } else if (step === "creating") {
     body = (
       <div style={card}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>
-          Creating secrets in {ownerNameFor(ownerCompanyId)} and registering the account…
+          Creating secrets in {ownerNameFor(consentInput!.ownerCompanyId)} and registering the account…
         </div>
         <div style={subtle}>
           Authenticated as <code>{resolvedUser?.email ?? "(email unknown)"}</code>.
         </div>
       </div>
     );
-  } else if (step === "done" && createdSecretIds) {
+  } else if (step === "done" && createdSecretIds && createdSecretNames) {
     body = (
       <DoneStep
-        accountKey={accountKey.trim()}
+        accountKey={consentInput!.accountKey}
         userEmail={resolvedUser?.email}
-        ownerCompanyName={ownerNameFor(ownerCompanyId)}
-        allowedNames={Array.from(allowedCompanyIds).map(ownerNameFor)}
+        ownerCompanyName={ownerNameFor(consentInput!.ownerCompanyId)}
+        allowedNames={consentInput!.allowedCompanies.map(ownerNameFor)}
         secretIds={createdSecretIds}
+        names={createdSecretNames}
         onAddAnother={startOver}
       />
     );
@@ -513,8 +520,8 @@ export function SetupAccountPage(_props: PluginPageProps) {
         <h1 style={{ margin: 0, fontSize: 22 }}>Connect a Google account</h1>
         <p style={{ ...subtle, marginTop: 6 }}>
           Adds an account to the <code>google-workspace</code> plugin. The wizard creates the
-          OAuth secrets for you, runs the device-flow consent on Google's side, and updates the
-          plugin config — no terminal required.
+          OAuth secrets for you, opens Google's Desktop app consent, and updates the
+          plugin config - no terminal required.
         </p>
       </header>
 
@@ -533,6 +540,7 @@ export function SetupAccountPage(_props: PluginPageProps) {
 // Form step
 
 interface FormStepProps {
+  starting: boolean;
   companies: CompanyRecord[] | null;
   accountKey: string;
   onAccountKey: (s: string) => void;
@@ -562,15 +570,15 @@ function FormStep(p: FormStepProps) {
 
   return (
     <div style={card}>
-      <h2 style={{ margin: "0 0 4px 0", fontSize: 16 }}>Step 1 — Tell the plugin about the account</h2>
+      <h2 style={{ margin: "0 0 4px 0", fontSize: 16 }}>Step 1 - Tell the plugin about the account</h2>
       <p style={subtle}>
-        First, create an OAuth 2.0 Client of type <strong>"TVs and Limited Input devices"</strong> in
+        First, create an OAuth 2.0 Client of type <strong>"Desktop app"</strong> in
         Google Cloud Console (Credentials → Create credentials). Enable the Calendar / Tasks /
         Sheets / Drive APIs in that project. Paste the client ID/secret below.
       </p>
 
       <div style={{ ...stack, marginTop: 14 }}>
-        <FormRow label="Account identifier (lowercase, hyphens — e.g. personal, acme-print)">
+        <FormRow label="Account identifier (lowercase, hyphens - e.g. personal, acme-print)">
           <input
             style={input}
             value={p.accountKey}
@@ -636,11 +644,11 @@ function FormStep(p: FormStepProps) {
             <div style={{ ...subtle, marginTop: 4 }}>
               Tip: a personal Google account is usually allowed for one company only (e.g. just
               Personal). A shared business inbox should be restricted to that LLC's company.
-              {companiesById.size > 0 && p.allowedCompanyIds.size === 0 && " — pick at least one."}
+              {companiesById.size > 0 && p.allowedCompanyIds.size === 0 && " - pick at least one."}
             </div>
           </div>
         </FormRow>
-        <FormRow label="OAuth scopes (optional override — leave blank for defaults)">
+        <FormRow label="OAuth scopes (optional override - leave blank for defaults)">
           <input
             style={input}
             value={p.scopesText}
@@ -662,8 +670,8 @@ function FormStep(p: FormStepProps) {
           <span>Set as the plugin's default account (agents can omit the <code>account</code> param)</span>
         </label>
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button style={primary} onClick={p.onSubmit} disabled={!p.companies}>
-            Connect Google account
+          <button style={primary} onClick={p.onSubmit} disabled={!p.companies || p.starting}>
+            {p.starting ? "Starting consent…" : "Connect Google account"}
           </button>
         </div>
       </div>
@@ -681,6 +689,50 @@ function FormRow({ label: text, children }: { label: string; children: ReactNode
 }
 
 // ---------------------------------------------------------------------------
+// Desktop app consent step
+
+function ConsentStep({ flow, pollMessage, onCancel, callbackUrl, onCallbackUrl, onSubmitCallback, submitting }: {
+  flow: LoopbackFlowStart;
+  pollMessage: string;
+  onCancel: () => void;
+  callbackUrl: string;
+  onCallbackUrl: (value: string) => void;
+  onSubmitCallback: () => void;
+  submitting: boolean;
+}) {
+  return (
+    <div style={card}>
+      <h2 style={{ margin: "0 0 4px 0", fontSize: 16 }}>Step 2 - Grant access on Google</h2>
+      <p style={subtle}>
+        Open Google consent and sign in as the account you want to connect. Keep this page open.
+        This session expires after ten minutes.
+      </p>
+      <div style={{ ...stack, marginTop: 14 }}>
+        <a href={flow.authorizationUrl} target="_blank" rel="noreferrer" style={{ ...primary, textDecoration: "none", width: "fit-content" }}>
+          Open Google consent
+        </a>
+        <p style={subtle}>
+          If your browser runs on a different computer from the Paperclip worker, or the worker
+          runs in Docker, Google's final page may say the local address cannot be reached.
+          Copy that page's complete URL from the address bar and paste it below. It starts with
+          <code> http://127.0.0.1:</code> and contains a temporary code. Keep it private.
+        </p>
+        <FormRow label="Callback URL (only if the final Google redirect cannot be reached)">
+          <input style={input} type="password" autoComplete="off" spellCheck={false} value={callbackUrl}
+            onChange={e => onCallbackUrl(e.target.value)} placeholder="http://127.0.0.1:.../oauth/callback?code=...&state=..." />
+        </FormRow>
+        <button style={button} disabled={!callbackUrl.trim() || submitting} onClick={onSubmitCallback}>
+          {submitting ? "Checking callback..." : "Complete with pasted callback URL"}
+        </button>
+        <div style={subtle}>{pollMessage}</div>
+        <button style={button} onClick={onCancel}>Cancel and start over</button>
+      </div>
+    </div>
+  );
+}
+
+// Disabled device consent UI preserved as an undo path with the worker implementation.
+/*
 // Device-flow step
 
 function DeviceStep({
@@ -699,7 +751,7 @@ function DeviceStep({
   }
   return (
     <div style={card}>
-      <h2 style={{ margin: "0 0 4px 0", fontSize: 16 }}>Step 2 — Grant access on Google</h2>
+      <h2 style={{ margin: "0 0 4px 0", fontSize: 16 }}>Step 2 - Grant access on Google</h2>
       <p style={subtle}>
         Open the verification URL on any device (this browser, your phone, doesn't matter) and
         enter the code below. Sign in as the Google account you want this Paperclip account to
@@ -747,6 +799,9 @@ function DeviceStep({
 }
 
 // ---------------------------------------------------------------------------
+*/
+
+// ---------------------------------------------------------------------------
 // Done step
 
 function DoneStep({
@@ -755,6 +810,7 @@ function DoneStep({
   ownerCompanyName,
   allowedNames,
   secretIds,
+  names,
   onAddAnother,
 }: {
   accountKey: string;
@@ -762,6 +818,7 @@ function DoneStep({
   ownerCompanyName: string;
   allowedNames: string[];
   secretIds: { clientIdRef: string; clientSecretRef: string; refreshTokenRef: string };
+  names: ReturnType<typeof googleSecretNames>;
   onAddAnother: () => void;
 }) {
   return (
@@ -783,13 +840,13 @@ function DoneStep({
           <div style={label}>Created secrets</div>
           <ul style={{ ...subtle, margin: 0, paddingLeft: 18 }}>
             <li>
-              <code>google-{accountKey}-client-id</code> — {secretIds.clientIdRef}
+              <code>{names.clientId}</code> - {secretIds.clientIdRef}
             </li>
             <li>
-              <code>google-{accountKey}-client-secret</code> — {secretIds.clientSecretRef}
+              <code>{names.clientSecret}</code> - {secretIds.clientSecretRef}
             </li>
             <li>
-              <code>google-{accountKey}-refresh-token</code> — {secretIds.refreshTokenRef}
+              <code>{names.refreshToken}</code> - {secretIds.refreshTokenRef}
             </li>
           </ul>
         </div>

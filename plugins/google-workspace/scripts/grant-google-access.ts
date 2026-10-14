@@ -22,11 +22,11 @@
  *
  * If the redirect is blocked by your browser or you see "this site can't be
  * reached", make sure http://localhost:54321 is allowed by your firewall and
- * that the OAuth client in Google Cloud Console has
- * http://localhost:54321/oauth/callback listed as an authorized redirect URI
- * (Desktop OAuth client type — these are usually allowed by default for any
- * loopback address, but Web client types require explicit listing).
+ * that the OAuth client in Google Cloud Console is a Desktop app. Desktop
+ * clients allow loopback redirects without a redirect URI allowlist.
+ * TVs and Limited Input devices cannot request the required Workspace scopes.
  */
+import { googleSecretNames } from "../src/setupNames.js";
 import { createServer } from "node:http";
 import { URL } from "node:url";
 import { exec } from "node:child_process";
@@ -64,7 +64,7 @@ async function openBrowser(url: string): Promise<void> {
   try {
     await execp(cmd);
   } catch {
-    console.error(`\n(couldn't auto-open browser — paste this URL manually:)\n  ${url}\n`);
+    console.error(`\n(couldn't auto-open browser - paste this URL manually:)\n  ${url}\n`);
   }
 }
 
@@ -78,6 +78,7 @@ async function main(): Promise<void> {
     );
   }
 
+  const names = googleSecretNames(accountKey);
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
@@ -115,10 +116,10 @@ async function main(): Promise<void> {
         if (err) {
           res.writeHead(200, { "content-type": "text/html" });
           res.end(
-            `<h1>Auth error</h1><p>${err}</p><p>You can close this window and re-run the script.</p>`,
+            "<h1>Auth error</h1><p>You can close this window and re-run the script.</p>",
           );
           server.close();
-          reject(new Error(`OAuth error: ${err}`));
+          reject(new Error("OAuth consent failed."));
           return;
         }
         const c = reqUrl.searchParams.get("code");
@@ -155,8 +156,8 @@ async function main(): Promise<void> {
   if (!tokens.refresh_token) {
     fail(
       "No refresh_token was returned. Common causes:\n" +
-        "  - You've already granted this account before — revoke it at https://myaccount.google.com/permissions and retry.\n" +
-        "  - The OAuth client type isn't 'Desktop app' or 'Web app' with the right config.\n" +
+        "  - You've already granted this account before - revoke it at https://myaccount.google.com/permissions and retry.\n" +
+        "  - The OAuth client type isn't 'Desktop app'.\n" +
         "Re-run the script after revoking.",
     );
   }
@@ -169,21 +170,21 @@ async function main(): Promise<void> {
   console.log(
     `  1. Pick the company that should own this account (e.g. Personal, Operations).`,
   );
-  console.log(`  2. Open /instance/settings/companies/<company>/secrets and create a Secret.`);
-  console.log(`     Name suggestion: "google-${accountKey}-refresh-token"`);
+  console.log(`  2. Open /<company>/company/settings/secrets and create a Secret.`);
+  console.log(`     Name suggestion: "${names.refreshToken}"`);
   console.log(`     Value: paste the refresh token above.`);
   console.log(`  3. Also create Secrets for:`);
-  console.log(`     - "google-${accountKey}-client-id"     value: ${clientId.slice(0, 8)}…`);
-  console.log(`     - "google-${accountKey}-client-secret" value: (the GOOGLE_CLIENT_SECRET)`);
+  console.log(`     - "${names.clientId}"     value: (the GOOGLE_CLIENT_ID)`);
+  console.log(`     - "${names.clientSecret}" value: (the GOOGLE_CLIENT_SECRET)`);
   console.log(`  4. Open /instance/settings/plugins/google-workspace and add an account:`);
   console.log(`     - Identifier: ${accountKey}`);
   console.log(`     - Email: (the Google email you authenticated as)`);
   console.log(`     - Allowed companies: tick the company UUID(s) that should use it`);
-  console.log(`     - clientIdRef / clientSecretRef / refreshTokenRef: paste the secret UUIDs`);
+  console.log(`     - Use Pick from your secrets for clientIdRef / clientSecretRef / refreshTokenRef`);
   console.log("========================================================================\n");
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch(() => {
+  console.error("Google grant failed. Check Desktop app credentials, test users, and the local callback listener. No values were saved.");
   process.exit(1);
 });

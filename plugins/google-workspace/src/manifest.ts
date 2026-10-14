@@ -2,25 +2,27 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS } from "./schemas.js";
 
 const PLUGIN_ID = "google-workspace";
-const PLUGIN_VERSION = "0.3.28";
+const PLUGIN_VERSION = "0.3.29";
 const SETUP_ROUTE = "setup-account";
 
-const SETUP_INSTRUCTIONS = `# Setup — Google Workspace
+const SETUP_INSTRUCTIONS = `# Setup - Google Workspace
 
 Connect a Google account so agents can read and write Calendar events, Tasks, Sheets, and Drive files. Each Google account goes through a one-time OAuth consent flow. Reckon on **about 20 minutes** for first-time setup (most of that is GCP).
 
 ---
 
-## Quickstart — use the built-in setup wizard
+## Quickstart - use the built-in setup wizard
 
-This plugin ships a setup wizard that walks you through the entire flow in the browser. **No terminal required.** Click the **Connect a Google account** tab at the top of this page to launch it.
+This plugin ships a setup wizard that walks you through the entire flow in the browser. **No terminal required.** Open \`/<company>/setup-account\` in Paperclip to launch it.
 
 The wizard will guide you through:
 1. Creating a GCP project and enabling the required APIs
 2. Configuring the OAuth consent screen
 3. Creating OAuth credentials (client ID + secret)
-4. Running the device-code consent flow in your browser
+4. Running Desktop app consent in your browser at /<company>/setup-account (with a private callback-URL paste fallback for remote browsers or Docker workers)
 5. Storing all three secrets (client ID, client secret, refresh token) and registering the account
+
+When reconnecting or when standard secret names already exist, the wizard creates fresh secrets with a random suffix. It preserves old secrets that other accounts may share, and keeps other account and instance settings. The completion page shows the actual names.
 
 If the wizard isn't available, follow the manual steps below.
 
@@ -63,10 +65,11 @@ Go to **APIs & Services → Credentials → Create Credentials → OAuth client 
 ### 5. Create Paperclip secrets for client ID and client secret
 
 In Paperclip, switch to the company that should own this Google account:
-- Go to **Secrets → Add** and create:
-  1. \`google-client-id\` → the OAuth client ID
-  2. \`google-client-secret\` → the OAuth client secret
-- Copy both secret UUIDs
+- Open \`/<company>/company/settings/secrets\`, choose **Add**, and create:
+  1. \`google_<key>_client_id\` → the OAuth client ID
+  2. \`google_<key>_client_secret\` → the OAuth client secret
+- Replace account-key hyphens with underscores: \`acme-print\` uses \`google_acme_print_client_id\`. Names must match \`^[A-Za-z_][A-Za-z0-9_]*$\`.
+- The Configuration tab has **Pick from your secrets** dropdowns; choose these secrets there.
 
 ### 6. Get a refresh token
 
@@ -76,7 +79,7 @@ From the \`paperclip-extensions\` repo:
 pnpm --filter paperclip-plugin-google-workspace grant <account-key>
 \`\`\`
 
-The script opens a browser for OAuth consent, then prints the refresh token. Create a third Paperclip secret with that token value and copy its UUID.
+The script opens a browser for OAuth consent, then prints the refresh token. Create \`google_<key>_refresh_token\` at \`/<company>/company/settings/secrets\` with that token value. In Configuration, use **Pick from your secrets** to select each of the three secrets.
 
 ### 7. Configure the plugin (this page, **Configuration** tab)
 
@@ -86,19 +89,20 @@ Under **Google accounts**, click **+ Add item**:
 |---|---|
 | **Identifier** | e.g. \`personal\` |
 | **Email** | the Google email you consented as |
-| **OAuth client ID** | UUID of the \`google-client-id\` secret |
-| **OAuth client secret** | UUID of the \`google-client-secret\` secret |
-| **Refresh token** | UUID of the refresh-token secret |
+| **OAuth client ID** | Choose the \`google_<key>_client_id\` secret using **Pick from your secrets** |
+| **OAuth client secret** | Choose the \`google_<key>_client_secret\` secret using **Pick from your secrets** |
+| **Refresh token** | Choose the \`google_<key>_refresh_token\` secret using **Pick from your secrets** |
 | **Allowed companies** | tick the companies whose agents may use this account |
 
 ---
 
 ## Troubleshooting
 
-- **\`invalid_grant\`** — the refresh token expired or was revoked (Google revokes tokens for External apps after 7 days if the consent screen isn't verified). Re-run the \`grant\` script or re-run the wizard.
-- **\`access_denied\` during consent** — you're not listed as a test user on an External consent screen. Add yourself under OAuth consent screen → Test users.
-- **API not enabled error** — the specific API (e.g. Tasks API) wasn't enabled in step 2. Enable it and wait ~30 seconds.
-- **One account per Google email** — you can't have two plugin accounts for the same Google email. Create a second GCP OAuth client if you need separate client credentials per company.
+- **\`invalid_grant\`** - the refresh token expired or was revoked (External apps in Testing status normally issue refresh tokens that expire after 7 days). Re-run the \`grant\` script or re-run the wizard.
+- **\`access_denied\` during consent** - you're not listed as a test user on an External consent screen. Add yourself under OAuth consent screen → Test users.
+- **API not enabled error** - the specific API (e.g. Tasks API) wasn't enabled in step 2. Enable it and wait ~30 seconds.
+- **Remote browser or Docker worker**: if the final loopback page cannot be reached, paste its complete callback URL into the wizard. Keep it private. Sessions expire after ten minutes, are one-use, and close on cancel or worker shutdown.
+- **Reconnect an account**: use its existing identifier to replace OAuth credentials. Other settings are preserved; allowed companies and scope selections come from the form.
 `;
 
 /**
@@ -128,7 +132,7 @@ const manifest: PaperclipPluginManifestV1 & {
   displayName: "Google Workspace",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies. Setup wizard at /<company>/plugins/google-workspace/setup-account walks you through adding an account end-to-end (creates secrets, runs the OAuth device flow, registers the account) — no terminal required.",
+    "Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies. Setup wizard at /<company>/setup-account walks you through adding an account end-to-end (creates secrets, runs Desktop app OAuth consent, registers the account) - no terminal required.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
@@ -166,13 +170,13 @@ const manifest: PaperclipPluginManifestV1 & {
           labelKey: "displayName",
         },
         description:
-          "Identifier of the account agents fall back to when they don't specify one. Optional — if blank, agents must always pass an `account` parameter.",
+          "Identifier of the account agents fall back to when they don't specify one. Optional - if blank, agents must always pass an `account` parameter.",
       },
       accounts: {
         type: "array",
         title: "Google accounts",
         description:
-          "One entry per Google account this plugin can act as. Each account holds the OAuth client credentials and a refresh token, with per-company access control. To create an account: run `pnpm --filter paperclip-plugin-google-workspace grant <account-key>` from the plugins repo, paste the printed refresh token into a new Secret on the company's Secrets page, then fill in the secret UUIDs below.",
+          "One entry per Google account this plugin can act as. Each account holds the OAuth client credentials and a refresh token, with per-company access control. To create an account: run `pnpm --filter paperclip-plugin-google-workspace grant <account-key>` from the plugins repo, paste the printed refresh token into a new Secret on the company's Secrets page, then choose the three secrets using Pick from your secrets below. The wizard is at /<company>/setup-account.",
         items: {
           type: "object",
           required: [
@@ -199,7 +203,7 @@ const manifest: PaperclipPluginManifestV1 & {
               type: "string",
               title: "Email this account authenticates as",
               description:
-                "Informational — the Google email this account belongs to (e.g. 'you@example.com'). Helps you keep track of which OAuth grant is which.",
+                "Informational - the Google email this account belongs to (e.g. 'you@example.com'). Helps you keep track of which OAuth grant is which.",
             },
             allowedCompanies: {
               type: "array",
@@ -211,23 +215,23 @@ const manifest: PaperclipPluginManifestV1 & {
             clientIdRef: {
               type: "string",
               format: "secret-ref",
-              title: "OAuth client ID (secret UUID)",
+              title: "OAuth client ID",
               description:
-                "Paste the UUID of the secret holding this account's Google OAuth client ID. Get the client ID from Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client (Desktop app type). Then create a Secret on the company's Secrets page with that value, and paste the resulting UUID here.",
+                "Use Pick from your secrets to choose the secret holding this account's Google OAuth client ID. Get the client ID from Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client (Desktop app type). Create it at /<company>/company/settings/secrets, then select it here.",
             },
             clientSecretRef: {
               type: "string",
               format: "secret-ref",
-              title: "OAuth client secret (secret UUID)",
+              title: "OAuth client secret",
               description:
-                "Paste the UUID of the secret holding this account's Google OAuth client secret. Found alongside the client ID in Google Cloud Console.",
+                "Use Pick from your secrets to choose the secret holding this account's Google OAuth client secret. Found alongside the client ID in Google Cloud Console.",
             },
             refreshTokenRef: {
               type: "string",
               format: "secret-ref",
-              title: "Refresh token (secret UUID)",
+              title: "Refresh token",
               description:
-                "Paste the UUID of the secret holding this account's long-lived refresh token. Obtain by running `pnpm --filter paperclip-plugin-google-workspace grant <account-key>` from the plugins repo — it opens a browser for consent and prints the refresh token. Then create a Secret with that token's value and paste the resulting UUID here.",
+                "Use Pick from your secrets to choose the secret holding this account's long-lived refresh token. Obtain by running `pnpm --filter paperclip-plugin-google-workspace grant <account-key>` from the plugins repo - it opens a browser for consent and prints the refresh token. Create google_<key>_refresh_token at /<company>/company/settings/secrets, then select it here; replace key hyphens with underscores.",
             },
             backupVerificationProfiles: {
               type: "array", title: "Support Desk backup verification", description: "Opt in an exact company, Drive folder and local Markdown source root ON THIS GOOGLE WORKER HOST. Clippy requests a checksum comparison and isolated temporary restore through Support Desk. Never uploads, runs restored files or overwrites originals. A workstation path belongs on its worker, not here.",
