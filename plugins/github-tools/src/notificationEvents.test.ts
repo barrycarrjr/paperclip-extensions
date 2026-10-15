@@ -6,6 +6,7 @@ import {
   describeNotification,
   hasNewComment,
   isOwnActivity,
+  newestCommentUrl,
   repoAllowed,
   sortOldestFirst,
   subjectHtmlUrl,
@@ -88,7 +89,7 @@ test("merged pull requests say so", () => {
   const detail = {
     notification: notification({ reason: "state_change" }),
     comment: null,
-    subject: { state: "closed", merged: true, htmlUrl: "https://github.com/acme/app/pull/7" },
+    subject: { state: "closed", merged: true, htmlUrl: "https://github.com/acme/app/pull/7", comments: 0 },
   };
   const { body } = describeNotification(detail, []);
   assert.match(body, /Merged\./);
@@ -114,4 +115,12 @@ test("sortOldestFirst orders by update time without mutating input", () => {
   const input = [later, earlier];
   assert.deepEqual(sortOldestFirst(input).map((n) => n.id), ["1", "2"]);
   assert.equal(input[0].id, "2");
+});
+
+test("newestCommentUrl reads the last page of the conversation", () => {
+  assert.equal(
+    newestCommentUrl("https://api.github.com/repos/acme/app/pulls/7", 4),
+    "https://api.github.com/repos/acme/app/issues/7/comments?per_page=1&page=4",
+  );
+  assert.equal(newestCommentUrl("https://api.github.com/repos/acme/app/issues/7", 0), null);
 });

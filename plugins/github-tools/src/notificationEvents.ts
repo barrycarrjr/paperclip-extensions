@@ -27,6 +27,8 @@ export interface SubjectState {
   state: string | null;
   merged: boolean;
   htmlUrl: string | null;
+  /** Conversation comment count, used to find the newest comment. */
+  comments: number;
 }
 
 export interface NotificationDetail {
@@ -84,6 +86,21 @@ export function subjectHtmlUrl(notification: GithubNotification): string {
 export function hasNewComment(notification: GithubNotification): boolean {
   const { url, latest_comment_url: latest } = notification.subject;
   return !!latest && latest !== url;
+}
+
+/** Issues and pull requests have an open/closed state worth reading. */
+export function hasSubjectState(notification: GithubNotification): boolean {
+  const { type, url } = notification.subject;
+  return !!url && (type === "Issue" || type === "PullRequest");
+}
+
+/**
+ * API URL of the newest conversation comment. Pull request conversation
+ * comments live under `/issues/`, and page N of a one-per-page list is the Nth comment.
+ */
+export function newestCommentUrl(subjectApiUrl: string, commentCount: number): string | null {
+  if (commentCount < 1) return null;
+  return `${subjectApiUrl.replace("/pulls/", "/issues/")}/comments?per_page=1&page=${commentCount}`;
 }
 
 export function threadLabel(notification: GithubNotification): string {

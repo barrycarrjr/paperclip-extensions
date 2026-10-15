@@ -189,3 +189,40 @@ test("waits when GitHub's poll interval has not passed", async () => {
   const result = await runNotificationWatch(ctx, config, new Date(t0.getTime() + 10_000));
   assert.equal(result.skipped, "GitHub asked to wait before polling again");
 });
+
+function closedIssue(id: string, updatedAt: string) {
+  const url = `https://api.github.com/repos/acme/app/issues/${id}`;
+  return { ...notification(id, updatedAt, 0), subject: { title: `Thread ${id}`, type: "Issue", url, latest_comment_url: url } };
+}
+
+function serveClosedIssue(feed: unknown[], newest: { login: string; createdAt: string }) {
+  serve(feed, {});
+  routes.push((url) => {
+    if (url.pathname.endsWith("/comments") && url.searchParams.get("page") === "3") {
+      return json([{ user: { login: newest.login }, body: "Resolved in abc123.", html_url: "https://github.com/c/3", created_at: newest.createdAt }]);
+    }
+    if (/\/issues\/\d+$/.test(url.pathname)) {
+      return json({ state: "closed", merged: false, html_url: "https://github.com/acme/app/issues/1", comments: 3 });
+    }
+    return undefined as unknown as Response;
+  });
+}
+
+test("a closed issue carries the comment that closed it", async () => {
+  const { ctx, issues } = fakeContext();
+  serveClosedIssue([closedIssue("1", "2026-01-02T11:00:30Z")], { login: "maintainer", createdAt: "2026-01-02T11:00:10Z" });
+  await runNotificationWatch(ctx, config, t0);
+  const task = issues.get("issue-1")!;
+  assert.match(task.description!, /Closed\./);
+  assert.match(task.description!, /Request from @maintainer/);
+  assert.match(task.description!, /Resolved in abc123/);
+});
+
+test("a closed issue does not repeat a comment older than the last check", async () => {
+  const { ctx, issues } = fakeContext();
+  serveClosedIssue([closedIssue("1", "2026-01-02T11:00:30Z")], { login: "maintainer", createdAt: "2026-01-01T09:00:00Z" });
+  await runNotificationWatch(ctx, config, t0);
+  const task = issues.get("issue-1")!;
+  assert.match(task.description!, /Closed\./);
+  assert.doesNotMatch(task.description!, /Resolved in abc123/);
+});

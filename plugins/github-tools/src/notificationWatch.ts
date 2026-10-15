@@ -7,7 +7,9 @@ import {
   type SubjectState,
   describeNotification,
   hasNewComment,
+  hasSubjectState,
   isOwnActivity,
+  newestCommentUrl,
   repoAllowed,
   sortOldestFirst,
 } from "./notificationEvents.js";
@@ -102,7 +104,7 @@ export async function runNotificationWatch(
   for (const notification of sortOldestFirst(page.notifications)) {
     if (notification.updated_at > newest) newest = notification.updated_at;
     if (!repoAllowed(notification.repository.full_name, cfg.repos)) continue;
-    const outcome = await handleThread(ctx, client, cfg, notification, login, trusted);
+    const outcome = await handleThread(ctx, client, cfg, notification, login, trusted, cursor.since);
     if (outcome === "created") summary.created += 1;
     if (outcome === "updated") summary.updated += 1;
   }
@@ -169,22 +171,55 @@ async function watchedLogin(ctx: PluginContext, client: Octokit): Promise<string
   return data.login;
 }
 
-async function fetchDetail(client: Octokit, notification: GithubNotification): Promise<NotificationDetail> {
-  const comment = hasNewComment(notification)
-    ? await fetchComment(client, notification.subject.latest_comment_url!)
+/**
+ * When the newest event is not a comment (an issue closed or reopened),
+ * GitHub points latest_comment_url at the subject itself. The comment that
+ * came with that event is then read from the conversation, if it is newer
+ * than `since`, so a "Resolved in abc123" reply still reaches the task.
+ */
+async function fetchDetail(
+  client: Octokit,
+  notification: GithubNotification,
+  since: string,
+): Promise<NotificationDetail> {
+  const subject = hasSubjectState(notification)
+    ? await fetchSubjectState(client, notification.subject.url!)
     : null;
-  const subject =
-    notification.subject.type === "PullRequest" && notification.subject.url
-      ? await fetchSubjectState(client, notification.subject.url)
-      : null;
+  if (hasNewComment(notification)) {
+    const comment = await fetchComment(client, notification.subject.latest_comment_url!);
+    return { notification, comment, subject };
+  }
+  const url = subject ? newestCommentUrl(notification.subject.url!, subject.comments) : null;
+  const comment = url ? await fetchNewestComment(client, url, since) : null;
   return { notification, comment, subject };
+}
+
+interface CommentBody {
+  user?: { login?: string } | null;
+  body?: string | null;
+  html_url?: string;
+  created_at?: string;
+}
+
+function toLatestComment(body: CommentBody): LatestComment {
+  return { author: body.user?.login ?? null, body: body.body ?? "", htmlUrl: body.html_url ?? null };
 }
 
 async function fetchComment(client: Octokit, url: string): Promise<LatestComment | null> {
   try {
     const { data } = await client.request(`GET ${url}`);
-    const body = data as { user?: { login?: string } | null; body?: string | null; html_url?: string };
-    return { author: body.user?.login ?? null, body: body.body ?? "", htmlUrl: body.html_url ?? null };
+    return toLatestComment(data as CommentBody);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchNewestComment(client: Octokit, url: string, since: string): Promise<LatestComment | null> {
+  try {
+    const { data } = await client.request(`GET ${url}`);
+    const newest = (data as CommentBody[])[0];
+    if (!newest?.created_at || newest.created_at <= since) return null;
+    return toLatestComment(newest);
   } catch {
     return null;
   }
@@ -193,8 +228,13 @@ async function fetchComment(client: Octokit, url: string): Promise<LatestComment
 async function fetchSubjectState(client: Octokit, url: string): Promise<SubjectState | null> {
   try {
     const { data } = await client.request(`GET ${url}`);
-    const body = data as { state?: string; merged?: boolean; html_url?: string };
-    return { state: body.state ?? null, merged: !!body.merged, htmlUrl: body.html_url ?? null };
+    const body = data as { state?: string; merged?: boolean; html_url?: string; comments?: number };
+    return {
+      state: body.state ?? null,
+      merged: !!body.merged,
+      htmlUrl: body.html_url ?? null,
+      comments: body.comments ?? 0,
+    };
   } catch {
     return null;
   }
@@ -207,11 +247,12 @@ async function handleThread(
   notification: GithubNotification,
   login: string,
   trusted: string[],
+  cursorSince: string,
 ): Promise<"created" | "updated" | "skipped"> {
   const record = (await ctx.state.get(threadKey(notification.id))) as ThreadRecord | null;
   if (record && notification.updated_at <= record.lastUpdatedAt) return "skipped";
 
-  const detail = await fetchDetail(client, notification);
+  const detail = await fetchDetail(client, notification, record?.lastUpdatedAt ?? cursorSince);
   if (isOwnActivity(detail, login)) {
     if (record) await ctx.state.set(threadKey(notification.id), { ...record, lastUpdatedAt: notification.updated_at });
     return "skipped";
