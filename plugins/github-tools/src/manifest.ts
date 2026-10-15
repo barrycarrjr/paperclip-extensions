@@ -1,7 +1,75 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "github-tools";
-const PLUGIN_VERSION = "0.2.28";
+const PLUGIN_VERSION = "0.3.0";
+
+const notificationWatchSchema = {
+  type: "object",
+  title: "Notification watch",
+  description:
+    "Optional. Checks your GitHub notifications every 15 minutes (plain code, no AI) and opens a Paperclip task for each GitHub thread with new activity. Later activity on the same thread is added as a comment on that task. It only reads GitHub.",
+  additionalProperties: false,
+  propertyOrder: [
+    "enabled",
+    "tokenRef",
+    "targetCompanyId",
+    "assigneeUserId",
+    "assigneeAgentId",
+    "trustedLogins",
+    "repos",
+    "initialLookbackHours",
+  ],
+  properties: {
+    enabled: {
+      type: "boolean",
+      title: "Watch my GitHub notifications",
+      default: false,
+    },
+    tokenRef: {
+      type: "string",
+      format: "secret-ref",
+      title: "Notifications token (classic PAT)",
+      description:
+        "UUID of a secret holding a CLASSIC personal access token with only the `notifications` scope. GitHub's notifications API does not accept fine-grained tokens. This is separate from the account tokens above.",
+    },
+    targetCompanyId: {
+      type: "string",
+      format: "company-id",
+      title: "Company for the tasks",
+      description: "Every watch task is created in this company.",
+    },
+    assigneeUserId: {
+      type: "string",
+      format: "user-id",
+      title: "Assign tasks to person (optional)",
+    },
+    assigneeAgentId: {
+      type: "string",
+      format: "agent-id",
+      title: "Assign tasks to agent (optional)",
+      description: "Leave blank to keep the watch AI-free. An assigned agent is woken for each new task.",
+    },
+    trustedLogins: {
+      type: "array",
+      items: { type: "string" },
+      title: "Trusted GitHub logins",
+      description:
+        "Comments from these logins are marked as requests and get high priority. Everyone else's are marked information only.",
+    },
+    repos: {
+      type: "array",
+      items: { type: "string" },
+      title: "Only these repos (owner/repo, optional)",
+      description: "Empty = every repo GitHub notifies you about.",
+    },
+    initialLookbackHours: {
+      type: "number",
+      title: "First run looks back (hours)",
+      description: "How far back the very first check reaches. Later checks continue from the previous one.",
+      default: 24,
+    },
+  },
+} as const;
 
 const accountItemSchema = {
   type: "object",
@@ -124,6 +192,18 @@ Enable **Allow create/update/close/release/PR write** when you're ready for agen
 
 ---
 
+## 4. Optional: watch your GitHub notifications
+
+Opens a Paperclip task whenever GitHub would notify you (a comment on something you opened or joined, a mention, an assignment, a review request, a merge or close, a finished Actions run). It is plain code that runs every 15 minutes, uses no AI, and only reads GitHub. When nothing changed, GitHub answers "not modified" and the check costs nothing against your rate limit.
+
+1. Create a **classic** token at [https://github.com/settings/tokens/new](https://github.com/settings/tokens/new) with **only the \`notifications\` scope** ticked. GitHub's notifications API does not accept fine-grained tokens. With only that scope it can read your notifications and public repos, and cannot change anything.
+2. Store it as a secret (e.g. \`GITHUB_NOTIFICATIONS_TOKEN\`) and copy its UUID.
+3. Under **Notification watch** on the Configuration tab, tick **Watch my GitHub notifications**, pick the token secret and the company for the tasks. Optionally add trusted logins (their comments are marked as requests), an assignee, and a repo filter.
+
+Each GitHub thread gets one task. Later activity on that thread is added as a comment, and a done or cancelled task is reopened. Your own comments are ignored. Your GitHub read/unread state is left alone.
+
+---
+
 ## Troubleshooting
 
 - **401 Unauthorized** — the PAT is expired or the secret UUID is wrong. Generate a new token, update the secret value, and re-save the plugin config.
@@ -148,14 +228,30 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "secrets.read-ref",
     "http.outbound",
     "telemetry.track",
+    "jobs.schedule",
+    "plugin.state.read",
+    "plugin.state.write",
+    "issues.read",
+    "issues.create",
+    "issues.update",
+    "issue.comments.create",
   ],
   entrypoints: {
     worker: "./dist/worker.js",
   },
+  jobs: [
+    {
+      jobKey: "watch-github-notifications",
+      displayName: "Watch GitHub notifications",
+      description:
+        "Reads the configured GitHub notifications feed and opens or updates one Paperclip task per thread with new activity. Does nothing unless the notification watch is enabled.",
+      schedule: "*/15 * * * *",
+    },
+  ],
   instanceConfigSchema: {
     type: "object",
     additionalProperties: false,
-    propertyOrder: ["allowMutations", "defaultAccount", "accounts"],
+    propertyOrder: ["allowMutations", "defaultAccount", "accounts", "notificationWatch"],
     properties: {
       allowMutations: {
         type: "boolean",
@@ -182,6 +278,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
           "One entry per GitHub PAT this plugin can use. Most operators have one personal PAT; you may add a separate one for an org if you don't want to mix scopes.",
         items: accountItemSchema,
       },
+      notificationWatch: notificationWatchSchema,
     },
   },
   tools: [

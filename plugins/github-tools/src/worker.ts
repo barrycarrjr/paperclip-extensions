@@ -15,6 +15,7 @@ import {
   wrapGithubError,
 } from "./githubClient.js";
 import { isCompanyAllowed } from "./companyAccess.js";
+import { NOTIFICATION_WATCH_JOB_KEY, runNotificationWatch } from "./notificationWatch.js";
 
 type ResolveResult =
   | { ok: true; resolved: ResolvedAccount }
@@ -96,6 +97,12 @@ const plugin = definePlugin({
         );
       }
     }
+
+    ctx.jobs.register(NOTIFICATION_WATCH_JOB_KEY, async (job) => {
+      const cfg = ((await ctx.config.get()) as InstanceConfig).notificationWatch;
+      const result = await runNotificationWatch(ctx, cfg);
+      ctx.logger.info("github-tools: notification watch run", { trigger: job.trigger, ...result });
+    });
 
     function gateMutation(tool: string): { error: string } | null {
       if (allowMutations) return null;
