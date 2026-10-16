@@ -11,6 +11,8 @@ Idempotent issue creation via auto-applied labels.
 
 ## Recent changes
 
+- **v0.3.0** - Adds an optional **notification watch**: a scheduled job (every 15 minutes, no AI) that reads your GitHub notifications feed and opens one Paperclip task per thread with new activity, adding later activity as comments. New config block `notificationWatch`; new capabilities `jobs.schedule`, `plugin.state.read/write`, `issues.read/create/update`, `issue.comments.create`. Off by default; existing tools unchanged.
+
 - **v0.2.28** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.2.27** — Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -152,6 +154,27 @@ GitHub accounts. Fill in:
 (Optionally) set **Default account key** so agents can omit `account` on
 every call.
 
+## Notification watch (optional)
+
+A scheduled job, `watch-github-notifications`, runs every 15 minutes. It is plain code (no AI) and only reads GitHub.
+
+- **Source:** GitHub's own notifications feed (`GET /notifications`), the same list behind the bell on github.com. GitHub decides what is relevant: comments on threads you opened or joined, mentions, assignments, review requests, merges and closes, finished Actions runs, on any repo.
+- **Cost:** the job replays GitHub's `Last-Modified` header, so an unchanged feed returns `304 Not Modified`, which does not count against the rate limit. It also honours `X-Poll-Interval`.
+- **Tasks:** one Paperclip task per GitHub thread (`originKind: plugin:github-tools`, `originId: notification-thread:<id>`). Later activity becomes a comment on that task, and a done or cancelled task is reopened to `todo`. Your own comments are ignored.
+- **Trust:** comments from `trustedLogins` are marked as requests (priority high). Everyone else's are marked information only. Comment text is quoted, never treated as instructions.
+- **Read state:** the job never marks notifications read, so github.com and email notifications are unaffected.
+- **Token:** a **classic** PAT with only the `notifications` scope, stored as a secret. GitHub's notifications API does not accept fine-grained tokens.
+
+| Field | Notes |
+|---|---|
+| `enabled` | Off by default. |
+| `tokenRef` | Secret UUID of the classic `notifications` token. |
+| `targetCompanyId` | Company the tasks are created in. |
+| `assigneeUserId` / `assigneeAgentId` | Optional. An assigned agent is woken for each new task; leave blank to stay AI-free. |
+| `trustedLogins` | Logins whose comments count as requests. |
+| `repos` | Optional `owner/repo` filter. Empty = every repo. |
+| `initialLookbackHours` | How far back the first run reaches (default 24). |
+
 ## Idempotency
 
 Pass `idempotencyKey: "<your-key>"` on `github_create_issue`. The plugin:
@@ -256,7 +279,8 @@ Same as every other paperclip plugin:
 
 - GitHub App authentication. PAT-only for now.
 - Webhooks (PR opened, issue commented, etc.) — needs a Paperclip-level
-  inbound HTTP path.
+  inbound HTTP path. The notification watch covers the "tell me what
+  happened" case by polling instead.
 - File-content APIs (read/write files in the repo). The git CLI is the
   preferred path for those.
 - Releases asset uploads.

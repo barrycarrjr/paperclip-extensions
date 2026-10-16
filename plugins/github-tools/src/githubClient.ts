@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import type { PluginContext, ToolRunContext } from "@paperclipai/plugin-sdk";
 import { assertCompanyAccess } from "./companyAccess.js";
+import type { NotificationWatchConfig } from "./notificationWatch.js";
 
 interface OctokitErrorShape {
   status?: number;
@@ -26,6 +27,7 @@ export interface InstanceConfig {
   allowMutations?: boolean;
   accounts?: ConfigAccount[];
   defaultAccount?: string;
+  notificationWatch?: NotificationWatchConfig;
 }
 
 export interface ResolvedAccount {
