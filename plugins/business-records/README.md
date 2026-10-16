@@ -515,6 +515,8 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 
 ## Recent changes
 
+- **v0.2.3** - Requires a source document for new or changed statutory filing deadlines while keeping planned internal dates available.
+
 - **0.2.2** (2026-10-14) Filing dates now distinguish statutory deadlines,
   internal planned targets, and legacy dates with unknown basis. New or changed
   statutory dates require a current same-company, same-business source document,

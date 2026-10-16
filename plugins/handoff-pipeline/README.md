@@ -6,6 +6,8 @@ Hand-off turns a review of actual company work into individual job skills, histo
 
 ## Recent changes
 
+- **v0.1.1** - Adds the company-scoped Hand-off workflow, durable correction contracts, skill verification, run history, and work-audit templates.
+
 - **0.1.0**: Initial company-scoped Hand-off page, audit and job records, one skill per job, historical examples, run logging and board review, with work-audit skill, routine and bundle templates.
 
 ## Set up

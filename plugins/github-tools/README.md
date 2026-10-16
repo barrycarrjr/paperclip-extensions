@@ -11,6 +11,8 @@ Idempotent issue creation via auto-applied labels.
 
 ## Recent changes
 
+- **v0.3.1** - Adds the notification watch that opens one Paperclip task per GitHub thread and includes the closing comment when an issue is closed.
+
 - **v0.3.0** - Adds an optional **notification watch**: a scheduled job (every 15 minutes, no AI) that reads your GitHub notifications feed and opens one Paperclip task per thread with new activity, adding later activity as comments. New config block `notificationWatch`; new capabilities `jobs.schedule`, `plugin.state.read/write`, `issues.read/create/update`, `issue.comments.create`. Off by default; existing tools unchanged.
 
 - **v0.2.28** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

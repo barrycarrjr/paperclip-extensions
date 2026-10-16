@@ -6,6 +6,8 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 
 ## Recent changes
 
+- **v0.3.30** - Replaces unsupported device consent with Desktop app loopback authorization, including PKCE, state validation, expiring one-use sessions, and a private callback fallback.
+
 - **v0.3.29** - Replace unsupported device consent with Desktop app loopback authorization, state and PKCE validation, one-use expiring sessions and a private pasted-callback fallback for remote browsers or Docker workers. Fix wizard routes and portable secret names; preserve existing config fields and keep mutations off by default.
 
 - **v0.3.28** - Add scoped Support Desk verification of worker-host Markdown copies against an exact Drive folder, bounded downloads and disposable restore/read-back/cleanup. Counts only; no upload or in-place restore.

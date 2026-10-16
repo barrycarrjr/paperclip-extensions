@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.22.1** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.22.0** - Address book import and export. Adds batch contact import with duplicate merging (`email.import-contacts` bridge action and `email_import_contacts` agent tool) supporting CSV, vCard (.vcf), and JSON formats.
 
 - **v0.21.0** - Address book and contact management. Adds persistent contacts table

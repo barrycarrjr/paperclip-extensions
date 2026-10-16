@@ -6,6 +6,8 @@ Company-scoped observations through the official local UniFi Network Integration
 
 ## Recent changes
 
+- **v0.1.2** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.1.1** - Release the reusable official Network Integration API companion: exact company/site observations and separately opted-in reviewed device restarts with one-attempt receipts, configuration guards and uncertain-outcome inspection. No firmware, resets or broader network configuration changes.
 
 - Development: exact reviewed device restart preparation/execution/recovery tools. Saved opt-in, host repair permission, full plan confirmation, configuration/uptime rechecks, durable one-attempt claims and cross-conversation device serialization. Controller acceptance is distinct from an observed restart. Unknown outcomes remain blocked for operator inspection; no automatic retry or factory reset.

@@ -50,7 +50,7 @@ const route = (
 const manifest: PaperclipPluginManifestV1 = {
   id: "handoff-pipeline",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Hand-off",
   description: `Company-scoped work audits, one skill per recurring job, historical example tests and supervised run review. ${PERMISSIONS}`,
   author: "Barry Carr & Tony Allard",

@@ -6,6 +6,12 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 ## Recent changes
 
+- **v0.1.14** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+  near-white background while the name inherited the theme's text colour, so
+  under the dark theme the name was near-white on near-white. The cards now use
+  the host's `--card` surface, and the "needs attention" variant tints that
+  surface with amber instead of replacing it.
+
 - **v0.1.12** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.11**: Fixes a blank Reviews page. The whole page failed to load in

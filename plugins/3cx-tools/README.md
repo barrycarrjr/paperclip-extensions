@@ -8,6 +8,8 @@ This is the operations / observability surface for the PBX itself, scoped per Pa
 
 ## Recent changes
 
+- **v0.6.14** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
+
 - **v0.6.13** - Remove arrows from Phone and its sidebar submenus. Clicking the labels still expands or collapses them, with expanded state available to screen readers.
 
 - **v0.6.12** - Add explicitly opted-in company-scoped Support Desk queue, extension and presence observations. This does not establish SBC, host, SIP or actual call health, and does not change PBX configuration.
