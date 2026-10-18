@@ -556,4 +556,3 @@ test("production runs bind host provenance and reviews verify counts and correct
   assert.equal(reloaded.jobs.find((candidate) => candidate.id === job.id)!.rewrittenStreak, hydrated.jobs.find((candidate) => candidate.id === job.id)!.rewrittenStreak);
 });
 
-\n
