@@ -87,4 +87,3 @@ The build checks the vendored SDK and bundles the worker, manifest and UI with N
 
 Importing templates does not create source connections, generate job skills, start recurring schedules or broaden action permissions. During an audit, creating a Draft job requires successfully creating its real company skill first. Review any remaining setup after the audit.
 
-\n
