@@ -15,12 +15,18 @@ test("isolated HTTP app serves scoped roster, rejects agent/foreign-company call
     if (req.headers["x-example-board"] !== "true") { res.writeHead(403).end(); return; }
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
-    const response = await plugin.definition.onApiRequest!({
-      routeKey: req.method === "POST" ? "roster.pause" : "roster.list", method: req.method!, path: url.pathname,
-      params: { agentId: url.pathname.split("/")[2] }, query: {}, headers: {},
-      body: chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null,
-      actor: { actorType: "user", actorId: "board-example", ...(req.headers["x-example-pause-grant"] === "true" ? { grantedPermission: "agents:create" } : {}) }, companyId: url.searchParams.get("companyId") ?? "",
-    });
+    let response;
+    if (req.method === "POST") {
+      try {
+        const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+        const result = await f.actions.get("roster.pause-agent")!({ ...body, agentId: url.pathname.split("/")[2],
+          hostScope: { companyId: url.searchParams.get("companyId") ?? "", userId: "board-example", isInstanceAdmin: req.headers["x-example-pause-grant"] === "true" } });
+        response = { status: 200, body: result };
+      } catch (error) { response = { status: (error as { status?: number }).status ?? 503, body: { error: (error as Error).message } }; }
+    } else {
+      response = await plugin.definition.onApiRequest!({ routeKey: "roster.list", method: "GET", path: url.pathname, params: {}, query: {}, headers: {}, body: null,
+        actor: { actorType: "user", actorId: "board-example" }, companyId: url.searchParams.get("companyId") ?? "" });
+    }
     res.writeHead(response.status ?? 200, { "Content-Type": "application/json" }).end(JSON.stringify(response.body));
   });
   server.listen(0, "127.0.0.1");
@@ -30,22 +36,22 @@ test("isolated HTTP app serves scoped roster, rejects agent/foreign-company call
   const headers = { "x-example-board": "true" };
   try {
     // Dates relative to the server clock keep this runtime check repeatable.
-    await f.db.exec(`UPDATE agents SET created_at = now() - interval '100 days'; UPDATE agents SET created_at = now() - interval '1 day' WHERE id = 'new-a'; UPDATE heartbeat_runs SET started_at = now() - interval '1 day' WHERE id IN ('run-a1','run-a2','run-a3','run-a4','run-low'); UPDATE cost_events SET occurred_at = now() - interval '1 day' WHERE cost_cents IN (125,75,400);`);
-    const response = await fetch(`${origin}/roster?companyId=company-a`, { headers });
+    await f.db.exec(`UPDATE agents SET created_at = now() - interval '100 days'; UPDATE agents SET created_at = now() - interval '1 day' WHERE id = 'aaaaaaaa-0000-4000-8000-000000000003'; UPDATE heartbeat_runs SET started_at = now() - interval '1 day' WHERE id IN ('run-a1','run-a2','run-a3','run-a4','run-low'); UPDATE cost_events SET occurred_at = now() - interval '1 day' WHERE cost_cents IN (125,75,400);`);
+    const response = await fetch(`${origin}/roster?companyId=11111111-1111-4111-8111-111111111111`, { headers });
     assert.equal(response.status, 200);
     const roster = await response.json() as { rows: Array<{ id: string; verdict: string }>; idleCount: number; idleCostCents30: number };
     assert.equal(roster.idleCount, 1); assert.equal(roster.idleCostCents30, 200);
-    assert.equal(roster.rows.find((row) => row.id === "active-a")?.verdict, "Active");
-    assert.equal(roster.rows.find((row) => row.id === "new-a")?.verdict, "New");
-    assert.equal((await fetch(`${origin}/roster?companyId=company-b`, { headers })).status, 403);
-    assert.equal((await fetch(`${origin}/roster?companyId=company-a`)).status, 403);
-    const denied = await fetch(`${origin}/agents/idle-a/pause?companyId=company-a`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: true, requestId: "request-http-example", grantedPermission: "agents:create", actor: { grantedPermission: "agents:create" } }) });
+    assert.equal(roster.rows.find((row) => row.id === "aaaaaaaa-0000-4000-8000-000000000002")?.verdict, "Active");
+    assert.equal(roster.rows.find((row) => row.id === "aaaaaaaa-0000-4000-8000-000000000003")?.verdict, "New");
+    assert.equal((await fetch(`${origin}/roster?companyId=22222222-2222-4222-8222-222222222222`, { headers })).status, 403);
+    assert.equal((await fetch(`${origin}/roster?companyId=11111111-1111-4111-8111-111111111111`)).status, 403);
+    const denied = await fetch(`${origin}/agents/aaaaaaaa-0000-4000-8000-000000000001/pause?companyId=11111111-1111-4111-8111-111111111111`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: true, requestId: "request-http-example", grantedPermission: "agents:create", actor: { grantedPermission: "agents:create" } }) });
     assert.equal(denied.status, 403);
     assert.equal(f.entries.length, 0);
-    assert.equal((await f.ctx.agents.get("idle-a", "company-a"))?.status, "idle");
-    const pause = await fetch(`${origin}/agents/idle-a/pause?companyId=company-a`, { method: "POST", headers: { ...headers, "x-example-pause-grant": "true", "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: true, requestId: "request-http-example" }) });
+    assert.equal((await f.ctx.agents.get("aaaaaaaa-0000-4000-8000-000000000001", "11111111-1111-4111-8111-111111111111"))?.status, "idle");
+    const pause = await fetch(`${origin}/agents/aaaaaaaa-0000-4000-8000-000000000001/pause?companyId=11111111-1111-4111-8111-111111111111`, { method: "POST", headers: { ...headers, "x-example-pause-grant": "true", "Content-Type": "application/json" }, body: JSON.stringify({ confirmed: true, requestId: "request-http-example" }) });
     assert.equal(pause.status, 200); assert.deepEqual(await pause.json(), { paused: true });
-    assert.equal((await f.ctx.agents.get("idle-a", "company-a"))?.status, "paused");
+    assert.equal((await f.ctx.agents.get("aaaaaaaa-0000-4000-8000-000000000001", "11111111-1111-4111-8111-111111111111"))?.status, "paused");
     assert.equal(f.entries.at(-1)?.message, "agent_roster.pause_completed");
     console.log("HTTP fixture: roster 200, denied company 403, non-board 403, confirmed pause 200, completion activity recorded");
   } finally {

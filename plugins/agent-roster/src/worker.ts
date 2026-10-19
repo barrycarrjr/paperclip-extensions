@@ -1,5 +1,5 @@
 import { definePlugin, runWorker, type PluginContext } from "@paperclipai/plugin-sdk";
-import { allowed, bridgeCompany, handleApiRequest, readCompanyPrefix, readRoster, RosterError } from "./service.js";
+import { allowed, bridgeCompany, changeKeep, handlePauseAction, handleApiRequest, readCompanyPrefix, readRoster, RosterError } from "./service.js";
 
 let context: PluginContext | null = null;
 export const plugin = definePlugin({
@@ -9,7 +9,19 @@ export const plugin = definePlugin({
       try { const companyId = await bridgeCompany(ctx, params); return { visible: true, companyId }; }
       catch (error) { if (error instanceof RosterError && error.status === 403) return { visible: false }; throw error; }
     });
-    ctx.data.register("roster.list", async (params) => readRoster(ctx, await bridgeCompany(ctx, params)));
+    ctx.data.register("roster.list", async (params) => ({
+      ...await readRoster(ctx, await bridgeCompany(ctx, params)),
+      canPause: (params.hostScope as { isInstanceAdmin?: unknown })?.isInstanceAdmin === true
+        && typeof (params.hostScope as { userId?: unknown })?.userId === "string"
+        && Boolean((params.hostScope as { userId?: string }).userId),
+    }));
+    ctx.actions.register("roster.pause-agent", async (params) => {
+      const response = await handlePauseAction(ctx, params);
+      if (response.status !== 200) throw new RosterError(response.status ?? 503, (response.body as { error: string }).error);
+      return response.body;
+    });
+    ctx.actions.register("roster.keep-agent", (params) => changeKeep(ctx, params, true));
+    ctx.actions.register("roster.unkeep-agent", (params) => changeKeep(ctx, params, false));
     ctx.data.register("roster.widget", async (params) => {
       const scope = params.hostScope as { companyId?: unknown } | undefined;
       if (typeof scope?.companyId !== "string" || !await allowed(ctx, scope.companyId)) return { visible: false };

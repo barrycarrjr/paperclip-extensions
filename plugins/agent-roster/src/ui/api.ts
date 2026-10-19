@@ -14,7 +14,11 @@ export function newPauseRequestId(cryptoApi: Partial<Pick<Crypto, "randomUUID" |
 }
 
 function serverError(payload: unknown, fallback: string): string {
-  return payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string" ? payload.error : fallback;
+  if (!payload || typeof payload !== "object") return fallback;
+  if ("error" in payload && typeof payload.error === "string") return payload.error;
+  // The host action bridge uses { code, message }, unlike scoped API errors.
+  if ("message" in payload && typeof payload.message === "string") return payload.message;
+  return fallback;
 }
 // Use the board's existing authenticated plugin API. Never read another
 // plugin's namespace or supply privileged host credentials from the worker.
@@ -41,11 +45,22 @@ export async function loadHandOff(companyId: string, fetcher: Fetcher = fetch, s
   return { links, notice: null };
 }
 export async function pauseAgent(companyId: string, agentId: string, requestId: string, fetcher: Fetcher = fetch): Promise<void> {
-  const response = await fetcher(`/api/plugins/agent-roster/api/agents/${encodeURIComponent(agentId)}/pause?companyId=${encodeURIComponent(companyId)}`, {
+  const response = await fetcher("/api/plugins/agent-roster/actions/roster.pause-agent", {
     method: "POST", credentials: "include", headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ confirmed: true, requestId }),
+    body: JSON.stringify({ companyId, params: { agentId, confirmed: true, requestId } }),
   });
-  const payload: unknown = await response.json().catch(() => null);
+  const result = await response.json().catch(() => null) as { data?: unknown } | null;
+  const payload: unknown = response.ok ? result?.data : result;
   if (!response.ok) throw new Error(serverError(payload, `Pause failed (${response.status}). Refresh the agent status before retrying.`));
   if (!(payload && typeof payload === "object" && "paused" in payload && payload.paused === true)) throw new Error("Pause returned an unreadable response. Refresh the agent status before retrying.");
+}
+
+export async function setKept(companyId: string, agentId: string, kept: boolean, note?: string, fetcher: Fetcher = fetch): Promise<void> {
+  const response = await fetcher(`/api/plugins/agent-roster/actions/roster.${kept ? "keep" : "unkeep"}-agent`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companyId, params: { agentId, ...(kept ? { note } : {}) } }),
+  });
+  const payload = await response.json().catch(() => null) as { data?: { kept?: unknown } } | null;
+  if (!response.ok) throw new Error(serverError(payload, "Keep decision failed. Refresh the roster before retrying."));
+  if (payload?.data?.kept !== kept) throw new Error("Keep decision returned an unreadable response. Refresh the roster before retrying.");
 }

@@ -1,15 +1,13 @@
 import type { PluginApiRequestInput, PluginApiResponse, PluginContext } from "@paperclipai/plugin-sdk";
-import { DAY_MS, ROSTER_THRESHOLDS, verdict, type RosterData, type RosterRow } from "./roster.js";
+import { DAY_MS, ROSTER_THRESHOLDS, usageOf, verdict, type KeepMark, type RosterData, type RosterRow } from "./roster.js";
+import { isCompanyAllowed } from "./company-access.js";
 
 export class RosterError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 export async function allowed(ctx: PluginContext, companyId: string): Promise<boolean> {
   const config = await ctx.config.get();
-  const list = config?.allowedCompanies;
-  return Boolean(companyId && Array.isArray(list) && list.length > 0
-    && list.every((id) => typeof id === "string" && id.length > 0)
-    && (list.includes("*") || list.includes(companyId)));
+  return isCompanyAllowed(config?.allowedCompanies, companyId);
 }
 async function authorize(ctx: PluginContext, companyId: string): Promise<void> {
   if (!await allowed(ctx, companyId)) throw new RosterError(403, "Agent roster is not enabled for this company. Select it in plugin Configuration.");
@@ -49,15 +47,19 @@ interface DbRow {
 const iso = (date: string | Date | null) => date === null ? null : new Date(date).toISOString();
 export async function readRoster(ctx: PluginContext, companyId: string, now = new Date()): Promise<RosterData> {
   await authorize(ctx, companyId);
+  const marks = await ctx.db.query<{ agent_id: string; note: string; marked_by: string | null; marked_at: string | Date }>(
+    `SELECT agent_id, note, marked_by, marked_at FROM ${ctx.db.namespace}.keep_marks WHERE company_id = $1`, [companyId]);
+  const keeps = new Map<string, KeepMark>(marks.map((mark) => [mark.agent_id, { note: mark.note, markedBy: mark.marked_by, markedAt: iso(mark.marked_at)! }]));
   const rows = await ctx.db.query<DbRow>(ROSTER_SQL, [companyId, now.toISOString(), new Date(+now - ROSTER_THRESHOLDS.idleDays * DAY_MS).toISOString(), new Date(+now - ROSTER_THRESHOLDS.historyDays * DAY_MS).toISOString()]);
   const result = rows.map((item): RosterRow => {
     const row = { id: item.id, name: item.name, role: item.role, status: item.status,
       createdAt: iso(item.created_at)!, lastRunAt: iso(item.last_run_at), lastHeartbeatAt: iso(item.last_heartbeat_at),
       // The host permits jsonb_agg but does not allow SUM in plugin SQL.
       runs30: Number(item.runs30), runs90: Number(item.runs90), costCents30: (item.costs_cents30 ?? []).reduce<number>((total, cents) => total + Number(cents), 0), openIssues: Number(item.open_issues) };
-    return { ...row, verdict: verdict(row, +now) };
+    const keptRow = { ...row, keep: keeps.get(item.id) ?? null };
+    return { ...keptRow, usage: usageOf(keptRow, +now), verdict: verdict(keptRow, +now) };
   });
-  const order = { Idle: 0, "Low use": 1, Active: 2, New: 3 };
+  const order = { Idle: 0, "Low use": 1, "Kept on purpose": 2, Active: 3, New: 4 };
   result.sort((a, b) => order[a.verdict] - order[b.verdict] || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const idle = result.filter((row) => row.verdict === "Idle");
   return { companyId, generatedAt: now.toISOString(), rows: result, idleCount: idle.length, idleCostCents30: idle.reduce((sum, row) => sum + row.costCents30, 0) };
@@ -65,12 +67,31 @@ export async function readRoster(ctx: PluginContext, companyId: string, now = ne
 
 export async function handleApiRequest(ctx: PluginContext, input: PluginApiRequestInput): Promise<PluginApiResponse> {
   try {
-    // Actor and company are stamped by the host, never taken from the body.
     if (input.actor.actorType !== "user" || !input.actor.actorId) throw new RosterError(403, "Only the board can access the agent roster.");
     await authorize(ctx, input.companyId);
     if (input.routeKey === "roster.list" && input.method === "GET") return { status: 200, body: await readRoster(ctx, input.companyId) };
-    if (input.routeKey !== "roster.pause" || input.method !== "POST") throw new RosterError(404, "Roster route not found.");
-    if (input.actor.grantedPermission !== "agents:create") throw new RosterError(403, "The host must authorize agents:create before pausing an agent.");
+    // Scoped API actors have a permission stamp, but no current admin attestation.
+    // Keep the old route fail closed. Only the host-stamped action may pause.
+    if (input.routeKey === "roster.pause") throw new RosterError(403, "Pause requires the instance-admin roster action.");
+    throw new RosterError(404, "Roster route not found.");
+  } catch (error) { return errorResponse(ctx, error); }
+}
+
+function errorResponse(ctx: PluginContext, error: unknown): PluginApiResponse {
+  if (error instanceof RosterError) return { status: error.status, body: { error: error.message } };
+  ctx.logger.error("Agent roster request failed");
+  return { status: 503, body: { error: "Agent roster could not complete this request. Refresh the agent status before retrying; check the plugin worker health and permissions." } };
+}
+
+export async function handlePauseAction(ctx: PluginContext, params: Record<string, unknown>): Promise<PluginApiResponse> {
+  try {
+    const companyId = await bridgeCompany(ctx, params);
+    const scope = params.hostScope as { userId?: unknown; isInstanceAdmin?: unknown };
+    // The host rechecks this flag on every action. Admins have the host's
+    // agents:create exemption. A company grant alone must not broaden PR14.
+    if (scope.isInstanceAdmin !== true || typeof scope.userId !== "string" || !scope.userId) throw new RosterError(403, "Only an instance admin can pause an agent from the roster.");
+    const input = { companyId, params: { agentId: typeof params.agentId === "string" ? params.agentId : "" }, body: params,
+      actor: { userId: scope.userId, actorId: scope.userId } };
     const body = input.body as { confirmed?: unknown; requestId?: unknown } | null;
     if (body?.confirmed !== true || typeof body.requestId !== "string" || !/^[a-zA-Z0-9-]{8,80}$/.test(body.requestId)) throw new RosterError(400, "Confirm the pause and supply a request ID.");
     const agentId = input.params.agentId;
@@ -93,9 +114,39 @@ export async function handleApiRequest(ctx: PluginContext, input: PluginApiReque
       return { status: 502, body: { error: "Agent is paused, but completion logging failed. Retry with the same request ID to finish logging; the pause request is already recorded.", paused: true } };
     }
     return { status: 200, body: { paused: true } };
-  } catch (error) {
-    if (error instanceof RosterError) return { status: error.status, body: { error: error.message } };
-    ctx.logger.error("Agent roster request failed", { routeKey: input.routeKey });
-    return { status: 503, body: { error: "Agent roster could not complete this request. Refresh the agent status before retrying; check the plugin worker health and permissions." } };
+  } catch (error) { return errorResponse(ctx, error); }
+}
+
+export const MAX_KEEP_NOTE_LENGTH = 500;
+export async function changeKeep(ctx: PluginContext, params: Record<string, unknown>, kept: boolean) {
+  const companyId = await bridgeCompany(ctx, params);
+  const scope = params.hostScope as { userId?: unknown };
+  if (typeof scope.userId !== "string" || !scope.userId) throw new RosterError(403, "Only the board can change keep marks.");
+  const agentId = params.agentId;
+  if (typeof agentId !== "string" || !agentId) throw new RosterError(400, "Agent ID is required.");
+  const note = typeof params.note === "string" ? params.note.trim() : "";
+  if (kept && (!note || note.length > MAX_KEEP_NOTE_LENGTH)) throw new RosterError(400, "Say why this agent is kept, using 1 to 500 characters.");
+  const agent = await ctx.agents.get(agentId, companyId);
+  if (!agent || agent.companyId !== companyId) throw new RosterError(404, "Agent not found in this company.");
+  if (agent.status === "terminated") throw new RosterError(409, "This agent cannot be changed from the roster.");
+  const action = kept ? "roster.keep-agent" : "roster.unkeep-agent";
+  const entry = { companyId, entityType: "agent", entityId: agentId,
+    metadata: { action, requestedByUserId: scope.userId } };
+  // A failed audit must not cause an unaudited keep decision. The note stays
+  // in the company-scoped table; audit records only the actor and reference.
+  await ctx.activity.log({ ...entry, message: kept ? "agent_roster.keep_requested" : "agent_roster.unkeep_requested" });
+  if (kept) {
+    await ctx.db.execute(`INSERT INTO ${ctx.db.namespace}.keep_marks (company_id, agent_id, note, marked_by, marked_at)
+      VALUES ($1, $2, $3, $4, now())
+      ON CONFLICT (company_id, agent_id) DO UPDATE SET note = $3, marked_by = $4, marked_at = now()`,
+      [companyId, agentId, note, scope.userId]);
+  } else {
+    await ctx.db.execute(`DELETE FROM ${ctx.db.namespace}.keep_marks WHERE company_id = $1 AND agent_id = $2`, [companyId, agentId]);
   }
+  try {
+    await ctx.activity.log({ ...entry, message: kept ? "agent_roster.keep_completed" : "agent_roster.unkeep_completed" });
+  } catch {
+    throw new RosterError(502, "Keep decision saved, but completion logging failed. Refresh the roster and retry to finish logging.");
+  }
+  return { agentId, kept };
 }

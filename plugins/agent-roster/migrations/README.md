@@ -1,3 +1,4 @@
-No SQL migrations are required: Agent roster only reads core tables.
-The SDK requires a migrations directory and the database.namespace.migrate
-capability for every database declaration, including read-only plugins.
+Keep `0001_init.sql` unchanged. Version 0.1.0 installed it in the existing
+`roster` namespace to hold company-scoped keep marks. Version 0.2.0 uses the same
+namespace and migration, preserving installed notes and their audit attribution.
+No additional migration is required for the activity and cost read models.
