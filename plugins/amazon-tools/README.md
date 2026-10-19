@@ -2,7 +2,9 @@
 
 Read-only access to a seller's own Amazon Seller Central data through the
 Selling Partner API (SP-API): orders without buyer details, FBA and
-merchant-fulfilled inventory, settlements, financial events and reports.
+merchant-fulfilled inventory, settlements, financial events, reports,
+listings, catalog content, offers and A+ content, plus **Listing Watch**:
+scheduled snapshots of every listing with a log of what changed.
 Multi-account, per-account `allowedCompanies`.
 
 **The plugin never writes to Amazon.** Every SP-API call goes through one
@@ -19,6 +21,7 @@ authorization flow.
 
 ## Recent changes
 
+- **v0.2.0** - Listing tools and Listing Watch. Six new read-only tools: `amazon_list_listings`, `amazon_get_listing` (with the content you submitted), `amazon_get_catalog_item` (what Amazon shows), `amazon_get_item_offers` (Buy Box and other sellers), `amazon_get_aplus_content`, `amazon_list_listing_changes`. Two scheduled jobs snapshot every listing (status, issues, price, Buy Box every 6 hours; content, images, category and A+ daily) into the plugin's own tables and record each changed field. New per-account **Listing Watch** switch. New capabilities: plugin database and scheduled jobs. Needs the Product Listing and Pricing roles and the account's Seller ID.
 - **v0.1.0** - First release. Ten read-only tools (accounts, orders, order detail, settlements, settlement detail, financial events, inventory, request/list/get report), connection test via **Test Configuration**, activity entry per tool call, back-off on Amazon throttling, buyer details kept out of agent context. Amazon Advertising is not included yet.
 
 ## What agents get, and what they don't
@@ -30,6 +33,11 @@ authorization flow.
 | Settlements / payouts | `amazon_list_settlements`, `amazon_get_settlement` | Financial event groups. The payout bank account tail is dropped. |
 | Financial events | `amazon_list_financial_events` | Shipments, refunds, fees, adjustments by posted date. Empty event lists are removed and each list is capped. |
 | Inventory | `amazon_get_inventory_summary` | `fba` (default) or `merchant` (per SKU, needs the seller ID). |
+| Listings | `amazon_list_listings`, `amazon_get_listing` | Status, issues, price, fulfillment quantity, and the title, bullets, description, search terms and brand you submitted. Needs the Seller ID. |
+| Detail page | `amazon_get_catalog_item` | What Amazon shows: title, brand, category, product type, bullets, description, images, sales ranks. |
+| Offers / Buy Box | `amazon_get_item_offers` | New-condition offers: Buy Box holder (us, other, none) and price, offer count, each seller's price and FBA flag. |
+| A+ content | `amazon_get_aplus_content` | Published A+ documents with status, badges, module types and a change fingerprint. Needs Brand Registry. |
+| Listing changes | `amazon_list_listing_changes` | Reads Listing Watch's change log and last checks from the plugin's own tables. Never calls Amazon. |
 | Reports | `amazon_request_report`, `amazon_list_reports`, `amazon_get_report` | Allowlisted report types only (below). Columns with buyer contact or address details are removed from table reports. |
 
 Restricted data (buyer PII) is never requested, so no Restricted Data Token
@@ -55,14 +63,37 @@ Order reports are deliberately absent: with the wrong roles they can carry
 buyer details. `amazon_get_report` also refuses to read a report of any other
 type, including one created outside Paperclip.
 
+## Listing Watch
+
+Turn on **Listing Watch** for an account (it needs the **Seller ID**, your
+Merchant Token). Two scheduled jobs then snapshot every listing and record
+each field that differs from the previous snapshot. They only read from
+Amazon: no AWS account, no push notifications.
+
+| Job | When (UTC) | Fields |
+|---|---|---|
+| `listing_watch_status` | every 6 hours at :17 | `status`, `issues`, `title`, `mainImage`, `ourPrice`, `buyBoxHolder`, `buyBoxPrice`, `offerCount`, `otherSellers` |
+| `listing_watch_content` | daily at 07:43 | `submittedTitle`, `liveTitle`, `titleOverridden`, `submittedBullets`, `liveBullets`, `submittedDescription`, `searchTerms`, `brand`, `category`, `productType`, `images`, `aplus` |
+
+- The first run of each job saves a baseline and records nothing.
+- A listing that appears or disappears after the baseline is recorded as field `listing` (`added` / `removed`).
+- If the offers call fails for an ASIN, the previous Buy Box values are kept, so a failure never looks like a lost Buy Box.
+- If A+ content is refused (no Brand Registry), A+ is skipped for that run and noted, never recorded as removed.
+- Calls are paced to Amazon's published rates (offers about one every 2 seconds), so a large catalog takes a while.
+
+Storage, in the plugin's database namespace (slug `amazon`):
+`listing_snapshots` (latest snapshot per SKU and check), `listing_changes`
+(one row per changed field) and `listing_watch_runs` (one row per check).
+
 ## Setup (summary)
 
 1. **Register as a private developer** in Seller Central (Apps and Services
    → Develop Apps). Request only: Finance and Accounting; Inventory and Order
-   Tracking; optionally Selling Partner Insights (sales and traffic) and
-   Product Listing (only for merchant-fulfilled inventory; Amazon bundles
-   read and write in that role, the plugin only reads). Do not request any
-   buyer-PII role.
+   Tracking; optionally Selling Partner Insights (sales and traffic),
+   Product Listing (listings, catalog content, A+ content and
+   merchant-fulfilled inventory; Amazon bundles read and write in that role,
+   the plugin only reads) and Pricing (offers and Buy Box). Do not request
+   any buyer-PII role.
 2. **Create an SP API app client** with the same roles, copy its LWA client
    ID and client secret, then **Authorize** it to get a refresh token
    (`Atzr|...`). Re-authorize after any role change.
@@ -78,7 +109,8 @@ type, including one created outside Paperclip.
    | Allowed companies | the company that owns the store |
    | Region | `na`, `eu` or `fe` |
    | Marketplace IDs | e.g. `ATVPDKIKX0DER` (US); the first is the default |
-   | Seller ID | merchant token; only for merchant inventory |
+   | Seller ID | merchant token; needed for listings, merchant inventory and Listing Watch |
+   | Listing Watch | on to snapshot listings on a schedule |
    | LWA client ID / client secret / refresh token | the three secret UUIDs |
 
    Set **Default account**, save, wait 30 seconds, then click **Test
@@ -120,6 +152,12 @@ Sample invocation (through `POST /api/plugins/tools/execute`):
 | `amazon_request_report` | `reportType` (required, requestable types above), `dataStartTime`, `dataEndTime`, `marketplaceIds[]`, `reportOptions` | `{ reportId, reportType }` |
 | `amazon_list_reports` | `reportTypes[]` (default all allowed types), `processingStatuses[]`, `createdSince`, `pageSize` (1-100, default 20), `nextToken` | `{ reports, nextToken }` |
 | `amazon_get_report` | `reportId` (required), `offset` (default 0), `limit` (1-500, default 100) | Status while building; once `DONE`: `{ report, format, totalRows, columns, rows, truncated }` |
+| `amazon_list_listings` | `marketplaceId`, `pageSize` (1-20, default 20), `nextToken` | `{ marketplaceId, listings, total, nextToken }` |
+| `amazon_get_listing` | `sku` (required), `marketplaceId` | `{ marketplaceId, listing }`, with `listing.submitted` |
+| `amazon_get_catalog_item` | `asin` (required), `marketplaceId` | `{ marketplaceId, item }` |
+| `amazon_get_item_offers` | `asin` (required), `marketplaceId` | `{ marketplaceId, asin, totalOfferCount, buyBox, offers }` |
+| `amazon_get_aplus_content` | `asin` (required), `marketplaceId` | `{ marketplaceId, asin, documents }` |
+| `amazon_list_listing_changes` | `since` (default 7 days ago), `sku`, `asin`, `field`, `limit` (1-500, default 100) | `{ since, changes, recentChecks }` |
 
 Typical report flow: `amazon_request_report` → poll `amazon_get_report`
 every minute or two until `processingStatus` is `DONE` → page through rows

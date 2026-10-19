@@ -28,9 +28,18 @@ import {
 } from "./trim.js";
 import { REPORT_TYPES, isAllowedReportType, parseReport } from "./reports.js";
 import { TOOL_DEFS } from "./toolDefs.js";
+import { trimListing } from "./listings.js";
+import {
+  fetchAplus,
+  fetchCatalogItem,
+  fetchItemOffers,
+  fetchSubmittedListing,
+  listChanges,
+  runScheduledCheck,
+} from "./watch.js";
 
 type Params = Record<string, unknown>;
-type Handler = (p: Params, acct: ResolvedAccount, runCtx: ToolRunContext) => Promise<{
+type Handler = (p: Params, acct: ResolvedAccount, runCtx: ToolRunContext, ctx: PluginContext) => Promise<{
   content: string;
   data: unknown;
   /** Small, non-sensitive facts for the activity log. */
@@ -349,6 +358,107 @@ const handlers: Record<string, Handler> = {
   },
 };
 
+function requireSellerId(acct: ResolvedAccount): string {
+  if (!acct.account.sellerId) {
+    throw new Error(
+      `[ECONFIG] Account "${acct.accountKey}" has no seller ID (merchant token); listing tools need it.`,
+    );
+  }
+  return acct.account.sellerId;
+}
+
+function asinParam(p: Params): string {
+  const asin = str(p.asin);
+  if (!asin || !/^[A-Z0-9]{10}$/.test(asin)) throw new Error("[EINVALID_INPUT] `asin` must be a 10-character ASIN.");
+  return asin;
+}
+
+const listingHandlers: Record<string, Handler> = {
+  async amazon_list_listings(p, acct) {
+    const sellerId = requireSellerId(acct);
+    const marketplaceId = marketplacesFor(acct, strList([p.marketplaceId]))[0]!;
+    const res = await spRequest<{ items?: unknown[]; numberOfResults?: number; pagination?: { nextToken?: string } }>(
+      acct,
+      `/listings/2021-08-01/items/${encodeURIComponent(sellerId)}`,
+      {
+        query: {
+          marketplaceIds: marketplaceId,
+          includedData: "summaries,issues,offers",
+          pageSize: clamp(p.pageSize, 20, 1, 20),
+          pageToken: str(p.nextToken),
+        },
+      },
+    );
+    const listings = (res.items ?? []).map((i) => trimListing(i, marketplaceId));
+    return {
+      content: `Found ${listings.length} listing(s) on ${acct.accountKey}${res.numberOfResults ? ` of ${res.numberOfResults}` : ""}.`,
+      data: { marketplaceId, listings, total: res.numberOfResults ?? null, nextToken: res.pagination?.nextToken ?? null },
+      activity: { count: listings.length },
+    };
+  },
+
+  async amazon_get_listing(p, acct) {
+    requireSellerId(acct);
+    const sku = str(p.sku);
+    if (!sku) throw new Error("[EINVALID_INPUT] `sku` is required.");
+    const marketplaceId = marketplacesFor(acct, strList([p.marketplaceId]))[0]!;
+    const listing = await fetchSubmittedListing(acct, sku, marketplaceId);
+    return {
+      content: `Listing ${sku}: ${(listing.status as string[] | undefined)?.join(", ") || "no status"}, ${((listing.issues as unknown[] | undefined) ?? []).length} issue(s).`,
+      data: { marketplaceId, listing },
+      activity: { sku },
+    };
+  },
+
+  async amazon_get_catalog_item(p, acct) {
+    const asin = asinParam(p);
+    const marketplaceId = marketplacesFor(acct, strList([p.marketplaceId]))[0]!;
+    const item = await fetchCatalogItem(acct, asin, marketplaceId);
+    return { content: `Catalog item ${asin}: ${String(item.title ?? "no title")}.`, data: { marketplaceId, item }, activity: { asin } };
+  },
+
+  async amazon_get_item_offers(p, acct) {
+    const asin = asinParam(p);
+    const marketplaceId = marketplacesFor(acct, strList([p.marketplaceId]))[0]!;
+    const offers = await fetchItemOffers(acct, asin, marketplaceId);
+    const holder = (offers.buyBox as Record<string, unknown> | undefined)?.holder ?? "none";
+    return {
+      content: `ASIN ${asin}: ${String(offers.totalOfferCount ?? 0)} offer(s); Buy Box held by ${String(holder)}.`,
+      data: { marketplaceId, ...offers },
+      activity: { asin, offers: offers.totalOfferCount },
+    };
+  },
+
+  async amazon_get_aplus_content(p, acct) {
+    const asin = asinParam(p);
+    const marketplaceId = marketplacesFor(acct, strList([p.marketplaceId]))[0]!;
+    const documents = await fetchAplus(acct, asin, marketplaceId);
+    return {
+      content: `ASIN ${asin}: ${documents.length} A+ document(s).`,
+      data: { marketplaceId, asin, documents },
+      activity: { asin, count: documents.length },
+    };
+  },
+
+  async amazon_list_listing_changes(p, acct, _runCtx, ctx) {
+    const since = isoDate(p.since, "since") ?? new Date(Date.now() - 7 * DAY).toISOString();
+    const out = await listChanges(ctx.db, acct.accountKey, {
+      since,
+      sku: str(p.sku),
+      asin: str(p.asin),
+      field: str(p.field),
+      limit: clamp(p.limit, 100, 1, 500),
+    });
+    return {
+      content: `${out.changes.length} listing change(s) on ${acct.accountKey} since ${since}.`,
+      data: { since, ...out },
+      activity: { count: out.changes.length },
+    };
+  },
+};
+
+Object.assign(handlers, listingHandlers);
+
 function describeCounts(counts: Record<string, number>): string {
   const parts = Object.entries(counts).map(([k, n]) => `${n} ${k.replace(/EventList$/, "")}`);
   return parts.length > 0 ? parts.join(", ") : "no events";
@@ -381,6 +491,13 @@ const plugin = definePlugin({
           .join(", ")}`,
       );
     }
+
+    ctx.jobs.register("listing_watch_status", async () => {
+      await runScheduledCheck(ctx, "status");
+    });
+    ctx.jobs.register("listing_watch_content", async () => {
+      await runScheduledCheck(ctx, "content");
+    });
 
     for (const def of TOOL_DEFS) {
       if (def.name === "amazon_list_accounts") {
@@ -433,7 +550,7 @@ async function runTool(
   const requested = str(params.account);
   try {
     acct = await resolveAccount(ctx, runCtx.companyId, tool, requested);
-    const out = await handler(params, acct, runCtx);
+    const out = await handler(params, acct, runCtx, ctx);
     await logActivity(ctx, runCtx, tool, acct.accountKey, true, out.activity);
     return { content: out.content, data: dropEmpty(out.data) ?? {} };
   } catch (err) {

@@ -180,4 +180,99 @@ export const TOOL_DEFS: ToolDecl[] = [
       required: ["reportId"],
     },
   },
+  {
+    name: "amazon_list_listings",
+    displayName: "List Amazon listings",
+    description:
+      "List the seller's own listings in one marketplace, 20 per page: SKU, ASIN, status (BUYABLE, DISCOVERABLE), title, main image, our price and any listing issues with their severity. Needs the account's seller ID.",
+    parametersSchema: {
+      type: "object",
+      properties: {
+        account,
+        marketplaceId: { type: "string", description: "Default: the account's first marketplace." },
+        pageSize: { type: "number", description: "1 to 20. Default 20." },
+        nextToken,
+      },
+    },
+  },
+  {
+    name: "amazon_get_listing",
+    displayName: "Get Amazon listing",
+    description:
+      "One listing by SKU: status, issues, price, fulfillment quantity, and the content the seller submitted (title, bullets, description, search terms, brand). Compare with amazon_get_catalog_item to see whether Amazon shows something different.",
+    parametersSchema: {
+      type: "object",
+      properties: {
+        account,
+        sku: { type: "string" },
+        marketplaceId: { type: "string", description: "Default: the account's first marketplace." },
+      },
+      required: ["sku"],
+    },
+  },
+  {
+    name: "amazon_get_catalog_item",
+    displayName: "Get Amazon catalog item",
+    description:
+      "What Amazon shows on the detail page for an ASIN: title, brand, category, product type, bullets, description, images and sales ranks.",
+    parametersSchema: {
+      type: "object",
+      properties: {
+        account,
+        asin: { type: "string" },
+        marketplaceId: { type: "string", description: "Default: the account's first marketplace." },
+      },
+      required: ["asin"],
+    },
+  },
+  {
+    name: "amazon_get_item_offers",
+    displayName: "Get Amazon offers on an ASIN",
+    description:
+      "New-condition offers on an ASIN: who holds the Buy Box (us, another seller or nobody) and at what price, the offer count, and each seller's price, shipping and whether it is FBA.",
+    parametersSchema: {
+      type: "object",
+      properties: {
+        account,
+        asin: { type: "string" },
+        marketplaceId: { type: "string", description: "Default: the account's first marketplace." },
+      },
+      required: ["asin"],
+    },
+  },
+  {
+    name: "amazon_get_aplus_content",
+    displayName: "Get Amazon A+ content",
+    description:
+      "A+ content published on an ASIN: each document's name, status, badges, last update, module types and a fingerprint that changes when any module changes. Needs Brand Registry.",
+    parametersSchema: {
+      type: "object",
+      properties: {
+        account,
+        asin: { type: "string" },
+        marketplaceId: { type: "string", description: "Default: the account's first marketplace." },
+      },
+      required: ["asin"],
+    },
+  },
+  {
+    name: "amazon_list_listing_changes",
+    displayName: "List Amazon listing changes",
+    description:
+      "Changes Listing Watch found between scheduled snapshots, newest first: status, issues, price, Buy Box holder and price, other sellers (every few hours); submitted versus shown title, bullets, description, search terms, images, category and A+ content (daily). Each row has the field, its value before and after, and when it was found. Also returns the last few checks. Reads only the plugin's own records, never Amazon.",
+    parametersSchema: {
+      type: "object",
+      properties: {
+        account,
+        since: { type: "string", description: "ISO 8601. Default: 7 days ago." },
+        sku: { type: "string" },
+        asin: { type: "string" },
+        field: {
+          type: "string",
+          description: "e.g. status, issues, buyBoxHolder, otherSellers, ourPrice, liveTitle, titleOverridden, images, aplus, listing.",
+        },
+        limit: { type: "number", description: "1 to 500. Default 100." },
+      },
+    },
+  },
 ];

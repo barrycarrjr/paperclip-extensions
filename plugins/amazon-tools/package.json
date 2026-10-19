@@ -1,7 +1,7 @@
 {
   "name": "paperclip-plugin-amazon-tools",
-  "version": "0.1.0",
-  "description": "Paperclip plugin that gives agents read-only access to a seller's own Amazon Seller Central data (orders without buyer details, inventory, settlements, financial events, reports) through the Selling Partner API. Never writes to Amazon.",
+  "version": "0.2.0",
+  "description": "Paperclip plugin that gives agents read-only access to a seller's own Amazon Seller Central data (orders without buyer details, inventory, settlements, financial events, reports, listings, catalog content, offers, A+ content) through the Selling Partner API, plus scheduled Listing Watch change tracking. Never writes to Amazon.",
   "type": "module",
   "private": true,
   "exports": {
@@ -25,7 +25,8 @@
     "esbuild": "^0.27.3",
     "rimraf": "^6.0.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "@electric-sql/pglite": "0.3.15"
   },
   "license": "MIT",
   "author": "Barry Carr & Tony Allard",

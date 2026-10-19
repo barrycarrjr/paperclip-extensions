@@ -14,6 +14,8 @@ export interface ConfigAccount {
   lwaClientSecretRef?: string;
   refreshTokenRef?: string;
   allowedCompanies?: string[];
+  /** Take scheduled listing snapshots for this account. Needs sellerId. */
+  listingWatch?: boolean;
 }
 
 export interface InstanceConfig {
@@ -44,7 +46,12 @@ const READ_PATHS: RegExp[] = [
   /^\/finances\/v0\/financialEventGroups\/[^/]+\/financialEvents$/,
   /^\/finances\/v0\/financialEvents$/,
   /^\/fba\/inventory\/v1\/summaries$/,
+  /^\/listings\/2021-08-01\/items\/[^/]+$/,
   /^\/listings\/2021-08-01\/items\/[^/]+\/[^/]+$/,
+  /^\/catalog\/2022-04-01\/items\/[^/]+$/,
+  /^\/products\/pricing\/v0\/items\/[^/]+\/offers$/,
+  /^\/aplus\/2020-11-01\/contentPublishRecords$/,
+  /^\/aplus\/2020-11-01\/contentDocuments\/[^/]+$/,
   /^\/reports\/2021-06-30\/reports$/,
   /^\/reports\/2021-06-30\/reports\/[^/]+$/,
   /^\/reports\/2021-06-30\/documents\/[^/]+$/,
@@ -293,7 +300,7 @@ export async function spRequest<T = unknown>(
     const headers: Record<string, string> = {
       "x-amz-access-token": token,
       Accept: "application/json",
-      "User-Agent": "paperclip-amazon-tools/0.1 (Language=JavaScript)",
+      "User-Agent": "paperclip-amazon-tools/0.2 (Language=JavaScript)",
     };
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
 

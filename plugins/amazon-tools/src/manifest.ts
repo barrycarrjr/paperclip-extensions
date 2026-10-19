@@ -2,7 +2,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { TOOL_DEFS } from "./toolDefs.js";
 
 const PLUGIN_ID = "amazon-tools";
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 const accountItemSchema = {
   type: "object",
@@ -17,6 +17,7 @@ const accountItemSchema = {
     "lwaClientIdRef",
     "lwaClientSecretRef",
     "refreshTokenRef",
+    "listingWatch",
   ],
   properties: {
     key: {
@@ -64,6 +65,12 @@ const accountItemSchema = {
       title: "Refresh token",
       description: "UUID of the Paperclip secret holding the refresh token from self-authorizing the app (Atzr|...).",
     },
+    listingWatch: {
+      type: "boolean",
+      title: "Listing Watch",
+      default: false,
+      description: "Snapshot every listing on a schedule and record what changed: status, issues, price and Buy Box every 6 hours; content and A+ once a day. Needs the Seller ID.",
+    },
     allowedCompanies: {
       type: "array",
       items: { type: "string", format: "company-id" },
@@ -75,7 +82,7 @@ const accountItemSchema = {
 
 const SETUP_INSTRUCTIONS = `# Setup: Amazon Seller Tools
 
-Gives agents **read-only** access to your own Amazon Seller Central data: orders (without buyer details), inventory, settlements, financial events and reports. The plugin has no tool that changes anything on Amazon. Reckon on **about 20 minutes** the first time.
+Gives agents **read-only** access to your own Amazon Seller Central data: orders (without buyer details), inventory, settlements, financial events, reports, listings, catalog content, offers and A+ content. Listing Watch can snapshot every listing on a schedule and record what changed. The plugin has no tool that changes anything on Amazon. Reckon on **about 20 minutes** the first time.
 
 ---
 
@@ -87,7 +94,8 @@ Gives agents **read-only** access to your own Amazon Seller Central data: orders
   - **Finance and Accounting** (settlements, financial events, settlement reports)
   - **Inventory and Order Tracking** (orders, FBA inventory)
   - **Selling Partner Insights** (sales and traffic report), if you want it
-  - **Product Listing**, only if you want merchant-fulfilled inventory. Amazon bundles read and write in this role; the plugin never calls a write.
+  - **Product Listing** (listings, catalog content, A+ content, merchant-fulfilled inventory). Amazon bundles read and write in this role; the plugin never calls a write.
+  - **Pricing** (offers and Buy Box on your ASINs)
 - Do **not** request roles for buyer personal information. The plugin does not use them.
 
 Amazon reviews the profile; this can take a few days.
@@ -119,11 +127,23 @@ Under **Seller accounts**, click **+ Add item**:
 | **Identifier** | e.g. \`main-store\` |
 | **Region** | \`na\`, \`eu\` or \`fe\` |
 | **Marketplace IDs** | e.g. \`ATVPDKIKX0DER\` (US), \`A2EUQ1WTGCTBG2\` (CA), \`A1F83G8C2ARO7P\` (UK), \`A1PA6795UKMFR9\` (DE) |
-| **Seller ID** | only for merchant-fulfilled inventory |
+| **Seller ID** | your Merchant Token (Seller Central → Settings → Account Info → Merchant Token); needed for listings, merchant inventory and Listing Watch |
+| **Listing Watch** | turn on to snapshot listings on a schedule (needs Seller ID) |
 | **LWA client ID / secret / refresh token** | the three secret UUIDs from step 3 |
 | **Allowed companies** | tick the company that owns the store |
 
 Set **Default account**, **save**, then click **Test Configuration**. The test signs in to Amazon and checks that each marketplace ID belongs to the account.
+
+---
+
+## Listing Watch
+
+With **Listing Watch** on, two scheduled jobs snapshot every listing and record each field that changed since the last snapshot. They only read from Amazon; no AWS account or push notifications are used.
+
+- **Every 6 hours**: status, issues, our price, Buy Box holder and price, offer count and other sellers.
+- **Daily**: submitted versus shown title, bullets, description, search terms, images, brand, category, product type and A+ content.
+
+The first run of each check saves a baseline and records no changes. Agents read the results with **amazon_list_listing_changes**.
 
 ---
 
@@ -143,7 +163,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   displayName: "Amazon Seller Tools",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Read-only Amazon Seller Central data for agents: orders without buyer details, FBA and merchant inventory, settlements, financial events and reports. Never writes to Amazon. Per-account allowedCompanies.",
+    "Read-only Amazon Seller Central data for agents: orders without buyer details, FBA and merchant inventory, settlements, financial events, reports, listings, catalog content, offers and A+ content, plus Listing Watch change tracking on a schedule. Never writes to Amazon. Per-account allowedCompanies.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [
@@ -152,6 +172,28 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "secrets.read-ref",
     "http.outbound",
     "activity.log.write",
+    "database.namespace.read",
+    "database.namespace.write",
+    "database.namespace.migrate",
+    "jobs.schedule",
+  ],
+  database: {
+    namespaceSlug: "amazon",
+    migrationsDir: "migrations",
+  },
+  jobs: [
+    {
+      jobKey: "listing_watch_status",
+      displayName: "Listing Watch: status, price and Buy Box",
+      description: "Every 6 hours at :17 UTC. Snapshots status, issues, our price, Buy Box and other sellers for accounts with Listing Watch on.",
+      schedule: "17 */6 * * *",
+    },
+    {
+      jobKey: "listing_watch_content",
+      displayName: "Listing Watch: content and A+",
+      description: "Daily at 07:43 UTC. Snapshots submitted versus shown content, images, category and A+ for accounts with Listing Watch on.",
+      schedule: "43 7 * * *",
+    },
   ],
   entrypoints: {
     worker: "./dist/worker.js",
