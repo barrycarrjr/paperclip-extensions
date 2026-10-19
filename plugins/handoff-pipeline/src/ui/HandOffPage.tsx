@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Reac
 import { useHostContext, type PluginPageProps } from "@paperclipai/plugin-sdk/ui";
 import { AUDIT_SOURCES, type AuditSource, type JobRun, type PipelineState, type RecurringJob, type SourceCoverage } from "../contracts.js";
 import { auditDates, handoffApi, qualificationCount, rankedJobs, unconfirmedCorrectionDelivery, type CorrectionDelivery } from "./api.js";
+import { createRequestId } from "./request-id.js";
 
 const border = "1px solid var(--border)";
 const muted: CSSProperties = { color: "var(--muted-foreground)", fontSize: 13 };
@@ -224,8 +225,8 @@ function JobCard({ job, rank, companyId, refresh }: { job: RecurringJob; rank: n
   const qualified = qualificationCount(job);
   const revision = job.revisions.find((item) => item.id === job.currentRevisionId);
   const active = job.stage === "draft" || job.stage === "run";
-  const exampleKey = useRef(crypto.randomUUID());
-  const rebuildKey = useRef(crypto.randomUUID());
+  const [exampleKey, setExampleKey] = useState(createRequestId);
+  const [rebuildKey, setRebuildKey] = useState(createRequestId);
   const unusedExamples = job.examples.filter((example) => !job.runs.some((run) => run.mode === "historical" && run.revisionId === job.currentRevisionId && run.exampleId === example.id));
   return <article style={{ ...card, ...stack }}>
     <div style={{ ...row, justifyContent: "space-between" }}><h2 style={{ margin: 0, fontSize: 17 }}>{rank}. {job.title}</h2><span style={{ background: "var(--muted)", color: "var(--foreground)", padding: "4px 8px", borderRadius: 6, fontSize: 13 }}>{stageLabels[job.stage]}</span></div>
@@ -246,12 +247,12 @@ function JobCard({ job, rank, companyId, refresh }: { job: RecurringJob; rank: n
     ]} onSubmit={async (values) => { await handoffApi.updateJob(companyId, job.id, { companySkillId: values.companySkillId, skillKey: values.skillKey, skillContent: values.skillContent, ...(values.routineId ? { routineId: values.routineId } : {}) }); await refresh(); }} /></div></details> : null}
     {active ? <div style={columns}>
       <details><summary>Log a historical rehearsal</summary><div style={{ marginTop: 12 }}>{!unusedExamples.length ? <p style={muted}>Add a distinct historical example that has not been rehearsed on this revision.</p> : <ActionForm title="Record the skill's original output" submit="Add rehearsal for review" fields={[{ name: "exampleId", label: "Historical example", options: unusedExamples.map((example) => ({ value: example.id, label: example.sourceRef })) }, { name: "startedAt", label: "Execution started at (ISO timestamp)", hint: "Use the actual start time, for example 2026-10-15T14:30:00Z." }, { name: "originalOutput", label: "Original agent output", type: "textarea" }, { name: "actualMinutes", label: "Actual agent minutes", type: "number", optional: true, min: 0 }]} onSubmit={async (values) => {
-        await handoffApi.addRun(companyId, job.id, { mode: "historical", idempotencyKey: exampleKey.current, revisionId: job.currentRevisionId!, exampleId: values.exampleId, startedAt: values.startedAt, originalOutput: values.originalOutput, ...(values.actualMinutes ? { actualMinutes: Number(values.actualMinutes) } : {}) }); exampleKey.current = crypto.randomUUID(); await refresh();
+        await handoffApi.addRun(companyId, job.id, { mode: "historical", idempotencyKey: exampleKey, revisionId: job.currentRevisionId!, exampleId: values.exampleId, startedAt: values.startedAt, originalOutput: values.originalOutput, ...(values.actualMinutes ? { actualMinutes: Number(values.actualMinutes) } : {}) }); setExampleKey(createRequestId()); await refresh();
       }} />}</div></details>
       <details><summary>Production runs</summary><div style={{ marginTop: 12 }}><p style={muted}>{qualified < 3 ? "Three clean historical examples are required first." : "The executing agent records production output with the Hand-off tool. The host run supplies its agent, source issue, start time, status, summary and counts."}</p></div></details>
     </div> : null}
     {job.stage !== "retired" ? <div style={columns}>
-      {job.stage !== "keep" ? <details><summary>Rebuild skill</summary><div style={{ marginTop: 12 }}><ActionForm title="Update the real skill and rebuild" submit="Update skill and rebuild job" fields={[{ name: "skillContent", label: "Complete revised SKILL.md", type: "textarea", value: revision?.content }, { name: "reason", label: "Rebuild reason" }]} onSubmit={async (values) => { await handoffApi.rebuildJob(companyId, job.companySkillId!, job.id, { skillContent: values.skillContent, reason: values.reason, requestId: rebuildKey.current }); rebuildKey.current = crypto.randomUUID(); await refresh(); }} /><p style={muted}>Validates the rebuild, saves SKILL.md to the linked company skill, verifies it, creates a new revision, and resets qualification and both review streaks. Earlier runs remain in the log.</p></div></details> : null}
+      {job.stage !== "keep" ? <details><summary>Rebuild skill</summary><div style={{ marginTop: 12 }}><ActionForm title="Update the real skill and rebuild" submit="Update skill and rebuild job" fields={[{ name: "skillContent", label: "Complete revised SKILL.md", type: "textarea", value: revision?.content }, { name: "reason", label: "Rebuild reason" }]} onSubmit={async (values) => { await handoffApi.rebuildJob(companyId, job.companySkillId!, job.id, { skillContent: values.skillContent, reason: values.reason, requestId: rebuildKey }); setRebuildKey(createRequestId()); await refresh(); }} /><p style={muted}>Validates the rebuild, saves SKILL.md to the linked company skill, verifies it, creates a new revision, and resets qualification and both review streaks. Earlier runs remain in the log.</p></div></details> : null}
       <details><summary>Retire job</summary><div style={{ marginTop: 12 }}><ActionForm title="Stop new runs permanently" submit="Retire job" fields={[{ name: "reason", label: "Retirement reason" }]} onSubmit={async (values) => { await handoffApi.retireJob(companyId, job.id, { reason: values.reason }); await refresh(); }} /><p style={muted}>Retired jobs cannot be rebuilt. Their history remains available.</p></div></details>
     </div> : null}
   </article>;

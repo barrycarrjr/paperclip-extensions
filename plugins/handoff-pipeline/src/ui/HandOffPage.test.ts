@@ -20,6 +20,21 @@ function render(tab: "Audit" | "Jobs" | "Review" | "Run log", state = fixture())
   return renderToStaticMarkup(createElement(PipelineTab, { tab, state, companyId: state.companyId, refresh: async () => {} }));
 }
 
+test("job details render on HTTP without randomUUID and without browser crypto", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const browserCrypto = globalThis.crypto;
+  try {
+    for (const value of [{ getRandomValues: browserCrypto.getRandomValues.bind(browserCrypto) }, undefined]) {
+      Object.defineProperty(globalThis, "crypto", { configurable: true, value });
+      const html = render("Jobs");
+      for (const text of ["Check invoices", "Rebuild skill", "Historical examples", "Log a historical rehearsal"]) assert.ok(html.includes(text), text);
+    }
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "crypto", descriptor);
+    else Reflect.deleteProperty(globalThis, "crypto");
+  }
+});
+
 test("pending correction delivery is reported separately from the saved human review", () => {
   const html = renderToStaticMarkup(createElement(CorrectionDeliveryNotice, { pending: {
     run: fixture().jobs[0].runs[0], revisedOutput: "Corrected", reason: "Missing total",
