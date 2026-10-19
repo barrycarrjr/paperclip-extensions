@@ -11,12 +11,16 @@ test("appends only new items, keeps existing lines and the file's privacy", asyn
   const before = "# list\n1234567\nOak St\nre:(?<!\\d)9999(?!\\d)\nallow:^ok$\n";
   await writeFile(file, before);
   await chmod(file, 0o600);
+  // Windows reports native permission bits differently from POSIX.
+  // Appending must preserve the permissions the operating system reports.
+  const permissionsBefore = (await stat(file)).mode & 0o777;
+  if (process.platform !== "win32") assert.equal(permissionsBefore, 0o600);
   const added = await addPrivateItems(file, "Fake", ["1234567", "7654321", "12 Oak St", "900 Elm Ave", "7654321", "abc"], "2026-01-01");
   assert.equal(added, 2, "1234567 listed, '12 Oak St' covered by 'Oak St', duplicate and too-short items skipped");
   const after = await readFile(file, "utf8");
   assert.ok(after.startsWith(before), "existing lines untouched");
   assert.match(after, /# Added by insurance-portals from Fake, 2026-01-01\n7654321\n900 Elm Ave\n$/);
-  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  assert.equal((await stat(file)).mode & 0o777, permissionsBefore);
   assert.equal(await addPrivateItems(file, "Fake", ["7654321", "900 Elm Ave"], "2026-01-02"), 0, "nothing new, nothing written");
   assert.equal(await readFile(file, "utf8"), after);
 });

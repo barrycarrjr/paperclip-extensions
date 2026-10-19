@@ -204,5 +204,6 @@ into the current live instance merely to perform this check.
   with audited activity and costs, fixed rolling windows, optional Hand-off
   provenance and confirmed pauses. Preserve instance-admin-only Pause and
   request/completion auditing; hide kept agents from idle widget flags.
+- 0.1.1: use a neutral contributor attribution without personal details.
 - 0.1.0: initial roster, idle and low-use evidence, board Keep/Unkeep notes,
   instance-admin Pause and the `0001_init.sql` keep-mark migration.

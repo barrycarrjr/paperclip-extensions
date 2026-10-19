@@ -4,7 +4,7 @@ const manifest: PaperclipPluginManifestV1 = {
   id: "agent-roster", apiVersion: 1, version: "0.2.0",
   displayName: "Agent roster",
   description: "Review agent activity and costs for one company and confirm reversible pauses.",
-  author: "Bryon Stout", categories: ["ui"],
+  author: "Paperclip contributors", categories: ["ui"],
   entrypoints: { worker: "./dist/worker.js", ui: "./dist/ui/" },
   capabilities: ["instance.settings.register", "database.namespace.read", "database.namespace.write", "database.namespace.migrate", "agents.read", "agents.pause", "activity.log.write", "api.routes.register", "ui.sidebar.register", "ui.page.register", "ui.dashboardWidget.register"],
   database: { namespaceSlug: "roster", migrationsDir: "migrations", coreReadTables: ["agents", "heartbeat_runs", "cost_events", "issues", "companies"] },
