@@ -1,7 +1,34 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.22.1";
+const PLUGIN_VERSION = "0.23.0";
+
+const routingSchema = {
+  type: "object", additionalProperties: false, title: "Mail routing",
+  description: "Optional routing inside email-triage. Ships off. Only the named router may propose configured keys; routing leaves the mailbox unchanged.",
+  propertyOrder: ["mode", "routerAgentId", "sendingApprovalConfirmed", "destinations"],
+  properties: {
+    mode: { type: "string", enum: ["off", "review", "auto"], default: "off", title: "Mode" },
+    routerAgentId: { type: "string", format: "agent-id", title: "Triage agent allowed to route", description: "Must belong to this mailbox's Ingest company." },
+    sendingApprovalConfirmed: { type: "boolean", default: false, title: "Sending needs approval for every agent",
+      description: "Operator acknowledgment only. First configure and verify approval-based sending for every agent. The plugin cannot inspect these policies and this checkbox changes none of them." },
+    destinations: { type: "array", maxItems: 50, title: "Routing destinations", items: {
+      type: "object", additionalProperties: false,
+      required: ["key", "label", "description", "companyId", "projectId", "assigneeAgentId"],
+      propertyOrder: ["enabled", "key", "label", "description", "companyId", "projectId", "assigneeAgentId", "priority"],
+      properties: {
+        enabled: { type: "boolean", default: true, title: "Enabled" },
+        key: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,39}$", title: "Destination key" },
+        label: { type: "string", minLength: 1, maxLength: 100, title: "Label" },
+        description: { type: "string", minLength: 1, maxLength: 600, title: "What belongs here" },
+        companyId: { type: "string", format: "company-id", title: "Destination company" },
+        projectId: { type: "string", format: "project-id", title: "Project" },
+        assigneeAgentId: { type: "string", format: "agent-id", title: "Assignee agent" },
+        priority: { type: "string", enum: ["low", "medium", "high", "critical"], default: "medium", title: "Priority" },
+      },
+    } },
+  },
+} as const;
 
 const mailboxItemSchema = {
   type: "object",
@@ -34,6 +61,7 @@ const mailboxItemSchema = {
     "pollEnabled",
     "ingestCompanyId",
     "onReceive",
+    "routing",
     "pollFolder",
     "pollSinceDays",
     "filterFromContains",
@@ -52,6 +80,7 @@ const mailboxItemSchema = {
     "sentFolder",
   ],
   properties: {
+    routing: routingSchema,
     // ---- Identity & primary connection (required, top of form) ----
     authType: {
       type: "string",
@@ -337,12 +366,31 @@ The same steps apply — create an App Password or use your regular password if 
 - **Inbound mail not ingesting** — make sure **Enable receive** is ON and **Ingest company** is set. Check the plugin worker logs (Status tab) for poll errors.
 `;
 
-const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; database?: { namespaceSlug: string; migrationsDir: string } } = {
+// Current host supports explicit write/approval metadata; npm SDK declarations predate it.
+type HostManifest = Omit<PaperclipPluginManifestV1, "tools"> & {
+  tools: Array<NonNullable<PaperclipPluginManifestV1["tools"]>[number] & { writes?: boolean; actionType?: "change_knowledge_base" }>;
+  setupInstructions?: string; database?: { namespaceSlug: string; migrationsDir: string };
+};
+const manifest: HostManifest = {
   id: PLUGIN_ID,
   apiVersion: 1,
   version: PLUGIN_VERSION,
   displayName: "Email Tools",
-  setupInstructions: SETUP_INSTRUCTIONS,
+  setupInstructions: SETUP_INSTRUCTIONS + `
+
+## Shared-mailbox routing (ships off)
+
+1. Install the matching host email-handoff change and approve the new read/audit capabilities.
+2. Configure and personally verify approval-based sending for every agent, with no permissive overrides. Leave routing off if this is not satisfied. This plugin cannot verify or change these policies.
+3. Select the mailbox's Ingest company and a named router in that company. Keep it in Allowed companies. Use on-receive mode none or event, never issue.
+4. Add enabled destination keys, labels, descriptions, companies, projects and assigned agents. Only an instance admin can edit this list.
+5. Before activation, deliberately choose the router agent's Change knowledge base action policy. An unset agent policy inherits the company default, then falls back to Ask first if that is unset. Ask first holds EVERY proposal, including review and unsure, as a board approval draft before the worker or ledger. Auto still needs approval per proposal. Unapproved drafts never reach Mail routing and later runs may draft the same unread mail again, especially with changed reasons. Go ahead is an operator choice, never granted by this plugin; sending permission is separate.
+6. Tick Sending needs approval for every agent as your acknowledgment, set routing to review, and save. Use the existing email-triage routine, not a second triage.
+7. Review the Mail routing panel in the source company. Route or dismiss unstarted entries. Reconcile frozen attempts, or choose Close as handled manually and confirm after checking existing work. This clears review only: an unknown handoff may already exist or still complete, and the retained identity prevents another route. Manual close works while off and for recorded entries whose connection was changed or removed. Once reliable, switch to auto; uncertain mail still waits. Off stops routing and follow-up effects without changing existing issues.
+8. The ledger retains sender address, subject (200 characters), free-form classifier note (300 characters, possibly mail content), Message-ID and routing identity indefinitely. Terminal identities prevent duplicate routing. Email page hold badges are company-scoped; source-company mail can still look unread/unhandled after routing.
+
+Routing selectors use the exact messageId of the CURRENT email_search item, or null. Never use email_fetch, which normalizes malformed IDs, or normalize the search value yourself. Routing never sends, deletes, moves or marks email. It does not isolate the clerk's other tools and changes no live sending policy. Existing noise sorting keeps its move ability. Missing/invalid Message-ID requires operator handling. A creation with an uncertain outcome permanently fixes its destination and only reconciles that handoff; it cannot be redirected or dismissed. Routed handoffs with pending follow-ups remain counted in the triage report. Use Retry follow-ups on the source-company panel: the same keyed wake and definitely pending audits only, never another create/reopen or an unknown audit replay. Current config, access, account, credentials and destination are rechecked. Retry cannot repair closed/deleted issues, repointed destinations, replaced routers or terminated agents. After manual checking, an instance admin can use Mark follow-ups checked even with routing off or configuration removed. This removes follow-up alerts, does not prove delivery or cancel work. It records actor/time, keeps unknown facts unchanged and prevents new follow-up claims; already-requested work may still complete. The decision makes no connection, mail read, create, reopen, wake or audit. Source audit unknown means verify manually because this public SDK cannot safely repeat an audit. See README for the recovery limits and activation run sheet.
+`,
   description:
     "Send + receive email via SMTP/IMAP. Multi-mailbox, polling + IDLE push, per-mailbox dispatch (event / issue / on-demand), threading, bulk operations.",
   author: "Barry Carr & Tony Allard",
@@ -357,6 +405,10 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
     "events.emit",
     "events.subscribe",
     "issues.create",
+    "issues.read",
+    "agents.read",
+    "projects.read",
+    "activity.log.write",
     "issues.wakeup",
     "plugin.state.read",
     "plugin.state.write",
@@ -407,6 +459,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
         displayName: "Sender rules",
         exportName: "RulesSettingsPage",
       },
+      { type: "settingsPage", id: "email-tools-mail-routing", displayName: "Mail routing", exportName: "RoutingSettingsPage" },
     ],
   },
   instanceConfigSchema: {
@@ -477,6 +530,28 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
     },
   ],
   tools: [
+    {
+      name: "email_list_route_destinations", displayName: "List Mail Routing Destinations",
+      description: "List enabled keys, labels and descriptions for the one configured mailbox router. Off returns no destinations. No company, project or agent IDs are exposed.",
+      writes: false,
+      parametersSchema: { type: "object", additionalProperties: false, required: ["mailbox"], properties: { mailbox: { type: "string" } } },
+    },
+    {
+      name: "email_route_message", displayName: "Route Email",
+      description: "Inside email-triage, propose one configured destination key or hold an ambiguous message for operator review. Only the named router in the ingest company may call. The server re-reads the immutable message and builds a standard handoff from real email. Routing performs no mailbox mutations. Never use for bulk cleanup, security, sign-in, phishing or payment-detail changes. Routed or waiting email must not be loosely moved.",
+      writes: true, actionType: "change_knowledge_base",
+      parametersSchema: { type: "object", additionalProperties: false,
+        required: ["mailbox", "uid", "uidValidity", "messageId", "confidence", "reason"],
+        properties: {
+          mailbox: { type: "string" }, folder: { type: "string", maxLength: 300 },
+          uid: { type: "integer", minimum: 1, maximum: 4294967295 },
+          uidValidity: { type: "string", pattern: "^[1-9][0-9]{0,19}$", description: "The uidValidity string from current email_search." },
+          messageId: { type: ["string", "null"], maxLength: 998, description: "The exact messageId of the CURRENT email_search item (not email_fetch, which normalizes malformed IDs), or null if missing. Unusable IDs wait for the operator." },
+          confidence: { type: "string", enum: ["sure", "unsure"] }, destination: { type: "string" },
+          candidates: { type: "array", maxItems: 3, items: { type: "string" } }, reason: { type: "string", minLength: 1, maxLength: 300, description: "Operator note only; never copied into the destination issue." },
+        },
+      },
+    },
     {
       name: "email_send",
       displayName: "Send Email",
@@ -839,13 +914,14 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
       name: "email_reply",
       displayName: "Reply to Email",
       description:
-        "Reply to a previously-fetched message. Looks up the original Message-ID and References, then sends with proper threading headers via the same SMTP path as email_send. Saves a copy to the mailbox's Sent folder and marks the original answered (\\Answered), which is what shows the replied icon in Outlook and other mail clients.",
+        "Reply using exactly one of uid or messageId. Both selectors default to the configured poll folder, or INBOX. Message-ID resolves the actual current message, refusing missing, ambiguous or changed identities. Uses the existing SMTP, company access and send-approval path, saves a Sent copy and marks the original answered.",
       parametersSchema: {
         type: "object",
         properties: {
           mailbox: { type: "string" },
           folder: { type: "string" },
-          uid: { type: "number" },
+          uid: { type: "integer", minimum: 1, maximum: 4294967295, description: "Supply exactly one of uid or messageId." },
+          messageId: { type: "string", description: "Exact bracketed Message-ID. Supply exactly one of uid or messageId. Resolves in folder, defaulting to the configured poll folder or INBOX." },
           body: { type: "string", description: "Plain-text body." },
           body_html: { type: "string" },
           replyAll: { type: "boolean", default: false },
@@ -876,7 +952,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string; databa
             },
           },
         },
-        required: ["mailbox", "uid", "body"],
+        required: ["mailbox", "body"],
       },
     },
     {

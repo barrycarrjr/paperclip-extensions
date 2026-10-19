@@ -66,6 +66,7 @@ export async function buildMailboxRuntime(
   cfg: ConfigMailbox,
   key: string,
   oauthClientId?: string,
+  options: { freshCredentials?: boolean } = {},
 ): Promise<MailboxRuntime> {
   if (!cfg.imapHost) throw new Error(`Mailbox "${key}": imapHost is required.`);
   if (!cfg.user) throw new Error(`Mailbox "${key}": user is required.`);
@@ -83,7 +84,7 @@ export async function buildMailboxRuntime(
     accessToken = await getAccessToken(ctx, { clientId, mailboxKey: key });
   } else {
     if (!cfg.pass) throw new Error(`Mailbox "${key}": pass (secret reference) is required.`);
-    pass = await resolveMailboxSecret(ctx, key, cfg.pass);
+    pass = options.freshCredentials ? await ctx.secrets.resolve(cfg.pass) : await resolveMailboxSecret(ctx, key, cfg.pass);
   }
 
   return {

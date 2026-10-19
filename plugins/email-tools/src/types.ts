@@ -12,6 +12,25 @@ export interface OnReceiveConfig {
 export type MailboxAuthType = "basic" | "oauth2";
 export type OAuthProvider = "microsoft";
 
+export interface RoutingDestination {
+  key: string;
+  label: string;
+  description: string;
+  companyId: string;
+  projectId: string;
+  assigneeAgentId: string;
+  priority?: IssuePriority;
+  enabled?: boolean;
+}
+
+export interface MailRoutingConfig {
+  mode?: "off" | "review" | "auto";
+  routerAgentId?: string;
+  /** Operator acknowledgment only. This does not inspect or change agent policies. */
+  sendingApprovalConfirmed?: boolean;
+  destinations?: RoutingDestination[];
+}
+
 export interface ConfigMailbox {
   name?: string;
   key?: string;
@@ -48,6 +67,7 @@ export interface ConfigMailbox {
   pollSinceDays?: number;
   ingestCompanyId?: string;
   onReceive?: OnReceiveConfig;
+  routing?: MailRoutingConfig;
   filterFromContains?: string[];
   filterSubjectContains?: string[];
   disallowMove?: boolean;

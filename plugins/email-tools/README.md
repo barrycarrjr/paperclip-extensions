@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.23.0** - Optional shared-mailbox routing inside the existing email-triage skill, off by default. One named router proposes admin-defined destination keys. Read-only verification, a durable cross-company routing ledger, standard host email handoffs, bounded Mail routing review/history, and honest wake/audit outcomes protect retries. Adds strict Message-ID reply selection alongside the existing UID selector. Requires the matching host email-handoff support; no live sending or agent policy is changed.
+
 - **v0.22.1** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.22.0** - Address book import and export. Adds batch contact import with duplicate merging (`email.import-contacts` bridge action and `email_import_contacts` agent tool) supporting CSV, vCard (.vcf), and JSON formats.
@@ -266,6 +268,9 @@ needed.
 
 ## Configure
 
+> **Install + setup walkthrough** lives in-app: open the plugin settings page
+> and follow the **Setup** tab. This README is the capability reference.
+
 For each mailbox you want this plugin to send from:
 
 ### 1. Store the password as a paperclip secret
@@ -386,6 +391,222 @@ fortnight) and skipped.
 To lift the entries out of an old rules-home document once, send them to
 `email.add-to-review-queue` (board access), then retire the document.
 Running the same import twice changes nothing.
+
+## Shared-mailbox routing activation
+
+Routing ships **off**. After both the host and plugin changes are installed:
+
+1. Configure approval-based sending for every agent in every company and
+   remove agent overrides that allow sending without approval. Verify the
+   effective policies yourself. Leave routing off if this is not satisfied.
+2. Approve the plugin's new `issues.read`, `agents.read`, `projects.read` and
+   `activity.log.write` capabilities. Existing create/wakeup capabilities
+   remain required. Install the matching host support for Email Tools
+   `email_handoff` origins before testing activation.
+3. In Configuration, choose the mailbox's Ingest company and one named
+   router agent in that company. Keep that company in Allowed companies.
+   Set on-receive mode to `none` or `event`, never `issue` with routing.
+4. Under Mail routing add destinations: unique key, label, description,
+   company, project and assigned agent. Disabled destinations are not usable.
+   Only an instance admin can edit this instance configuration.
+5. Before activation, deliberately choose the router agent's **Change knowledge
+   base** action policy. An unset agent policy inherits the company default;
+   if that is also unset it falls back to **Ask first**. Under Ask first every route proposal,
+   including review-mode and unsure proposals, is held as a board approval
+   draft before the worker runs or any ledger entry exists. Mode `auto` is
+   still approval-by-approval under Ask first. An unapproved draft never
+   reaches Mail routing; later runs can draft the same unread mail again,
+   especially when the reason changes. The operator may choose **Go ahead**
+   for this category after reviewing that authority; this plugin never grants
+   it or changes sending permissions. Routing and sending remain separate decisions.
+6. After personally verifying step 1, tick **Sending needs approval for
+   every agent**, set routing to `review`, and save. The tick is an operator
+   acknowledgment, not a policy check or an agent-tool restriction.
+7. Keep using the existing email-triage routine in the ingest company,
+   assigned to the named router. Review suggestions on this plugin's
+   **Mail routing** panel under the source company. Route or dismiss them.
+8. Once suggestions are reliable, set mode to `auto`. Ambiguous mail,
+   unusable Message-IDs, unavailable destinations and rate-limited messages
+   still wait. Setting mode back to `off` stops routing and follow-up repair;
+   existing issues remain with their assigned agents.
+
+`allowedCompanies` controls mailbox tool access, not destinations. Optionally
+narrow it to the ingest company after checking other workflows. Destination
+agents then cannot use that mailbox's reply/attachment tools without being
+allowed explicitly. Routing does not change `allowSend`, agent permissions,
+live approval policies or the host prohibition on HQ cross-company writes.
+It does not isolate other tools already available to the clerk.
+
+### Tool and review contract
+
+- `email_list_route_destinations { mailbox }`: read-only, available only to
+  the named clerk when configured. Returns `{ mode, destinations }`, with
+  keys, labels and descriptions only. Unconfigured/off returns no targets.
+- `email_route_message { mailbox, folder?, uid, uidValidity, messageId,
+  confidence, destination?, candidates?, reason }`: a write in the
+  `change_knowledge_base` approval category. UID and UIDVALIDITY come from
+  the current `email_search`. `messageId` is the exact `messageId` of that
+  current search item, or null. Never use `email_fetch` for this selector:
+  it normalizes malformed IDs. Do not normalize the caller's search value;
+  confidence is `sure` or `unsure`; candidates contain at most three enabled
+  keys; the operator note is capped at 300 characters. No caller-supplied
+  company, project, agent, title, body or credentials are accepted.
+- Outcomes are `routed`, `waiting`, `already_routed`, `already_waiting`,
+  `dismissed_earlier`, `handled_manually` or `in_progress`, plus entry ID, configured destination,
+  issue identity when known, note, frozen decision and wake/audit states.
+  A host result saying queued for human approval is also terminal for that
+  message in the current run: no move, mark, sender queue or retry. This
+  draft is separate from the worker outcomes above.
+  Unknown keys and unauthorized calls fail before reading IMAP.
+- `email_list_review_queue` keeps its sender response and adds
+  `routing: { waiting, total, followups }` for the named router. These mail-level
+  entries do not disappear when a sender rule is written. `email_search`
+  adds `routingStatus` to known items for that router, protecting them from
+  loose noise moves even during bulk cleanup. The shared skill skips all
+  routing proposals during bulk cleanup and flags waiting mail through its
+  existing run report and mailbox status memory, including handoffs needing
+  follow-ups. It sends no notification.
+- `email.list-routing` data and `email.resolve-routing-entry` action back
+  the Mail routing panel. Both require the host-authenticated instance admin
+  and the source-company scope. Parameters cannot grant admin authority.
+  Lists contain at most 25 rows per page with waiting/follow-up counts, minimal mail
+  metadata and bounded history navigation. Sender rules remain unchanged.
+
+Routing opens IMAP read-only and fetches headers, MIME metadata and at most
+24 KB of a plain-text part with BODY.PEEK. It downloads no attachment bytes.
+Issue descriptions use the existing shared builder: bounded headers, up to
+16,000 body characters and at most 30 attachment names/types/sizes. HTML-only
+messages carry a note to read the original. Only re-read mailbox content is
+copied into the destination issue; the classifier's note stays in review.
+Missing, mismatched or reset message identity never creates an issue.
+Security/sign-in/phishing/payment-detail mail stays for the operator; the
+skill enforces this classification rule and code adds a conservative keyword
+check. This is not a complete phishing detector.
+
+### Duplicate protection and recovery
+
+Migration `006_routing.sql` retains the sender address, subject (up to 200
+characters), free-form classifier note (up to 300 characters, which may quote
+mail content), Message-ID and routing identity indefinitely, including terminal
+rows. Message bodies and attachment bytes are not stored in this ledger, but
+the subject and note can contain mail content. Its unique mailbox/message
+identity survives schedules, moved/deleted mail and closed/deleted issues.
+Usable Message-ID is required for a handoff; missing/invalid IDs use
+UIDVALIDITY/folder/UID only for a waiting entry. This includes bare IDs and
+IDs with trailing comments when the proposal exactly matches that same UID's
+bounded server-fetched raw header. Parser-added brackets never make an invalid
+header eligible for routing; arbitrary normalized caller IDs are refused. Never rename or repoint a
+mailbox key to bypass an old routing decision. Source-company and mailbox
+account changes are refused for recorded identities. An additional unique
+account-binding/message key blocks the same account from being retried under
+a renamed mailbox alias. Different server aliases or a replaced account
+cannot be proven equivalent automatically, so keep mailbox keys stable.
+
+A compare-and-set claim expires after two minutes, but expiration does not
+mean the old worker stopped. A second compare-and-set permanently freezes
+the intended destination before the host create call. A slow old call cannot
+change that decision after takeover. Recovery only looks for the same host
+handoff, including closed history; it never makes a second create call after
+an uncertain outcome. If no issue can be found, the entry stays waiting and
+cannot be redirected. In the source company's Mail routing panel, an instance
+admin can use Reconcile handoff to look for the original issue, or Close as
+handled manually after checking existing work. Confirm manual close clears
+review only. It creates, cancels and deletes nothing; an unknown handoff may
+already exist or still complete. The permanent identity tombstone prevents
+another route, and a late known issue is recorded without reopening review
+or requesting follow-up effects. This also covers a crash just before create.
+Only the exact legacy host origin rejection, returned before any host write,
+releases the attempt flag: upgrade the host, then use Route to destination.
+Other refusals and unknown errors never authorize another create.
+
+Changing port, TLS or sign-in method does not change the account binding,
+which uses case-insensitive IMAP host and account username. A genuinely changed
+account still cannot route a recorded identity. Manual close works even while
+routing is off, the binding changed, or the connection was removed: select
+its recorded entries in the source company's Mail routing panel. The selector
+shows 100 recorded mailbox keys per page with waiting entries, pending
+follow-ups or unknown outcomes needing verification. Use More recorded
+mailboxes and Previous recorded mailboxes to browse them without closing
+anything. Both mailbox and row navigation stop at offset 10,000. No mail connection is needed.
+Recorded keys are exact, including letter case. After a key rename, the old
+scope is unavailable for Route and Dismiss; manual close and follow-up checking
+still use its stored identity. Restore the exact key to resume routing there.
+If a proposed or selected destination is removed or disabled, the panel asks
+you to choose an enabled destination explicitly before routing.
+
+The host atomically creates/replays the destination issue, email handoff and
+destination audit. The plugin records the canonical origin and issue before
+requesting a wake with a stable ledger key. A lost wake response stays
+`requested_unknown`; a keyed replay returning queued false becomes
+`requested_or_duplicate_verify`, not a refusal. A concurrent replay cannot
+overwrite that uncertainty with an initial-refusal label. Check the destination issue's
+run history to verify it. An initial queued-false response is stored as
+`refused`, meaning not newly queued; the host may also combine or defer work.
+Verify destination run history rather than assuming the wake will not run.
+Follow-up failures return the durable handoff and its actual
+wake/audit states, with a fixed safe diagnostic when available. They do not
+turn the recorded handoff into a failed route. Each triage report keeps a
+count of routed entries needing follow-ups. An authenticated instance admin
+can select one and use **Retry follow-ups** in Mail routing. This retries only
+pending/unknown wakes with the same stable key and definitely pending source
+audits, after checking current config, source access, account, credentials
+and destination eligibility. It never creates or reopens an issue and never
+replays an unknown source audit. A worker restart before follow-ups leaves
+the durable row reachable by this action. There is no autonomous retry loop.
+Retry cannot repair completed, cancelled, backlog, deleted or blocked destination
+issues, a replaced router, a changed destination or a terminated agent; disabled
+access and changed accounts can also prevent it. After checking manually, an
+instance admin can use **Mark follow-ups checked** on any routed row. This
+removes follow-up alerts, does not prove delivery or cancel work. It records the
+operator and time without changing issue, handoff, wake or source-audit facts;
+an unknown audit stays unknown. No mail read, connection, create, reopen, wake
+or audit is performed by this decision. It works with routing off, removed
+configuration, replaced clerks and unavailable destinations. No new follow-up
+claims or retries can start afterwards. Work already requested may still
+complete and record its facts; the acknowledgement cannot cancel or undo it.
+Checked rows leave run-report follow-up counts and stored-mailbox discovery;
+their permanent identity and history remain, including for current mailboxes.
+Missing/deleted mail is not re-read on terminal replay
+or uncertain-outcome reconciliation. Recovery uses the exact canonical source
+in the frozen company and refuses ambiguous results. The public SDK does not
+expose the installed plugin ID, so the plugin learns it only from a confirmed
+self handoff response and stores it in plugin-scoped state. If the first-ever
+response is lost, recovery waits until another confirmed handoff establishes
+that identity, or the operator reconciles it. It never guesses an ID from
+another provider's issue. Automatic reservations are capped at 25 per mailbox per UTC
+hour, including failed reservations. Unstarted waiting items can be routed
+or dismissed by an admin. There are no network calls under database locks.
+
+The current public SDK forwards issue provenance and wake idempotency, but
+does **not** forward activity-log idempotency keys. Source-company audit
+therefore takes one permanent claim: a failed/lost audit response is shown
+as `unknown` and never blindly retried. Pending source audits can be repaired
+on replay; unknown ones require operator verification. The destination audit
+is still atomic in the matching host. No mail subject/body/Message-ID or
+credential is included in the new source-audit metadata. Ledger tombstones
+remain indefinitely to preserve identity; storage grows with handled mail,
+while row sizes and list memory are bounded.
+
+Email page hold badges are company-scoped. Routing leaves mail unread, so the
+source company's Email page and Portfolio Brief can still show it as unhandled;
+the handoff badge appears when viewing it from the destination company.
+
+Migration 006 is unreleased. These changes do not upgrade an earlier
+pre-release ledger or its recorded migration checksum. Use fresh synthetic
+fixtures; any previously applied development build needs explicit migration
+planning before adoption, never an assumed live conversion.
+
+### Message-ID replies
+
+`email_reply` accepts exactly one of `uid` or `messageId`, plus `mailbox` and
+`body`. Existing UID replies keep their configured default folder. Message-ID
+replies also default to the configured poll folder (or `INBOX`), resolve an actual current UID in that folder,
+and verify the exact header and UIDVALIDITY before sending. Missing, ambiguous,
+substring-only or changed identities fail without SMTP. If mail moved, locate
+it and pass its actual folder; do not reuse a cached UID after a reset.
+Mailbox company access, the sending switch, outbound approvals, SMTP delivery
+results and sent-copy/answered follow-ups retain their existing behavior.
+The host only treats confirmed SMTP acceptance as sent, not a lookup success.
 
 ## Migrating from v0.2.0
 
