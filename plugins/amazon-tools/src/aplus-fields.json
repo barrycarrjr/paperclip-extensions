@@ -1,0 +1,439 @@
+{
+  "ContentModuleType": {},
+  "StandardCompanyLogoModule": {},
+  "Asin": {},
+  "PlainTextItem": {},
+  "StandardComparisonProductBlock": {
+    "asin": "Asin",
+    "metrics": [
+      "PlainTextItem"
+    ]
+  },
+  "StandardComparisonTableModule": {
+    "productColumns": [
+      "StandardComparisonProductBlock"
+    ],
+    "metricRowLabels": [
+      "PlainTextItem"
+    ]
+  },
+  "DecoratorSet": {},
+  "TextComponent": {
+    "decoratorSet": "DecoratorSet"
+  },
+  "ParagraphComponent": {
+    "textList": [
+      "TextComponent"
+    ]
+  },
+  "StandardImageTextBlock": {
+    "headline": "TextComponent",
+    "body": "ParagraphComponent"
+  },
+  "StandardFourImageTextModule": {
+    "headline": "TextComponent",
+    "block1": "StandardImageTextBlock",
+    "block2": "StandardImageTextBlock",
+    "block3": "StandardImageTextBlock",
+    "block4": "StandardImageTextBlock"
+  },
+  "StandardFourImageTextQuadrantModule": {
+    "block1": "StandardImageTextBlock",
+    "block2": "StandardImageTextBlock",
+    "block3": "StandardImageTextBlock",
+    "block4": "StandardImageTextBlock"
+  },
+  "StandardHeaderImageTextModule": {
+    "headline": "TextComponent",
+    "block": "StandardImageTextBlock"
+  },
+  "StandardImageCaptionBlock": {
+    "caption": "TextComponent"
+  },
+  "StandardTextBlock": {
+    "headline": "TextComponent",
+    "body": "ParagraphComponent"
+  },
+  "TextItem": {
+    "text": "TextComponent"
+  },
+  "StandardTextListBlock": {
+    "textList": [
+      "TextItem"
+    ]
+  },
+  "StandardImageSidebarModule": {
+    "headline": "TextComponent",
+    "imageCaptionBlock": "StandardImageCaptionBlock",
+    "descriptionTextBlock": "StandardTextBlock",
+    "descriptionListBlock": "StandardTextListBlock",
+    "sidebarImageTextBlock": "StandardImageTextBlock",
+    "sidebarListBlock": "StandardTextListBlock"
+  },
+  "ColorType": {},
+  "StandardImageTextOverlayModule": {
+    "overlayColorType": "ColorType",
+    "block": "StandardImageTextBlock"
+  },
+  "StandardImageTextCaptionBlock": {
+    "block": "StandardImageTextBlock",
+    "caption": "TextComponent"
+  },
+  "StandardMultipleImageTextModule": {
+    "blocks": [
+      "StandardImageTextCaptionBlock"
+    ]
+  },
+  "StandardProductDescriptionModule": {
+    "body": "ParagraphComponent"
+  },
+  "StandardHeaderTextListBlock": {
+    "headline": "TextComponent",
+    "block": "StandardTextListBlock"
+  },
+  "StandardSingleImageHighlightsModule": {
+    "headline": "TextComponent",
+    "textBlock1": "StandardTextBlock",
+    "textBlock2": "StandardTextBlock",
+    "textBlock3": "StandardTextBlock",
+    "bulletedListBlock": "StandardHeaderTextListBlock"
+  },
+  "StandardSingleImageSpecsDetailModule": {
+    "headline": "TextComponent",
+    "descriptionHeadline": "TextComponent",
+    "descriptionBlock1": "StandardTextBlock",
+    "descriptionBlock2": "StandardTextBlock",
+    "specificationHeadline": "TextComponent",
+    "specificationListBlock": "StandardHeaderTextListBlock",
+    "specificationTextBlock": "StandardTextBlock"
+  },
+  "PositionType": {},
+  "StandardSingleSideImageModule": {
+    "imagePositionType": "PositionType",
+    "block": "StandardImageTextBlock"
+  },
+  "StandardTextPairBlock": {
+    "label": "TextComponent",
+    "description": "TextComponent"
+  },
+  "StandardTechSpecsModule": {
+    "headline": "TextComponent",
+    "specificationList": [
+      "StandardTextPairBlock"
+    ]
+  },
+  "StandardTextModule": {
+    "headline": "TextComponent",
+    "body": "ParagraphComponent"
+  },
+  "StandardThreeImageTextModule": {
+    "headline": "TextComponent",
+    "block1": "StandardImageTextBlock",
+    "block2": "StandardImageTextBlock",
+    "block3": "StandardImageTextBlock"
+  },
+  "PremiumImageTextModule": {
+    "positionType": "PositionType",
+    "subheadline": "TextComponent",
+    "headline": "TextComponent",
+    "bodyText": "ParagraphComponent"
+  },
+  "PremiumTextModule": {
+    "description": "ParagraphComponent",
+    "headline": "TextComponent"
+  },
+  "PremiumFullBackgroundTextModule": {
+    "positionType": "PositionType",
+    "colorType": "ColorType",
+    "subheadline": "TextComponent",
+    "headline": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "PremiumFullBackgroundImageModule": {
+    "headline": "TextComponent",
+    "footer": "ParagraphComponent"
+  },
+  "ImageColumn": {
+    "headline": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "ImageColumns": {
+    "imageColumn": "ImageColumn"
+  },
+  "PremiumFourColumnImagesModule": {
+    "headline": "TextComponent",
+    "columns": [
+      "ImageColumns"
+    ]
+  },
+  "PremiumDualImageTextModule": {
+    "headline": "TextComponent",
+    "columns": [
+      "ImageColumns"
+    ]
+  },
+  "ImageCarouselPanel": {
+    "title": "TextComponent",
+    "buttonText": "TextComponent",
+    "asin": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "ImageCarouselPanels": {
+    "imagePanel": "ImageCarouselPanel"
+  },
+  "PremiumImageCarouselModule": {
+    "headline": "TextComponent",
+    "footer": "ParagraphComponent",
+    "carouselCards": [
+      "ImageCarouselPanels"
+    ]
+  },
+  "NavigationCarouselPanel": {
+    "title": "TextComponent",
+    "navText": "TextComponent",
+    "subtitle": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "NavigationCarouselPanels": {
+    "navigationPanel": "NavigationCarouselPanel"
+  },
+  "PremiumNavigationCarouselModule": {
+    "carouselCards": [
+      "NavigationCarouselPanels"
+    ]
+  },
+  "RegimenCarouselPanel": {
+    "title": "TextComponent",
+    "navText": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "RegimenCarouselPanels": {
+    "regimenPanel": "RegimenCarouselPanel"
+  },
+  "PremiumRegimenCarouselModule": {
+    "headline": "TextComponent",
+    "carouselCards": [
+      "RegimenCarouselPanels"
+    ]
+  },
+  "ThreeColumnComparisonProduct": {
+    "productTitle": "TextComponent",
+    "productAsin": "TextComponent"
+  },
+  "MetricValueItem": {
+    "metricName": "TextComponent",
+    "metricValue": "ParagraphComponent"
+  },
+  "ThreeColumnComparisonRow": {
+    "metricValues": [
+      "MetricValueItem"
+    ]
+  },
+  "PremiumThreeColumnComparisonModule": {
+    "headline": "TextComponent",
+    "comparisonProducts": [
+      "ThreeColumnComparisonProduct"
+    ],
+    "comparisonRows": [
+      "ThreeColumnComparisonRow"
+    ]
+  },
+  "ComparisonProduct": {
+    "productTitle": "TextComponent",
+    "productAsin": "TextComponent"
+  },
+  "ComparisonProducts": {
+    "comparisonProduct": "ComparisonProduct"
+  },
+  "ComparisonFields": {
+    "comparisonField": "PlainTextItem"
+  },
+  "ComparisonRow": {
+    "metricName": "TextComponent",
+    "comparisonType": "TextComponent",
+    "additionalInfo": "TextComponent",
+    "comparisonFields": [
+      "ComparisonFields"
+    ]
+  },
+  "ComparisonMetrics": {
+    "comparisonRow": "ComparisonRow"
+  },
+  "PremiumComparisonCarouselModule": {
+    "headline": "TextComponent",
+    "comparisonProducts": [
+      "ComparisonProducts"
+    ],
+    "comparisonMetrics": [
+      "ComparisonMetrics"
+    ]
+  },
+  "PremiumComparisonScrollerModule": {
+    "headline": "TextComponent",
+    "comparisonProducts": [
+      "ComparisonProducts"
+    ],
+    "comparisonRows": [
+      "ComparisonMetrics"
+    ]
+  },
+  "ImageHotSpot": {
+    "title": "TextComponent",
+    "description": "TextComponent",
+    "xCoordinate": "TextComponent",
+    "yCoordinate": "TextComponent"
+  },
+  "ImageHotSpots": {
+    "imageHotSpot": "ImageHotSpot"
+  },
+  "PremiumHotspotImageModule": {
+    "hotSpots": [
+      "ImageHotSpots"
+    ]
+  },
+  "ImageTextHotSpot": {
+    "title": "TextComponent",
+    "xCoordinate": "TextComponent",
+    "yCoordinate": "TextComponent"
+  },
+  "ImageTextHotSpots": {
+    "imageTextHotSpot": "ImageTextHotSpot"
+  },
+  "PremiumHotspotImageTextModule": {
+    "headline": "TextComponent",
+    "mainDescription": "ParagraphComponent",
+    "hotSpots": [
+      "ImageTextHotSpots"
+    ]
+  },
+  "Faq": {
+    "question": "ParagraphComponent",
+    "answer": "ParagraphComponent"
+  },
+  "Faqs": {
+    "faq": "Faq"
+  },
+  "PremiumFaqModule": {
+    "colorType": "ColorType",
+    "faqs": [
+      "Faqs"
+    ]
+  },
+  "TechSpec": {
+    "specKey": "TextComponent",
+    "specValue": "TextComponent"
+  },
+  "TechSpecs": {
+    "techSpec": "TechSpec"
+  },
+  "PremiumTechSpecsModule": {
+    "headline": "TextComponent",
+    "techSpecs": [
+      "TechSpecs"
+    ]
+  },
+  "PremiumVideoTextModule": {
+    "positionType": "PositionType",
+    "title": "TextComponent",
+    "headline": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "PremiumHeroVideoModule": {
+    "headline": "TextComponent",
+    "footer": "ParagraphComponent"
+  },
+  "VideoImageCarouselPanel": {
+    "title": "TextComponent",
+    "positionType": "PositionType",
+    "subheadline": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "VideoImageCarouselPanels": {
+    "videoCarouselPanel": "VideoImageCarouselPanel"
+  },
+  "PremiumVideoImageCarouselModule": {
+    "headline": "TextComponent",
+    "carouselCards": [
+      "VideoImageCarouselPanels"
+    ]
+  },
+  "BrandStoryImageWithLogoModule": {
+    "title": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "AsinImage": {
+    "productAsin": "TextComponent"
+  },
+  "AsinImages": {
+    "asinImage": "AsinImage"
+  },
+  "BrandStoryFourAsinModule": {
+    "title": "TextComponent",
+    "brandStoreId": "TextComponent",
+    "asinImages": [
+      "AsinImages"
+    ]
+  },
+  "BrandStoryMediaAssetModule": {
+    "title": "TextComponent",
+    "description": "ParagraphComponent"
+  },
+  "BrandStoryAboutModule": {
+    "title": "TextComponent",
+    "slogan": "ParagraphComponent"
+  },
+  "QuestionAnswerPair": {
+    "question": "TextComponent",
+    "answer": "ParagraphComponent"
+  },
+  "QuestionAnswerPairs": {
+    "questionAnswerPair": "QuestionAnswerPair"
+  },
+  "BrandStoryQuestionsModule": {
+    "questionAnswerPairs": [
+      "QuestionAnswerPairs"
+    ]
+  },
+  "ContentModule": {
+    "contentModuleType": "ContentModuleType",
+    "standardCompanyLogo": "StandardCompanyLogoModule",
+    "standardComparisonTable": "StandardComparisonTableModule",
+    "standardFourImageText": "StandardFourImageTextModule",
+    "standardFourImageTextQuadrant": "StandardFourImageTextQuadrantModule",
+    "standardHeaderImageText": "StandardHeaderImageTextModule",
+    "standardImageSidebar": "StandardImageSidebarModule",
+    "standardImageTextOverlay": "StandardImageTextOverlayModule",
+    "standardMultipleImageText": "StandardMultipleImageTextModule",
+    "standardProductDescription": "StandardProductDescriptionModule",
+    "standardSingleImageHighlights": "StandardSingleImageHighlightsModule",
+    "standardSingleImageSpecsDetail": "StandardSingleImageSpecsDetailModule",
+    "standardSingleSideImage": "StandardSingleSideImageModule",
+    "standardTechSpecs": "StandardTechSpecsModule",
+    "standardText": "StandardTextModule",
+    "standardThreeImageText": "StandardThreeImageTextModule",
+    "premiumImageText": "PremiumImageTextModule",
+    "premiumText": "PremiumTextModule",
+    "premiumFullBackgroundText": "PremiumFullBackgroundTextModule",
+    "premiumFullBackgroundImage": "PremiumFullBackgroundImageModule",
+    "premiumFourColumnImages": "PremiumFourColumnImagesModule",
+    "premiumDualImageText": "PremiumDualImageTextModule",
+    "premiumImageCarousel": "PremiumImageCarouselModule",
+    "premiumNavigationCarousel": "PremiumNavigationCarouselModule",
+    "premiumRegimenCarousel": "PremiumRegimenCarouselModule",
+    "premiumThreeColumnComparison": "PremiumThreeColumnComparisonModule",
+    "premiumComparisonCarousel": "PremiumComparisonCarouselModule",
+    "premiumComparisonScroller": "PremiumComparisonScrollerModule",
+    "premiumHotspotImage": "PremiumHotspotImageModule",
+    "premiumHotspotImageText": "PremiumHotspotImageTextModule",
+    "premiumFaq": "PremiumFaqModule",
+    "premiumTechSpecs": "PremiumTechSpecsModule",
+    "premiumVideoText": "PremiumVideoTextModule",
+    "premiumHeroVideo": "PremiumHeroVideoModule",
+    "premiumVideoImageCarousel": "PremiumVideoImageCarouselModule",
+    "brandStoryImageWithLogo": "BrandStoryImageWithLogoModule",
+    "brandStoryFourAsin": "BrandStoryFourAsinModule",
+    "brandStoryMediaAsset": "BrandStoryMediaAssetModule",
+    "brandStoryAbout": "BrandStoryAboutModule",
+    "brandStoryQuestions": "BrandStoryQuestionsModule"
+  }
+}
