@@ -12,10 +12,10 @@ Agent roster never terminates or pauses an agent by itself.`;
 const manifest: PaperclipPluginManifestV1 = {
   id: "agent-roster",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Agent roster",
   description: "Shows which agents in a company are idle or barely used and what each one costs, so the board can pause, remove or knowingly keep them.",
-  author: "Bryon Stout",
+  author: "Paperclip contributors",
   categories: ["ui"],
   setupInstructions: SETUP_INSTRUCTIONS,
   capabilities: [

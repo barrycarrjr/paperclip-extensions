@@ -6,6 +6,8 @@ Agent roster shows, for one company at a time, which agents are idle or barely u
 
 ## Recent changes
 
+- **v0.1.1**: Set the author to "Paperclip contributors". No functional changes.
+
 - **v0.1.0**: Initial roster page, sidebar item and dashboard widget. Idle, Low use, Active, New and Kept verdicts; Pause for instance admins; Keep marks with a note.
 
 ## Why
