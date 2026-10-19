@@ -574,7 +574,7 @@ function FormStep(p: FormStepProps) {
       <p style={subtle}>
         First, create an OAuth 2.0 Client of type <strong>"Desktop app"</strong> in
         Google Cloud Console (Credentials → Create credentials). Enable the Calendar / Tasks /
-        Sheets / Drive APIs in that project. Paste the client ID/secret below.
+        Docs / Sheets / Drive APIs in that project. Paste the client ID/secret below.
       </p>
 
       <div style={{ ...stack, marginTop: 14 }}>

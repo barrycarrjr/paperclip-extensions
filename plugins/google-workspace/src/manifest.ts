@@ -2,12 +2,12 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import { ALL_TOOLS } from "./schemas.js";
 
 const PLUGIN_ID = "google-workspace";
-const PLUGIN_VERSION = "0.3.30";
+const PLUGIN_VERSION = "0.3.31";
 const SETUP_ROUTE = "setup-account";
 
 const SETUP_INSTRUCTIONS = `# Setup - Google Workspace
 
-Connect a Google account so agents can read and write Calendar events, Tasks, Sheets, and Drive files. Each Google account goes through a one-time OAuth consent flow. Reckon on **about 20 minutes** for first-time setup (most of that is GCP).
+Connect a Google account so agents can read and write Calendar events, Tasks, Docs, Sheets, and Drive files. Each Google account goes through a one-time OAuth consent flow. Reckon on **about 20 minutes** for first-time setup (most of that is GCP).
 
 ---
 
@@ -44,6 +44,7 @@ In the GCP project, go to **APIs & Services → Library** and enable:
 | Google Calendar API | \`gcal_*\` tools |
 | Tasks API | \`gtasks_*\` tools |
 | Google Sheets API | \`gsheet_*\` tools |
+| Google Docs API | \`gdoc_*\` tools |
 | Google Drive API | \`gdrive_*\` tools |
 | People API | \`gcontacts_*\` tools (if used) |
 
@@ -132,7 +133,7 @@ const manifest: PaperclipPluginManifestV1 & {
   displayName: "Google Workspace",
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
-    "Calendar, Tasks, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies. Setup wizard at /<company>/setup-account walks you through adding an account end-to-end (creates secrets, runs Desktop app OAuth consent, registers the account) - no terminal required.",
+    "Calendar, Tasks, Docs, Sheets, and Drive operations as agent tools. One OAuth flow per Google account; multi-account; per-company isolation via allowedCompanies. Setup wizard at /<company>/setup-account walks you through adding an account end-to-end (creates secrets, runs Desktop app OAuth consent, registers the account) - no terminal required.",
   author: "Barry Carr & Tony Allard",
   categories: ["automation", "connector"],
   capabilities: [

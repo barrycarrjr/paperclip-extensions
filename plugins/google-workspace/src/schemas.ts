@@ -7,8 +7,12 @@ export interface ToolSchema {
   name: string;
   displayName: string;
   description: string;
+  writes?: boolean;
+  actionType?: "change_files";
+  executionTimeoutMs?: number;
   parametersSchema: {
     type: "object";
+    additionalProperties?: boolean;
     properties: Record<string, unknown>;
     required?: string[];
   };
@@ -503,10 +507,68 @@ export const AUTH_TOOLS: ToolSchema[] = [
   },
 ];
 
+const exactId = { type: "string", pattern: "^[A-Za-z0-9_-]{1,200}$", description: "Exact Google file ID, never a URL, local path or copied document." };
+const tabId = { type: "string", pattern: "^[A-Za-z0-9_.-]{1,200}$", description: "Exact tab ID returned by gdoc_read, such as t.0. Required when the document has multiple tabs." };
+const revisionId = { type: "string", minLength: 1, maxLength: 500, description: "Exact revisionId from gdoc_read. A changed document is refused; no automatic retry." };
+const textParam = { type: "string", minLength: 1, maxLength: 20000, description: "Plain text. Google inherits nearby formatting. Newlines create paragraphs; Markdown is not parsed." };
+const page = {
+  offset: { type: "integer", minimum: 0, description: "UTF-16 offset in returned text, not a Google document index. Later pages require the previous snapshot token or revision/version." },
+  maxChars: { type: "integer", minimum: 2, maximum: 20000, default: 10000 },
+};
+export const DOCS_TOOLS: ToolSchema[] = [
+  {
+    name: "gdoc_read", displayName: "Read Google Doc", writes: false, executionTimeoutMs: 30000,
+    description: "Read one existing Google Doc by its exact Drive file ID. Returns tab choices or paginated body text, structured headings and paragraph indices. Includes table text; flags unsupported elements and suggestions. Never creates a copy.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { account: accountParam, documentId: exactId, tabId, requiredRevisionId: revisionId,
+      requiredReadToken: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Exact readToken from the previous page with the same selected tabId. Pins full visible text, paragraph data and metadata before pagination, excluding temporary image URLs. Also usable without editor revision IDs." }, ...page }, required: ["documentId"] },
+  },
+  {
+    name: "gdoc_insert_text", displayName: "Insert Google Doc text", actionType: "change_files", executionTimeoutMs: 30000,
+    description: "Insert plain text at an existing paragraph's UTF-16 Google index. Requires mutation switch, current revision and explicit tab for multi-tab docs. Suggestions and unsafe indices are refused.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { account: accountParam, documentId: exactId, tabId, requiredRevisionId: revisionId, text: textParam, index: { type: "integer", minimum: 1 } }, required: ["documentId", "requiredRevisionId", "text", "index"] },
+  },
+  {
+    name: "gdoc_append_text", displayName: "Append Google Doc text", actionType: "change_files", executionTimeoutMs: 30000,
+    description: "Append plain text before the selected tab body's final newline, preserving the exact document ID. Requires mutation switch and current revision. Suggestions are refused.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { account: accountParam, documentId: exactId, tabId, requiredRevisionId: revisionId, text: textParam }, required: ["documentId", "requiredRevisionId", "text"] },
+  },
+  {
+    name: "gdoc_replace_text", displayName: "Replace Google Doc text range", actionType: "change_files", executionTimeoutMs: 30000,
+    description: "Replace one exact plain-text range within a paragraph, excluding its final newline. Both indices are Google UTF-16 indices from gdoc_read, not page offsets. Requires expectedText match and current revision. No whole-document rewrite or unrestricted batch requests.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { account: accountParam, documentId: exactId, tabId, requiredRevisionId: revisionId, text: textParam, expectedText: { type: "string", minLength: 1, maxLength: 20000 }, startIndex: { type: "integer", minimum: 1 }, endIndex: { type: "integer", minimum: 2, description: "Exclusive end index." } }, required: ["documentId", "requiredRevisionId", "text", "expectedText", "startIndex", "endIndex"] },
+  },
+];
+
+export const DRIVE_CONTENT_TOOLS: ToolSchema[] = [
+  {
+    name: "gdrive_read_file", displayName: "Read Drive file content", writes: false, executionTimeoutMs: 30000,
+    description: "Read an existing file by exact ID, default 32 KiB, configurable up to 1 MiB. Blobs use media download; native files use an allowed export. Returns paginated UTF-8 text or bounded whole-file base64. Folders and shortcut targets are not followed. Use gdoc_read for structured headings and gsheet_read for sheet tabs.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: {
+      account: accountParam, fileId: exactId, ...page,
+      encoding: { type: "string", enum: ["text", "base64"], description: "Defaults to text for textual MIME types, otherwise base64. Text must be valid UTF-8." },
+      exportMimeType: { type: "string", enum: ["text/plain", "text/markdown", "text/csv", "text/tab-separated-values", "application/pdf", "image/png", "image/svg+xml"], description: "Native files only. Docs: plain/markdown/PDF; Slides: plain/PDF; Sheets: CSV/TSV (first sheet only) or PDF; Drawings: PNG/SVG/PDF. Docs and Slides default to plain text; other native files require explicit choice." },
+      maxBytes: { type: "integer", minimum: 1, maximum: 1048576, default: 32768, description: "Streamed byte cap. Explicitly raising this can return up to about 1.4 MiB of base64 JSON." },
+      requiredVersion: { type: "string", pattern: "^[0-9]{1,30}$", description: "Version from the previous page. Required for offset greater than zero." },
+    }, required: ["fileId"] },
+  },
+  {
+    name: "gdrive_rename_file", displayName: "Rename Drive file", actionType: "change_files", executionTimeoutMs: 30000,
+    description: "Rename one exact Drive file ID. Only its name is patched; parents, contents and permissions are not requested for update. Requires mutation switch.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { account: accountParam, fileId: exactId, name: { type: "string", minLength: 1, maxLength: 255 } }, required: ["fileId", "name"] },
+  },
+  {
+    name: "gdrive_move_file", displayName: "Move Drive file", actionType: "change_files", executionTimeoutMs: 30000,
+    description: "Move one exact file ID from expectedParentId into an existing destinationFolderId with one atomic PATCH. Refuses unknown/multiple/mismatched parents and folder trees. Never deletes or trashes. Moving can change inherited folder access. Requires mutation switch.",
+    parametersSchema: { type: "object", additionalProperties: false, properties: { account: accountParam, fileId: exactId, expectedParentId: exactId, destinationFolderId: exactId }, required: ["fileId", "expectedParentId", "destinationFolderId"] },
+  },
+];
+
 export const ALL_TOOLS: ToolSchema[] = [
   ...AUTH_TOOLS,
   ...CALENDAR_TOOLS,
   ...TASKS_TOOLS,
   ...SHEETS_TOOLS,
   ...DRIVE_TOOLS,
+  ...DOCS_TOOLS,
+  ...DRIVE_CONTENT_TOOLS,
 ];
