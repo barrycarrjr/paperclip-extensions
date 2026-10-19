@@ -353,8 +353,8 @@ packages:
     os: [win32]
 
   '@paperclipai/plugin-sdk@file:../../vendor/sdk/plugin-sdk.tgz':
-    resolution: {integrity: sha512-ixI25q49scJl55OYgi1rcRrOAhF6UPTp6zcV6HGDLKlyCBlX2YbyXqpPHuNiaJ+yPGflgJLTGwycMulpV2KFQw==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
-    version: 1.0.0
+    resolution: {integrity: sha512-9VMAG7STAIk0jUYmv1HCvYhi5eQ23fmWv+IHsTsMvzkfE6uRk6JQOicHhIntyVH4oUOaqNIMZQgHOZn3krIEpg==, tarball: file:../../vendor/sdk/plugin-sdk.tgz}
+    version: 1.0.0-vendor.b9beb79884a8
     hasBin: true
     peerDependencies:
       react: '>=18'
@@ -363,8 +363,8 @@ packages:
         optional: true
 
   '@paperclipai/shared@file:../../vendor/sdk/shared.tgz':
-    resolution: {integrity: sha512-OP5PhwTv57qMxJ9ITHbCcPGFOFiPUvmVufVeXFk0NFIOuwkfAGQE5fcU6xN/DC+VxNkry/kACCK4YqLzdXuthA==, tarball: file:../../vendor/sdk/shared.tgz}
-    version: 0.3.1
+    resolution: {integrity: sha512-ReoIgXoqNBgs+Tl4s6NQ7zceSZQl+T4SIiw3H1d1L0Br8tvkKicYExWjcU4jDH8wsShkGxfiwh8rqhdYZxcMJQ==, tarball: file:../../vendor/sdk/shared.tgz}
+    version: 0.3.1-vendor.847c3f5c72d4
 
   '@types/node@24.19.2':
     resolution: {integrity: sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==}
