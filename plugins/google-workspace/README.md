@@ -1,10 +1,12 @@
 # google-workspace plugin
 
-Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. Multi-account, per-company isolation, OAuth-driven.
+Calendar, Tasks, Docs, Sheets, and Drive operations exposed as Paperclip agent tools. Multi-account, per-company isolation, OAuth-driven.
 
 > **Install + setup walkthrough** lives in-app: open the plugin's settings page in Paperclip and follow the **Setup** tab - including the in-browser **Connect a Google account** wizard that walks the entire OAuth flow with no terminal needed. This README is an overview of capabilities and a reference for tool/event shapes.
 
 ## Recent changes
+
+- **v0.3.31** - Add exact-ID Google Docs text and heading reads, revision-protected insert/append/range replacement, bounded Drive content reads and native exports, rename and file moves with preflight version checks. All new mutations declare `actionType: change_files` for host approval policy and omit host repeat caching. Docs retries require the original revision to remain current; rename/move allow intentional repeated destinations. Keep existing tools, OAuth scopes and Desktop connection flow. No Drive delete, trash, document copies or local link-file mirrors.
 
 - **v0.3.30** - Replaces unsupported device consent with Desktop app loopback authorization, including PKCE, state validation, expiring one-use sessions, and a private callback fallback.
 
@@ -96,6 +98,13 @@ Calendar, Tasks, Sheets, and Drive operations exposed as Paperclip agent tools. 
 | `gdrive_get_file_metadata` | Drive metadata for a single file. | no |
 | `gdrive_create_folder` | Create a Drive folder. | yes |
 | `gdrive_upload_file` | Upload a file (inline base64 or `localPath`). | yes |
+| `gdoc_read` | Read selected-tab body text, structured headings, paragraph indices and revision; list tabs when a choice is needed. | no |
+| `gdoc_insert_text` | Insert plain text at a paragraph index with a required current revision. | yes |
+| `gdoc_append_text` | Append plain text before the selected tab body's final newline with a required current revision. | yes |
+| `gdoc_replace_text` | Replace one exact paragraph text range after matching its revision and expected text. | yes |
+| `gdrive_read_file` | Read bounded UTF-8 text or base64 bytes by exact ID, exporting supported native formats. | no |
+| `gdrive_rename_file` | Patch only a file's name, retaining its ID and parents. | yes |
+| `gdrive_move_file` | Move one file from an explicitly expected parent to a validated folder in one PATCH. | yes |
 
 Mutation tools require the **"Allow create/update/delete tools"** master switch on the plugin settings page (off by default - fresh installs are read-only).
 
@@ -119,7 +128,7 @@ Once per Google account family (your personal, an LLC's, etc.). One OAuth client
 
 1. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials).
 2. Pick (or create) a project. The project doesn't have to match your Workspace org - it just owns the OAuth client.
-3. **Enable APIs** (APIs & Services → Library): Calendar API, Tasks API, Sheets API, Drive API.
+3. **Enable APIs** (APIs & Services, Library): Calendar API, Tasks API, Docs API, Sheets API, Drive API.
 4. **Configure OAuth consent screen** - pick "External" (unless you're using a Google Workspace and want "Internal"). Add your email under "Test users" while the app is in test mode. Google may require verification for External apps using sensitive or restricted scopes. In Testing status, add each authorizing email as a test user; these grants normally expire after seven days. Internal apps are limited to their Workspace organization.
 5. **Create OAuth 2.0 Client ID**:
    - Application type: **Desktop app** for both the wizard and CLI helper. The wizard chooses a random local port; Desktop clients need no redirect URI allowlist. TVs and Limited Input devices cannot request the Calendar, Tasks, Sheets and full Drive scopes used here.
@@ -167,6 +176,59 @@ The plugin defaults to:
 - `https://www.googleapis.com/auth/userinfo.email` and `userinfo.profile` (for `google_test_auth`)
 
 If you don't need Drive, set `scopes` on the account to a narrower list and re-run the grant script with `GOOGLE_SCOPES="space,separated,scope,urls"` to obtain a fresh refresh token bound to those scopes. The new refresh token replaces the old one - update the secret value.
+
+## Docs and Drive content requirements
+
+Enable the Google Docs API in the account's existing Google Cloud project before using `gdoc_*`. The existing full Drive grant authorizes Docs reads and writes; adding a `documents` scope is not required. Restricted grants still need an API-supported scope and file access: Docs reads accept `documents.readonly`, `documents`, `drive.readonly`, `drive` or `drive.file`; edits accept `documents`, `drive` or `drive.file`. `drive.file` only covers eligible app-authorized files. These tools never request extra consent, edit saved scopes or replace credentials. A forbidden response requires the operator to review API enablement, file permissions and the existing grant.
+
+Every new tool requires a host company context and one unambiguous configured account allowed for that company. Missing or empty allowlists deny access before resolving credentials. Explicit portfolio-wide `*` retains its existing meaning. Credential references, company access and the mutation switch are rechecked throughout a call. No new UI or file store is introduced.
+
+### Docs text and revisions
+
+Call `gdoc_read` with the exact Drive file ID as `documentId`. If `requiresTabSelection` is true, choose a returned `tabId` and read again. Body text includes table cells and generated table-of-contents text; headings preserve their named style, heading ID and Google indices. Headers, footers, footnotes, comments and images are not rendered. Unsupported inline elements appear as an object-replacement character and increment `unsupportedElements`; their paragraphs cannot be edited through these tools. Reads request `DEFAULT_FOR_CURRENT_ACCESS` and return Google's applied `suggestionsViewMode`. Viewers receive `PREVIEW_WITHOUT_SUGGESTIONS`; hidden suggestions cannot be detected by `hasSuggestions`. Commenters and editors normally receive inline suggestions. Edits explicitly fetch `SUGGESTIONS_INLINE` and refuse visible suggestions; resolve them before editing.
+
+Reads are capped at 2 MiB of provider JSON. The entire serialized tool result is capped at 64 KiB, including repeated paragraph/heading text, escaped characters and tab metadata. Each page includes at most 100 intersecting paragraphs and their headings. Text pages request up to 10,000 UTF-16 units by default, with a maximum of 20,000; the result budget may shorten them further. Metadata that cannot fit fails explicitly. A `nextOffset` is a returned-text offset, distinct from Google paragraph indices. Pass it as `offset` with the previous `readToken` as `requiredReadToken` and keep the same selected `tabId`. The token hashes the selected tab's full visible text and paragraph data before pagination, including indices, styles, editability, unsupported-element count and suggestion presence, plus the tab list, document ID, title, available revision and applied suggestions view, with canonical object keys. Temporary image/chart URLs and other unrendered response fields are excluded. Changed visible data or tab selection fails instead of mixing pages. It works for viewers and commenters without additional Drive scopes. Editors may continue to use the previous `revisionId` as `requiredRevisionId`. A later page may end without covering earlier text: `complete` means this page reaches the end. `paragraphs[].textStartIndex` identifies the first returned character when editable, including a clipped paragraph. Heading text can also be clipped by pagination; continue from `nextOffset` without skipping text.
+
+All edits require editor access and `requiredRevisionId` from a fresh read. Google only returns revision IDs to editors; a read token does not grant edit access or substitute for an editor revision. A missing editor revision or forbidden pre-edit read produces an explicit edit-access error. Google enforces the revision in `writeControl.requiredRevisionId` so concurrent changes reject the entire operation. `gdoc_insert_text` takes a Google `index` inside plain paragraph text; `gdoc_append_text` targets the chosen tab's body end. `gdoc_replace_text` takes `startIndex`, exclusive `endIndex`, `expectedText` and replacement `text`. It replaces exactly one nonempty range inside one plain paragraph, excluding its final newline, with one atomic delete-and-insert request. It does not perform an unrestricted batch update, whole-document rewrite or global search-and-replace. Indices use UTF-16 units and cannot split a Unicode character. Each edit inserts 1 to 20,000 units; empty replacement text is not supported.
+
+Inserted text inherits nearby formatting according to Google Docs rules. Markdown is plain text, not a request to create headings; existing paragraph styles remain. Formatting inside replaced text may inherit its neighbors rather than preserve each removed text run. Characters that Google would silently strip are rejected. All writes remain subject to the plugin mutation switch and the host's `change_files` approval policy. Attempts are logged before writing; a failed completion log returns a success warning so callers do not repeat a completed operation. Docs edits omit `writes: true` and bypass host repeat caching while retaining `actionType: change_files` approval. Failures before dispatch throw a sanitized RPC error; failures after dispatch return a sanitized error, including uncertain outcomes. Remote writes are never automatically retried. After any failed or uncertain write, read the remote document before deciding to retry. If the cause is fixed and the original revision is unchanged, identical arguments can be submitted again. If a write succeeded but its response was lost, the changed revision refuses those arguments without a second edit; Google's atomic required-revision check also refuses a stale revision if preflight reads race. A repeat after confirmed success is refused rather than replaying a cached success. Do not substitute a newer revision merely to repeat an uncertain edit; inspect the text and decide whether any edit remains necessary.
+
+### Drive content and file moves
+
+`gdrive_read_file` reads the exact `fileId`, checks download capability and verifies the same file version before and after downloading. Ordinary files use `files.get` with `alt=media`; supported Google-native files use `files.export`. It never follows shortcuts, local `.gdoc` files or provider download redirects. The default `maxBytes` is 32 KiB, enforced on streamed bytes even without a reliable Content-Length. Callers may explicitly choose 1 through 1,048,576 bytes (1 MiB). Base64 expands the bytes, so the default binary result is about 44 KiB and an explicit maximum read can return about 1.4 MiB of JSON. Larger content fails without returning partial data. Each provider read is limited to ten seconds, within a 25-second call budget; host calls and an underlying OAuth refresh may finish later, but cannot dispatch a file request after that budget expires.
+
+Text must be valid UTF-8 and is paginated with `offset`, `maxChars`, `nextOffset` and `requiredVersion`, using the same 10,000 default and 20,000 maximum UTF-16 page sizes. Binary files return a whole bounded base64 `content` string; they do not use text pagination. Native export choices:
+
+| Native type | Supported exports | Default |
+|---|---|---|
+| Google Docs | `text/plain`, `text/markdown`, `application/pdf` | `text/plain` |
+| Google Sheets | `text/csv`, `text/tab-separated-values`, `application/pdf` | Explicit choice required |
+| Google Slides | `text/plain`, `application/pdf` | `text/plain` |
+| Google Drawings | `image/png`, `image/svg+xml`, `application/pdf` | Explicit choice required |
+
+CSV and TSV export only the first sheet, explicitly labeled in the result. Use the existing `gsheet_read` tool for a particular sheet and range, or `gdoc_read` for structured headings. Other native formats fail explicitly. PDF, PNG and other binary formats are bytes, not extracted text. These bounded exports do not create or store another Drive document.
+
+`gdrive_rename_file` patches only `name`. `gdrive_move_file` requires `expectedParentId` and `destinationFolderId`; the current parent must match the expected source and the destination must be an existing untrashed folder. It refuses parentless files, multiple parents and folder-tree moves. One PATCH adds the destination while removing only the expected source; an already-arrived file returns `unchanged`. The original file ID remains unchanged. Both tools recheck the file version immediately before the PATCH and refuse a changed or missing version. Google's Drive v3 metadata-update reference does not document an `If-Match` contract, so these tools do not send that header or claim server-enforced race protection. A concurrent change between the last GET and PATCH can still be overwritten or alter the move outcome. These destination-setting tools retain `actionType: change_files` approval but omit host repeat caching so rename A, rename B, rename A and move out, back, out each execute. After an uncertain response, read the exact file before deciding to retry. Moving a file can change inherited folder access. There is no Drive delete or trash tool; archival remains an operator-controlled move workflow.
+
+Primary API references: [Docs get and authorization scopes](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/get), [Docs revision control](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/batchUpdate), [text requests, UTF-16 indices and formatting](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/request), [Drive downloads and exports](https://developers.google.com/workspace/drive/api/guides/manage-downloads), [export formats](https://developers.google.com/workspace/drive/api/guides/ref-export-formats), [Drive metadata patches](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update) and [moving files between folders](https://developers.google.com/workspace/drive/api/guides/folder).
+
+## Official Google Workspace MCP evaluation (2026-10-18)
+
+The [May 1 announcement](https://workspaceupdates.googleblog.com/2026/05/agent-tools-and-security-updates-for-workspace-developers.html) introduced the public preview. Current primary references list [Docs](https://developers.google.com/workspace/docs/api/reference/mcp) and [Sheets](https://developers.google.com/workspace/sheets/api/reference/mcp) servers in addition to [Drive](https://developers.google.com/workspace/drive/api/reference/mcp). The earlier product list is no longer complete.
+
+Unauthenticated `tools/list` requests to all three public `/mcp/v1` endpoints returned HTTP 200 on this date. Docs advertised `read_doc` and `update_doc`; Sheets advertised six tools for values, formulas, spreadsheet metadata/updates and dimension insertion. Drive advertised eight tools, including `read_file_content` and `download_file_content`, with no rename or move tool. Discovery is not an account connection or file-access test. Google's [Drive content reference](https://developers.google.com/workspace/drive/api/reference/mcp/tools_list/read_file_content) says its natural-language output may be incomplete for large files and can change format; it is not a stable structured-heading contract.
+
+No authenticated account-specific MCP test was run. Missing access: confirmed [Developer Preview Program](https://developers.google.com/workspace/preview) membership for a designated test account and Cloud project, enabled product/MCP services, a separate OAuth client configured for AI-agent use, consent and an authorized synthetic test file. The [setup guide](https://developers.google.com/workspace/guides/configure-mcp-servers) supports External consent configuration, but that alone does not establish consumer-account preview eligibility. Consumer compatibility and this operator's file access remain unverified. No live credentials were inspected, permissions broadened or External MCP server registered.
+
+The plugin additions address only confirmed gaps in this plugin while preserving the existing connection and Sheets/Drive tools. Once an operator can test the official service, evaluate it through a separately approved External MCP connection, initially with read-only synthetic fixtures. Do not reuse or replace this plugin's OAuth client automatically. Any live integration or write acceptance remains separate from the mocked API and isolated-host verification here.
+
+## Focused verification
+
+From `plugins/google-workspace`, run `pnpm test`, `pnpm typecheck`, `pnpm build`, then `pnpm test:worker`. Dependencies can be installed with `pnpm install --frozen-lockfile --ignore-scripts`; no SDK repack or lockfile update is needed.
+
+Tests use fake credentials and synthetic API data. They cover company/account denial before credentials, account cache separation and revocation, exact HTTP URLs/methods/bodies, viewer/commenter pagination, applied suggestion views, snapshot and revision guards, complete serialized response budgets, giant paragraphs, formatting boundaries, native exports and binary handling, streamed read limits, redacted failures, audit failures, pre-send retry versus uncertain post-send repeat protection, repeated rename/move sequences, preflight version checks, existing Sheets/Drive regression, and loopback HTTP dispatch. The built-worker check uses an isolated synthetic RPC host, denies network access and verifies registration, health, company denial and pre-send RPC error propagation with mutations disabled. Neither test is live Google account acceptance or proof of the full host approval UI.
+
+Operator acceptance still requires the intended account's connection, API enablement and a separately authorized synthetic file: read headings/tabs, edit with a current revision, verify stale-revision rejection, rename without changing ID, then move between disposable test folders and verify parents and effective access. Perform no live mutation without that separate authorization.
 
 ## Sample tool calls
 

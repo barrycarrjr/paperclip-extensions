@@ -88,7 +88,7 @@ test("wizard, manifest, README and CLI agree on Desktop app, routes, secret name
     readFile(new URL("./worker.ts", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
-  assert.equal(manifest.version, "0.3.29");
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   assert.equal(JSON.parse(packageJson).version, manifest.version);
   assert.equal(manifest.ui!.slots![0].routePath, "setup-account");
   const configSchema = manifest.instanceConfigSchema as { properties: { allowMutations: { default: boolean } } };
@@ -104,6 +104,8 @@ test("wizard, manifest, README and CLI agree on Desktop app, routes, secret name
     assert.ok(!docs.includes("/<company>/plugins/google-workspace/setup-account"));
   }
   assert.ok(ui.includes('usePluginAction("oauth_start_loopback_flow")'));
+  assert.ok(ui.includes("Docs / Sheets / Drive APIs"));
+  assert.ok(manifest.setupInstructions!.includes("Google Docs API"));
   assert.ok(ui.includes('usePluginAction("oauth_submit_callback")'));
   assert.ok(ui.includes("allocateGoogleSecretNames(input.accountKey"));
   assert.ok(ui.includes("names.clientId") && ui.includes("names.clientSecret") && ui.includes("names.refreshToken"));
