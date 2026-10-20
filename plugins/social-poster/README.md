@@ -6,6 +6,8 @@ guardrails); optional Facebook scheduling.
 
 ## Recent changes
 
+- **v0.4.9**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.4.8** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.4.7** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

@@ -4,6 +4,8 @@ Paperclip plugin that exposes Audible/ACX audiobook publishing operations as age
 
 ## Recent changes
 
+- **v0.1.10**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.1.9** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.8** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

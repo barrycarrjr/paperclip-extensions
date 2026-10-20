@@ -200,6 +200,8 @@ into the current live instance merely to perform this check.
 
 ## Recent changes
 
+- **v0.2.1**: Release the company-restricted roster, costs, retained notes and confirmed pause controls while preserving the original migration and existing keep choices.
+
 - 0.2.0: combine the deployed Keep/Unkeep feature and unchanged `roster` storage
   with audited activity and costs, fixed rolling windows, optional Hand-off
   provenance and confirmed pauses. Preserve instance-admin-only Pause and

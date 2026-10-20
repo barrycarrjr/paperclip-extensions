@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "print-tools";
-const PLUGIN_VERSION = "0.1.28";
+const PLUGIN_VERSION = "0.1.29";
 
 const SETUP_INSTRUCTIONS = `# Setup — Print Tools
 

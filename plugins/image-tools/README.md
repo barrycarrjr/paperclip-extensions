@@ -12,6 +12,8 @@ per-provider `allowedCompanies`, generation gated by a cost switch.
 
 ## Recent changes
 
+- **v0.2.30**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.2.29** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.2.28** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

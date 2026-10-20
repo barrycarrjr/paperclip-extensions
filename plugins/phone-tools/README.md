@@ -132,6 +132,8 @@ Direct API: `GET /api/plugins/phone-tools/api/campaigns/portfolio-rollup?company
 
 ## Recent changes
 
+- **v0.7.19**: Replace the Place Call recipient example with a fictional name. No functional changes.
+
 - **v0.7.18** - Change the example in the Place Call recipient field to a made-up name. No functional changes.
 
 - **v0.7.17** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

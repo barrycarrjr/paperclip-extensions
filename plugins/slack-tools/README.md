@@ -13,6 +13,8 @@ Anchor use case: the daily CEO morning briefing arrives as a Slack DM via
 
 ## Recent changes
 
+- **v0.6.4**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.6.3** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.6.2** - Clippy sees images sent in a Slack DM. Image files (PNG, JPEG, GIF, WebP; up to 8 per message, about 7.5 MB each) are downloaded with the bot token and passed with the Clippy turn; other files keep the note that they cannot be opened. **Needs the `files:read` bot scope** (add it, then reinstall the Slack app) and a Paperclip server that accepts chat turn images (barrycarrjr/paperclip pull request 59). Without the scope, or on an older server, Clippy is told an image came and could not be opened, and the reason is logged once.

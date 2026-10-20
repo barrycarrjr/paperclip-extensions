@@ -4,6 +4,8 @@ A reusable Paperclip support plugin. It stores normalized support conversations 
 
 ## Recent changes
 
+- **v0.1.4**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.1.3** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.1.2** - Show an explicit setup notice and the generic IT catalog when the selected company has no support configuration, without loading any saved company records. Add a headset icon beside Support in the sidebar and render readable public error messages throughout the support dashboard. Configured companies retain their existing access checks; real fetch failures remain visible.

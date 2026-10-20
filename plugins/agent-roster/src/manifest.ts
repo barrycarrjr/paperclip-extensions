@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const manifest: PaperclipPluginManifestV1 = {
-  id: "agent-roster", apiVersion: 1, version: "0.2.0",
+  id: "agent-roster", apiVersion: 1, version: "0.2.1",
   displayName: "Agent roster",
   description: "Review agent activity and costs for one company and confirm reversible pauses.",
   author: "Paperclip contributors", categories: ["ui"],

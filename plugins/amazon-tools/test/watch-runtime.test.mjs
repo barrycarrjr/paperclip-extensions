@@ -17,7 +17,7 @@ test("built worker upgrades legacy configuration and runs both jobs through host
   const scratchRoot=path.resolve(ROOT,"../../.smoke-tests");await mkdir(scratchRoot,{recursive:true});const scratch=await mkdtemp(path.join(scratchRoot,"watch-union-"));
   await cp(path.join(ROOT,"dist"),path.join(scratch,"dist"),{recursive:true});await writeFile(path.join(scratch,"package.json"),JSON.stringify({type:"module"}));
   const manifest=(await import(pathToFileURL(path.join(scratch,"dist/manifest.js")).href)).default;
-  assert.equal(manifest.version,"0.3.0");assert.deepEqual(manifest.jobs.map(j=>[j.jobKey,j.schedule]),[["listing_watch_status","17 */6 * * *"],["listing_watch_content","43 7 * * *"]]);
+  assert.equal(manifest.version,"0.3.1");assert.deepEqual(manifest.jobs.map(j=>[j.jobKey,j.schedule]),[["listing_watch_status","17 */6 * * *"],["listing_watch_content","43 7 * * *"]]);
   const validators=process.env.AMAZON_HOST_SQL_VALIDATORS?await import(pathToFileURL(process.env.AMAZON_HOST_SQL_VALIDATORS).href):undefined;
   const pg=new PGlite();t.after(()=>pg.close());await pg.exec(`CREATE SCHEMA ${NS}`);
   for(const migration of ["0001_listing_watch.sql","0002_company_watch.sql"]){const sql=await readFile(path.join(ROOT,"migrations",migration),"utf8");for(const statement of sql.split(";").filter(s=>s.trim()))validators?.validatePluginMigrationStatement(statement,NS);await pg.exec(sql);}

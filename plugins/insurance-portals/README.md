@@ -8,6 +8,8 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.31**: Remove private sample details and include the reviewed cross-platform path and file-permission regression checks.
+
 - **v0.6.30** - Replace a sample street address in a code comment and set the author to "Paperclip contributors". No functional changes.
 
 - **v0.6.29** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

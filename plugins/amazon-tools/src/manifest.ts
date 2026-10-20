@@ -84,7 +84,7 @@ An unchanged limitation: a provider 429 with Retry-After above ten seconds block
 
 Ads uses separate authentication and remains phase 2. See README for exact endpoints, bounds and account prerequisites.`;
 const manifest: PaperclipPluginManifestV1 & { setupInstructions: string } = {
-  id: "amazon-tools", apiVersion: 1, version: "0.3.0", displayName: "Amazon Seller Tools",
+  id: "amazon-tools", apiVersion: 1, version: "0.3.1", displayName: "Amazon Seller Tools",
   description: "Company-scoped seller reads and Listing Watch via SP-API, plus governed allowlisted report generation.",
   author: "Paperclip contributors", categories: ["connector", "automation"], setupInstructions: SETUP,
   capabilities: ["agent.tools.register", "instance.settings.register", "secrets.read-ref", "http.outbound", "activity.log.write", "database.namespace.read", "database.namespace.write", "database.namespace.migrate", "jobs.schedule"],

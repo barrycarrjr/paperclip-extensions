@@ -6,6 +6,8 @@ Calendar, Tasks, Docs, Sheets, and Drive operations exposed as Paperclip agent t
 
 ## Recent changes
 
+- **v0.3.32**: Add checked Docs edits and Drive read, rename and move tools. Existing mutation settings and host approval still apply.
+
 - **v0.3.31** - Add exact-ID Google Docs text and heading reads, revision-protected insert/append/range replacement, bounded Drive content reads and native exports, rename and file moves with preflight version checks. All new mutations declare `actionType: change_files` for host approval policy and omit host repeat caching. Docs retries require the original revision to remain current; rename/move allow intentional repeated destinations. Keep existing tools, OAuth scopes and Desktop connection flow. No Drive delete, trash, document copies or local link-file mirrors.
 
 - **v0.3.30** - Replaces unsupported device consent with Desktop app loopback authorization, including PKCE, state validation, expiring one-use sessions, and a private callback fallback.

@@ -6,6 +6,8 @@ Hand-off turns a review of actual company work into individual job skills, histo
 
 ## Recent changes
 
+- **v0.1.3**: Fix job forms on plain HTTP and retain the complete reviewed worker regression coverage.
+
 - **v0.1.2** - Restores job details on HTTP installs without browser UUID support. Rehearsal and rebuild request IDs retain their keys for retries and change after successful saves.
 
 - **v0.1.1** - Adds the company-scoped Hand-off workflow, durable correction contracts, skill verification, run history, and work-audit templates.

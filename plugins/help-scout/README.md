@@ -13,6 +13,8 @@ gate.
 
 ## Recent changes
 
+- **v0.7.8**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.7.7** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
 
 - **v0.7.6** - Add opt-in scoped Support Desk observations, reviewed human reply/tag/assignment actions, and encrypted acknowledged native mailbox intake with real local-API request deadlines. Legacy write tools retain their existing controls; automatic investigations and customer replies need separate authorization.

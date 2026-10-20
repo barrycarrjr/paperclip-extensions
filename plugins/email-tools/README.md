@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.23.1**: Add durable shared-mailbox routing with sending, deleting and moving excluded from routing permissions. Routing remains disabled until configured.
+
 - **v0.23.0** - Optional shared-mailbox routing inside the existing email-triage skill, off by default. One named router proposes admin-defined destination keys. Read-only verification, a durable cross-company routing ledger, standard host email handoffs, bounded Mail routing review/history, and honest wake/audit outcomes protect retries. Adds strict Message-ID reply selection alongside the existing UID selector. Requires the matching host email-handoff support; no live sending or agent policy is changed.
 
 - **v0.22.1** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.

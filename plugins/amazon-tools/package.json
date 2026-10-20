@@ -1,6 +1,6 @@
 {
   "name": "paperclip-plugin-amazon-tools",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Company-scoped Amazon seller reads and monitoring, plus governed report generation.",
   "type": "module",
   "private": true,

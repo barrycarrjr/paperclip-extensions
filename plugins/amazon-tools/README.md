@@ -6,6 +6,8 @@ Generic, company-scoped Amazon Selling Partner API (SP-API) reads for a seller's
 
 ## Recent changes
 
+- **v0.3.1**: Combine protected seller reads, approved report requests and bounded Listing Watch. Follow the upgrade preflight before replacing an existing 0.2.0 installation.
+
 - **v0.3.0** - Consolidates Listing Watch with the company-scoped transport, credential checks, projected outputs, opaque cursors and governed report operation. Adds listing search, offers, company-owned change history and both scheduled checks. Preserves the exact 0.2.0 migration and stored rows. Legacy configuration remains accepted; unowned historical rows stay private and a new baseline starts. The deployed 0.2.0 upgrade has the same nine capabilities and activates immediately; correct configuration before upgrading.
 - **v0.2.0** - Earlier Listing Watch implementation with account-key snapshots. Its historical migration and data remain retained. Its request helpers are now disabled reference code; every executable call uses the shared service.
 - **v0.1.0** - Initial seller finance, balances, settlement reports, FBA and merchant inventory, Orders 2026-01-01, Catalog Items, seller Listings Items, A+ Content, and inspection of existing Notifications subscriptions/destinations. Includes company isolation, encrypted credential references, bounded downloads, whole-record paging with cursors and offsets, per-operation token-bucket pacing from Amazon's published burst and rate, explicit `writes` declarations (only `amazon_request_report` is a write), host failure codes, per-tool execution timeouts, output projection, activity logging, and synthetic protocol tests. Ads and notification ingestion are excluded.

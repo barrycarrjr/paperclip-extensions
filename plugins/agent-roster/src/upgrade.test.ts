@@ -21,7 +21,7 @@ test("installed PR14 migration bytes, namespace, identity and UI slots remain co
   assert.equal(createHash("sha256").update(migration.toString("utf8").replace(/\r\n/g, "\n")).digest("hex"), "258d7883500c1a5d9fee7d69ff9f5f1fafa13dea54dce5cac24dbf02b330393c");
   assert.equal(manifest.id, "agent-roster");
   assert.equal(manifest.database?.namespaceSlug, "roster");
-  assert.equal(manifest.version, "0.2.0");
+  assert.equal(manifest.version, "0.2.1");
   assert.deepEqual((await readdir(new URL("../migrations/", import.meta.url))).filter((name) => name.endsWith(".sql")), ["0001_init.sql"]);
   assert.deepEqual(manifest.ui?.slots?.map((slot) => slot.id), ["roster-sidebar", "roster-page", "roster-widget"]);
 });

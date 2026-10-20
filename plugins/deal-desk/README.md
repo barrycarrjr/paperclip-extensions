@@ -516,6 +516,8 @@ The plugin resolves `@paperclipai/plugin-sdk` from the vendored tarball in
 
 ## Recent changes
 
+- **v0.1.5**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
+
 - **v0.1.4** - Requires a cited document for tax-return, profit-and-loss, and bank earnings records when sourced figures or dates are created or changed.
 
 - **v0.1.3** - Tax-return, profit-and-loss and bank earnings periods now require a cited document UUID when created or when their figures/dates change. Citation removal is refused. An existing citation is retained when omitted; legacy records remain readable and allow notes-only edits. Seller-stated and other sources retain their existing behavior. This checks citation presence and UUID shape, not document existence, reading or content.
