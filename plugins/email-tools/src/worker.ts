@@ -101,6 +101,9 @@ import { testMailbox } from "./test-mailbox.js";
 import { getAccessToken, startAuth, handleCallback } from "./oauth.js";
 import type { ConfigMailbox, InstanceConfig } from "./types.js";
 import { consumeDelivery, deliveryEvent, selectSupportAccount } from "../../../lib/support-delivery.js";
+import { MailRouting } from "./routing.js";
+import { readRoutingMessage } from "./routing-reader.js";
+import { resolveReplySelector, parseReplySelector } from "./reply-selector.js";
 
 interface SmtpRuntime {
   key: string;
@@ -427,6 +430,29 @@ const plugin = definePlugin({
     const rawConfig = (await ctx.config.get()) as InstanceConfig;
     const allowSend = !!rawConfig.allowSend;
     const mailboxes = rawConfig.mailboxes ?? [];
+    const routing = new MailRouting(ctx, async (cfg, locator) => {
+      // Own connection: EXAMINE must not reuse a pooled writable mailbox selection.
+      const client = await openConnection(await buildMailboxRuntime(ctx, cfg, cfg.key!, undefined, { freshCredentials: true }));
+      try { return await readRoutingMessage(client, locator); } finally { await safeLogout(client); }
+    }, async cfg => { await buildMailboxRuntime(ctx, cfg, cfg.key!, undefined, { freshCredentials: true }); });
+    ctx.tools.register("email_list_route_destinations", {
+      displayName: "List Mail Routing Destinations", description: "List configured destination keys for the named mailbox router.", parametersSchema: {},
+    }, async (params, run) => {
+      try {
+        const data = await routing.destinations((params as { mailbox?: unknown })?.mailbox, run);
+        return { content: `Mail routing is ${data.mode}. ${data.destinations.length} destination(s).`, data };
+      } catch (e) { return { error: (e as Error).message }; }
+    });
+    ctx.tools.register("email_route_message", {
+      displayName: "Route Email", description: "Read and route verified email to an admin-configured destination, or hold it for review. No mailbox changes.", parametersSchema: {},
+    }, async (params, run) => {
+      try {
+        const data = await routing.route(params, run);
+        return { content: `Mail routing: ${data.outcome}. ${data.outcome === "already_routed" || data.outcome === "handled_manually" ? "Earlier routing note: " : ""}${data.note}`, data };
+      } catch (e) { return { error: (e as Error).message }; }
+    });
+    ctx.data.register("email.list-routing", params => routing.panel(params));
+    ctx.actions.register("email.resolve-routing-entry", params => routing.resolve(params));
     // Subscribe only for configured company access. Recipient opt-in is checked
     // again at delivery time, so enabling a recipient needs no password copy.
     const supportCompanies = new Set(mailboxes.flatMap(m => m.allowedCompanies ?? []));
@@ -667,6 +693,7 @@ const plugin = definePlugin({
         const limit = Math.min(200, Math.max(1, Math.floor(p.limit ?? 50)));
         try {
           const items = await withImapConnection(ctx, cfg, p.mailbox as string, async (client) => {
+            const uidValidity = String(await getUidValidity(client, folder));
             const uids = await searchMessages(client, {
               folder,
               text: p.text,
@@ -680,7 +707,8 @@ const plugin = definePlugin({
             const truncated = uids.length > limit;
             const slice = uids.slice(-limit);
             const headers = await fetchHeaders(client, folder, slice);
-            return { items: headers, truncated };
+            if (String(await getUidValidity(client, folder)) !== uidValidity) throw new Error("UIDVALIDITY changed during search. Search again before acting.");
+            return { items: headers, truncated, uidValidity };
           });
           await ctx.telemetry.track("email_search", {
             mailbox: cfg.key ?? "",
@@ -689,7 +717,7 @@ const plugin = definePlugin({
           });
           return {
             content: `${items.items.length} message(s)`,
-            data: { ok: true, mailbox: cfg.key, folder, ...items },
+            data: { ok: true, mailbox: cfg.key, folder, ...items, items: await routing.annotate(cfg, runCtx, items.items, items.uidValidity, folder) },
           };
         } catch (err) {
           return { error: `[IMAP_ERROR] ${(err as Error).message}` };
@@ -953,7 +981,7 @@ const plugin = definePlugin({
       {
         displayName: "Reply to Email",
         description:
-          "Reply to a message by UID. Looks up Message-ID and References, then sends with proper threading headers.",
+          "Reply by UID or an exact Message-ID resolved in the selected mailbox folder, then send with threading headers.",
         parametersSchema: {} as Record<string, unknown>,
       },
       async (params, runCtx): Promise<ToolResult> => {
@@ -966,6 +994,7 @@ const plugin = definePlugin({
           mailbox?: string;
           folder?: string;
           uid?: number;
+          messageId?: string;
           body?: string;
           body_html?: string;
           replyAll?: boolean;
@@ -975,16 +1004,18 @@ const plugin = definePlugin({
         };
         const gate = gateMailbox("email_reply", p.mailbox, runCtx, config);
         if (!gate.ok) return { error: gate.error };
-        if (typeof p.uid !== "number") return { error: "uid is required" };
+        let selector: ReturnType<typeof parseReplySelector>;
+        try { selector = parseReplySelector(p); } catch (e) { return { error: (e as Error).message }; }
         if (typeof p.body !== "string") return { error: "body is required" };
         const attParse = parseOutboundAttachments(p.attachments);
         if (!attParse.ok) return { error: attParse.error };
         const folder = resolveFolder(gate.cfg, p.folder);
+        if (typeof folder !== "string" || !folder || folder.length > 300 || /[\x00-\x1f\x7f]/.test(folder)) return { error: "[EREPLY_SELECTOR] Invalid folder." };
 
         let original: ParsedMessage | null;
         try {
           original = await withImapConnection(ctx, gate.cfg, p.mailbox as string, async (client) =>
-            fetchParsedMessage(client, folder, p.uid as number),
+            resolveReplySelector(client, folder, selector),
           );
         } catch (err) {
           return { error: `[IMAP_ERROR] ${(err as Error).message}` };
@@ -1056,7 +1087,7 @@ const plugin = definePlugin({
               references: refsChain.length > 0 ? refsChain : undefined,
               attachments: attParse.attachments.length > 0 ? attParse.attachments : undefined,
             },
-            { folder, uid: p.uid, messageId: original.messageId ?? undefined, flag: ANSWERED_FLAG },
+            { folder, uid: original.uid, messageId: original.messageId ?? undefined, flag: ANSWERED_FLAG },
             startedAt,
           );
           // Best effort, as in email_send: the reply has already gone.
@@ -1347,9 +1378,12 @@ const plugin = definePlugin({
           limit: clampListLimit(p.limit),
           expiresBefore: resolved.expiresBefore,
         });
+        let routeReview;
+        try { routeReview = await routing.review(resolved.mailbox, runCtx.companyId, runCtx.agentId); }
+        catch { routeReview = { waiting: [], total: 0, diagnostic: "Mail routing review is unavailable. Check Mail routing settings. Sender review is still available." }; }
         return {
           content: `${result.total} sender(s) waiting for a decision in "${resolved.mailbox}".`,
-          data: result,
+          data: { ...result, routing: routeReview },
         };
       },
     );

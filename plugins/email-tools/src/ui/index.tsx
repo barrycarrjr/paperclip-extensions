@@ -5,3 +5,4 @@
  */
 
 export { RulesSettingsPage } from "./RulesSettingsPage.js";
+export { RoutingSettingsPage } from "./RoutingSettingsPage.js";

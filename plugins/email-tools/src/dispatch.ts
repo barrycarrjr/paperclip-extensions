@@ -70,13 +70,14 @@ export async function dispatchReceived(
 
 const ISSUE_BODY_MAX = 16_000;
 
-function buildIssueDescription(parsed: ParsedMessage): string {
+export function buildIssueDescription(parsed: ParsedMessage): string {
+  const field = (value: string) => value.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 1000);
   const header = [
-    `**From:** ${parsed.from || "(unknown)"}`,
-    `**To:** ${parsed.to.join(", ") || "(unknown)"}`,
-    parsed.cc.length > 0 ? `**Cc:** ${parsed.cc.join(", ")}` : null,
-    `**Date:** ${parsed.date}`,
-    `**Message-ID:** ${parsed.messageId ?? "(none)"}`,
+    `**From:** ${field(parsed.from) || "(unknown)"}`,
+    `**To:** ${field(parsed.to.slice(0, 10).join(", ")) || "(unknown)"}`,
+    parsed.cc.length > 0 ? `**Cc:** ${field(parsed.cc.slice(0, 10).join(", "))}` : null,
+    `**Date:** ${field(parsed.date)}`,
+    `**Message-ID:** ${field(parsed.messageId ?? "(none)")}`,
   ]
     .filter(Boolean)
     .join("  \n");
@@ -84,12 +85,12 @@ function buildIssueDescription(parsed: ParsedMessage): string {
   const attachmentBlock =
     parsed.attachments.length > 0
       ? "\n\n**Attachments:**\n" +
-        parsed.attachments.map((a) => `- ${a.name} (${a.mime}, ${a.size} bytes, partId \`${a.partId}\`)`).join("\n")
+        parsed.attachments.slice(0, 30).map((a) => `- ${field(a.name).slice(0, 200)} (${field(a.mime).slice(0, 100)}, ${a.size} bytes, partId \`${field(a.partId).slice(0, 30)}\`)`).join("\n")
       : "";
 
   let body = parsed.markdown || parsed.text || "_(no body)_";
   if (body.length > ISSUE_BODY_MAX) {
-    body = body.slice(0, ISSUE_BODY_MAX) + "\n\n_…body truncated…_";
+    body = body.slice(0, ISSUE_BODY_MAX) + "\n\n_[Body truncated.]_";
   }
 
   return `${header}\n\n---\n\n${body}${attachmentBlock}`;
