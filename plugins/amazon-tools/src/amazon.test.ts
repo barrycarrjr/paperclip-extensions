@@ -112,7 +112,7 @@ test("all tools have concrete supported GET mappings; the only provider business
     ["get_notification_subscription",{notificationType:NOTIFICATIONS[0]},"/notifications/v1/subscriptions/ANY_OFFER_CHANGED",{payload:{subscriptionId:"sub",destinationId:"dest",payloadVersion:"1.0"}}],
     ["list_notification_destinations",{},"/notifications/v1/destinations",{payload:[]}],
   ];
-  assert.equal(TOOLS.length,18);
+  assert.equal(TOOLS.length,22);
   for(const [operation,p,path,response] of cases){
     const f=fixture(()=>json(response));const out=await f.service.run(operation,p,COMPANY);
     const call=f.calls[1];assert.equal(call.url.pathname,path,operation);assert.equal(call.method,operation==="request_report"?"POST":"GET");

@@ -1,12 +1,20 @@
 import { createHash } from "node:crypto";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { REPORT_TYPES, NOTIFICATIONS, TOOLS, TIMEOUT_MARGIN_MS } from "./manifest.js";
-import { AmazonError, date, decode, downloadUrl, fail, integer, jsonText, object, range, redact, redactor, text, transport, type Transport, type Shape } from "./safety.js";
+import { AmazonError, date, decode, downloadUrl, fail, integer, jsonText, object, range, redact, redactor, text, transport, type Transport, type Shape, compatibilityFailure } from "./safety.js";
 import { CURSOR_TTL, CursorStore, PAGE_BYTES, PAGE_NODES, ReportCache, projectBatch, projectRecord, projectWith, take, type Batch, type Query, type ReportEntry } from "./paging.js";
-import { RateLimiter } from "./rate.js";
+import { RateLimiter, SecretBudget } from "./rate.js";
 import * as shapes from "./shapes.js";
-import { documentFields, extractModule } from "./aplus.js";
+import { documentFields, extractModule, watchModuleFingerprint } from "./aplus.js";
+import { assertRequest } from "./requestGuard.js";
 
+// Internal watch text retains a bounded display prefix and full selected-text hash.
+// Public tools retain their existing exposure limits. Scrubbing still precedes this.
+const watchText=(value:string)=>{
+  if(value.length<=1000)return value;
+  const last=value.charCodeAt(899),end=last>=0xd800&&last<=0xdbff?899:900;
+  return `${value.slice(0,end)} [sha256:${createHash("sha256").update(value).digest("hex")}]`;
+};
 const ENDPOINTS = { NA: "https://sellingpartnerapi-na.amazon.com", EU: "https://sellingpartnerapi-eu.amazon.com", FE: "https://sellingpartnerapi-fe.amazon.com" };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPORT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -16,27 +24,33 @@ const FBA_TOKEN_MS = 25_000;
 const ORDER_TOKEN_MS = 24 * 60 * 60_000;
 const MAX_WAIT_MS = 10_000;
 const timeoutFor = (operation: string) => TOOLS.find(t => t.name === `amazon_${operation}`)?.executionTimeoutMs ?? 70_000;
-export interface Account { key: string; credentialsRef: string; region: keyof typeof ENDPOINTS; marketplaceIds: string[]; allowedCompanies: string[] }
+export interface Account { key: string; name?: string; credentialsRef?: string; lwaClientIdRef?: string; lwaClientSecretRef?: string; refreshTokenRef?: string; sellerId?: string; region: keyof typeof ENDPOINTS; marketplaceIds: string[]; allowedCompanies: string[]; listingWatch?: boolean }
 interface Credentials { clientId: string; clientSecret: string; refreshToken: string; sellerId: string }
 export function accounts(config: unknown): Account[] {
   const cfg = object(config);
-  if (Object.keys(cfg).some(k => k !== "accounts") || !Array.isArray(cfg.accounts) || cfg.accounts.length > 20) fail("ECONFIG");
+  if (Object.keys(cfg).some(k => !["accounts","defaultAccount"].includes(k)) || !Array.isArray(cfg.accounts) || cfg.accounts.length > 20 || (cfg.defaultAccount !== undefined && (typeof cfg.defaultAccount !== "string" || !cfg.accounts.some((a: any) => a?.key === cfg.defaultAccount)))) fail("ECONFIG");
   const seen = new Set<string>();
   return cfg.accounts.map((value: unknown) => {
     const a = object(value);
-    if (Object.keys(a).some(k => !["key","credentialsRef","region","marketplaceIds","allowedCompanies"].includes(k)) ||
+    const legacyFields = ["lwaClientIdRef","lwaClientSecretRef","refreshTokenRef","sellerId"];
+    const combined = a.credentialsRef !== undefined;
+    const validMode = combined ? typeof a.credentialsRef === "string" && UUID.test(a.credentialsRef) && legacyFields.every(k => a[k] === undefined) : legacyFields.slice(0,3).every(k => typeof a[k] === "string" && UUID.test(a[k])) && typeof a.sellerId === "string" && /^[A-Z0-9]{1,64}$/.test(a.sellerId);
+    const region = typeof a.region === "string" ? a.region.toUpperCase() : "";
+    if (Object.keys(a).some(k => !["key","name","credentialsRef",...legacyFields,"region","marketplaceIds","allowedCompanies","listingWatch"].includes(k)) ||
       typeof a.key !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(a.key) || seen.has(a.key) ||
-      typeof a.credentialsRef !== "string" || !UUID.test(a.credentialsRef) || !Object.hasOwn(ENDPOINTS, a.region) ||
+      !validMode || !["NA","EU","FE","na","eu","fe"].includes(a.region) || !Object.hasOwn(ENDPOINTS, region) ||
+      (a.name !== undefined && (typeof a.name !== "string" || a.name.length > 120 || /[\x00-\x1f\x7f]/.test(a.name))) || (a.listingWatch !== undefined && typeof a.listingWatch !== "boolean") ||
       !Array.isArray(a.marketplaceIds) || !a.marketplaceIds.length || a.marketplaceIds.length > 10 || a.marketplaceIds.some((v: unknown) => typeof v !== "string" || !/^[A-Z0-9]{1,32}$/.test(v)) || new Set(a.marketplaceIds).size !== a.marketplaceIds.length ||
-      !Array.isArray(a.allowedCompanies) || a.allowedCompanies.some((v: unknown) => typeof v !== "string" || !UUID.test(v)) || new Set(a.allowedCompanies).size !== a.allowedCompanies.length) fail("ECONFIG");
+      !Array.isArray(a.allowedCompanies) || a.allowedCompanies.length > 20 || a.allowedCompanies.some((v: unknown) => typeof v !== "string" || !UUID.test(v)) || new Set(a.allowedCompanies).size !== a.allowedCompanies.length) fail("ECONFIG");
     seen.add(a.key);
-    return structuredClone(a) as Account;
+    return { ...structuredClone(a), region } as Account;
   });
 }
 export function selectAccount(config: unknown, company: string, key?: unknown): Account {
   if (!UUID.test(company)) fail("ECOMPANY");
   const allowed = accounts(config).filter(a => a.allowedCompanies.includes(company));
-  const a = key === undefined ? (allowed.length === 1 ? allowed[0] : undefined) : allowed.find(a => a.key === key);
+  const chosen = key ?? object(config).defaultAccount;
+  const a = chosen === undefined ? (allowed.length === 1 ? allowed[0] : undefined) : allowed.find(a => a.key === chosen);
   if (!a) fail("ECOMPANY");
   return a as Account;
 }
@@ -94,6 +108,8 @@ export class AmazonService {
   private cursors = new CursorStore();
   private reports = new ReportCache();
   private rates = new RateLimiter();
+  private secretBudget = new SecretBudget();
+  private authorizations = new WeakSet<object>();
   private send: Transport;
   private now: () => number;
   private sleep: (ms: number) => Promise<void>;
@@ -103,29 +119,15 @@ export class AmazonService {
   }
   clear() { this.tokens.clear(); this.cursors.clear(); this.reports.clear(); this.rates.clear(); }
   get cacheStats() { return { cursors: this.cursors.size, cursorBytes: this.cursors.cachedBytes, reports: this.reports.size, tokens: this.tokens.size }; }
-  async run(operation: string, p: Record<string, any>, company: string, startedAt = this.now()): Promise<Record<string, unknown>> {
-    // The whole call, host lookups included, ends before the declared host
-    // timeout, so the host never abandons work that is still running.
-    const deadline = startedAt + timeoutFor(operation) - TIMEOUT_MARGIN_MS;
-    const report = { posted: false, accepted: false };
-    try { return await this.execute(operation, p, company, deadline, report); }
-    catch (e) {
-      // Once the report POST may have reached Amazon, every failure is an
-      // uncertain or withheld outcome, never one that invites a retry.
-      if (!report.posted || (e instanceof AmazonError && e.dispatch)) throw e;
-      const accepted = report.accepted;
-      throw Object.assign(new AmazonError(accepted ? "EREPORT_DISPATCHED" : "EREPORT_UNKNOWN"), { dispatch: accepted ? "accepted" : "unknown" });
-    }
-  }
-  private async execute(operation: string, p: Record<string, any>, company: string, deadline: number, report: { posted: boolean; accepted: boolean }): Promise<Record<string, unknown>> {
+  async authorize(company: string, key?: unknown, deadline = this.now() + 50_000, background = false) {
     const left = () => deadline - this.now();
     // Host lookups race the same deadline; a late answer is ignored.
-    const within = <T>(work: Promise<T>): Promise<T> => {
-      const ms = left();
+    const within = <T>(start: () => Promise<T>, until = deadline): Promise<T> => {
+      const ms = Math.min(deadline,until) - this.now();
       if (ms <= 0) return Promise.reject(new AmazonError("EDEADLINE"));
       return new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => reject(new AmazonError("EDEADLINE")), ms); timer.unref?.();
-        work.then(v => { clearTimeout(timer); if (left() > 0) resolve(v); else reject(new AmazonError("EDEADLINE")); }, e => { clearTimeout(timer); reject(e); });
+        start().then(v => { clearTimeout(timer); if (Math.min(deadline,until) > this.now()) resolve(v); else reject(new AmazonError("EDEADLINE")); }, e => { clearTimeout(timer); reject(e); });
       });
     };
     // The current host flattens handler errors into INTERNAL_ERROR plus text;
@@ -139,35 +141,92 @@ export class AmazonService {
       if (ref && [`Secret not found: ${ref}`, `No version found for secret: ${ref}`, `Invalid secret reference: ${ref}`].includes(err.message)) fail("ECREDENTIALS");
       return fail("EHOST");
     };
-    const getConfig = async () => {
-      try { return await within(this.ctx.config.get()); }
+    const getConfig = async (until = deadline) => {
+      try { return await within(() => this.ctx.config.get(),until); }
       catch (e) { return hostFailure(e); }
     };
-    const resolveSecret = async (ref: string) => {
-      try { return await within(this.ctx.secrets.resolve(ref, company)); }
+    const resolveSecret = async (ref: string, until = deadline) => {
+      try { return await within(() => this.ctx.secrets.resolve(ref, company),until); }
       catch (e) { return hostFailure(e, ref); }
     };
-    const account = selectAccount(await getConfig(), company, p.account);
-    const raw = await resolveSecret(account.credentialsRef);
+    const account = selectAccount(await getConfig(), company, key);
+    const material = async (a: Account, until = deadline) => {
+      while(await this.secretBudget.reserve(a.credentialsRef?1:3,background,Math.min(deadline,until),this.now,this.sleep)) {
+        if(digest(selectAccount(await getConfig(until),company,a.key))!==digest(a))fail("ECONFIG");
+      }
+      if (a.credentialsRef) return resolveSecret(a.credentialsRef,until);
+      const values = await Promise.all([a.lwaClientIdRef!,a.lwaClientSecretRef!,a.refreshTokenRef!].map(ref=>resolveSecret(ref,until)));
+      return JSON.stringify({clientId:values[0],clientSecret:values[1],refreshToken:values[2],sellerId:a.sellerId});
+    };
+    const raw = await material(account);
     const creds = credentials(raw);
     const fingerprint = digest([company, account, raw]);
     const sensitive = [raw, ...Object.values(creds)];
     let scrubber: ((value: string) => string) | undefined;
-    const addSensitive = (value: string) => { sensitive.push(value); scrubber = undefined; };
+    const addSensitive = (value: string) => { if(!sensitive.includes(value)){sensitive.push(value); scrubber = undefined;} };
     const scrub = (value: unknown) => redact(value, scrubber ??= redactor(sensitive));
     // Old credentials are never reused: tokens, cursors and cached report rows
     // are partitioned by a digest of CURRENT secret material, company and config.
-    const ensureCurrent = async () => {
-      const current = selectAccount(await getConfig(), company, account.key);
+    const ensureCurrent = async (until = deadline) => {
+      const current = selectAccount(await getConfig(until), company, account.key);
       if (digest(current) !== digest(account)) fail("ECONFIG");
-      if (await resolveSecret(current.credentialsRef) !== raw) fail("ECREDENTIALS");
+      if (await material(current,until) !== raw) fail("ECREDENTIALS");
     };
+    const auth = { company, account, creds, fingerprint, sensitive, scrub, addSensitive, ensureCurrent,
+      scope: digest([company,account.key,account.credentialsRef,account.lwaClientIdRef,account.lwaClientSecretRef,account.refreshTokenRef,creds.sellerId,account.region,account.marketplaceIds]), deadline };
+    this.authorizations.add(auth);return auth;
+  }
+  async read(operation: string, p: Record<string, any>, company: string, deadline: number, authorized?: Awaited<ReturnType<AmazonService["authorize"]>>) {
+    if (!["list_listings","get_listing","get_item_offers","get_catalog_item","list_aplus_publish_records","get_aplus_content"].includes(operation)) fail("EWRITE_BLOCKED");
+    if(authorized && (!this.authorizations.has(authorized)||authorized.company!==company||authorized.account.key!==p.account))fail("ECOMPANY");
+    // A scheduled read has the job's real remaining budget, so waiting for
+    // the next secret window is possible even with a very fast provider.
+    // Each individual network attempt still has its own 20-second timeout.
+    return this.execute(operation,p,company,authorized?deadline:Math.min(deadline,this.now()+50_000),{posted:false,accepted:false},authorized);
+  }
+  async run(operation: string, p: Record<string, any>, company: string, startedAt = this.now()): Promise<Record<string, unknown>> {
+    // The whole call, host lookups included, ends before the declared host
+    // timeout, so the host never abandons work that is still running.
+    const deadline = startedAt + timeoutFor(operation) - TIMEOUT_MARGIN_MS;
+    const report = { posted: false, accepted: false };
+    try {
+      if (operation === "list_accounts") {
+        if(!UUID.test(company))fail("ECOMPANY");
+        const remaining=deadline-this.now();if(remaining<=0)fail("EDEADLINE");
+        const config = await new Promise<unknown>((resolve,reject)=>{
+          const timer=setTimeout(()=>reject(new AmazonError("EDEADLINE")),remaining);timer.unref?.();
+          this.ctx.config.get().then(v=>{clearTimeout(timer);if(this.now()<deadline)resolve(v);else reject(new AmazonError("EDEADLINE"));},()=>{clearTimeout(timer);reject(new AmazonError("EHOST"));});
+        });
+        const rows = accounts(config).filter(a => a.allowedCompanies.includes(company));
+        const result = [], currentChecks: (()=>Promise<void>)[] = [];
+        for (const a of rows) {
+          const auth = await this.authorize(company,a.key,deadline);
+          result.push({key:a.key,name:auth.scrub(a.name),region:a.region,marketplaceIds:a.marketplaceIds,listingWatch:a.listingWatch === true});
+          await auth.ensureCurrent();
+          currentChecks.push(auth.ensureCurrent);
+        }
+        for (const check of currentChecks) await check();
+        return {accounts:result};
+      }
+      return await this.execute(operation, p, company, deadline, report);
+    }
+    catch (e) {
+      // Once the report POST may have reached Amazon, every failure is an
+      // uncertain or withheld outcome, never one that invites a retry.
+      if (!report.posted || (e instanceof AmazonError && e.dispatch)) throw e;
+      const accepted = report.accepted;
+      throw Object.assign(new AmazonError(accepted ? "EREPORT_DISPATCHED" : "EREPORT_UNKNOWN"), { dispatch: accepted ? "accepted" : "unknown" });
+    }
+  }
+  private async execute(operation: string, p: Record<string, any>, company: string, deadline: number, report: { posted: boolean; accepted: boolean }, authorized?: Awaited<ReturnType<AmazonService["authorize"]>>): Promise<Record<string, unknown>> {
+    const left = () => deadline - this.now();
+    const { account, creds, fingerprint, sensitive, scrub, addSensitive, ensureCurrent } = authorized ?? await this.authorize(company,p.account,deadline);
     const signal = () => AbortSignal.timeout(Math.max(1, Math.min(20_000, left())));
     const token = async (grantless: boolean) => {
       const key = `${fingerprint}:${grantless}`;
       const cached = this.tokens.get(key);
       if (cached && cached.expires > this.now() + 60_000) { addSensitive(cached.value); return cached.value; }
-      await ensureCurrent();
+      await ensureCurrent(deadline);
       if (left() < 2_000) fail("EDEADLINE");
       const form = new URLSearchParams({ grant_type: grantless ? "client_credentials" : "refresh_token", client_id: creds.clientId, client_secret: creds.clientSecret,
         ...(grantless ? { scope: "sellingpartnerapi::notifications" } : { refresh_token: creds.refreshToken }) });
@@ -180,7 +239,7 @@ export class AmazonService {
       if (r.status === 429) {
         const retry = r.headers["retry-after"];
         const delay = retry && /^\d+(?:\.\d+)?$/.test(retry) ? Number(retry) : retry ? (Date.parse(retry) - this.now()) / 1000 : 1;
-        throw new AmazonError("ERATE", undefined, Number.isFinite(delay) ? Math.max(1, Math.ceil(delay)) : 1);
+        throw Object.assign(new AmazonError("ERATE", undefined, Number.isFinite(delay) ? Math.max(1, Math.ceil(delay)) : 1), {coverageCause:"provider" as const});
       }
       if (r.status === 400 || r.status === 401) fail("EAUTH");
       if (r.status !== 200) throw new AmazonError("EHTTP", r.status);
@@ -192,6 +251,7 @@ export class AmazonService {
       addSensitive(j.access_token); return j.access_token as string;
     };
     const api = async (op: string, path: string, query: Query = {}, body?: Record<string, unknown>, grantless = false): Promise<any> => {
+      assertRequest(op,body?"POST":"GET",path,operation==="request_report");
       // All paths originate below, never from caller-supplied URLs/methods.
       const url = new URL(path, ENDPOINTS[account.region]);
       for (const [k,v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, String(v));
@@ -203,18 +263,19 @@ export class AmazonService {
       const maxWait = () => Math.min(MAX_WAIT_MS, Math.max(0, left() - 5_000));
       const retryIn = () => Math.max(1, Math.ceil(this.rates.wait(rateKey, op, this.now()) / 1000));
       for (let attempt = 0; ; attempt++) {
-        await ensureCurrent();
         const wait = this.rates.acquire(rateKey, op, this.now(), maxWait());
-        if (wait === undefined) throw new AmazonError("ERATE", undefined, retryIn());
-        if (wait) { await this.sleep(wait); await ensureCurrent(); }
+        if (wait === undefined) throw Object.assign(new AmazonError("ERATE", undefined, retryIn()), {coverageCause:attempt ? "provider" as const : "budget" as const});
+        if (wait) await this.sleep(wait);
+        await ensureCurrent(deadline);
         if (left() < 2_000) fail("EDEADLINE");
         if (body) report.posted = true;
         let r;
-        try { r = await this.send(url, body ? "POST" : "GET", { "x-amz-access-token": access, "user-agent": "PaperclipAmazon/0.1.0 (Language=JavaScript)", "x-amz-date": new Date(this.now()).toISOString().replace(/[:-]|\.\d{3}/g, ""), "accept": "application/json", "accept-encoding": "identity", ...(body ? { "content-type": "application/json" } : {}) }, body ? JSON.stringify(body) : undefined, signal()); }
+        try { r = await this.send(url, body ? "POST" : "GET", { "x-amz-access-token": access, "user-agent": "PaperclipAmazon/0.3.0 (Language=JavaScript)", "x-amz-date": new Date(this.now()).toISOString().replace(/[:-]|\.\d{3}/g, ""), "accept": "application/json", "accept-encoding": "identity", ...(body ? { "content-type": "application/json" } : {}) }, body ? JSON.stringify(body) : undefined, signal()); }
         catch (e) {
           // A connection that never opened cannot have created a report.
           if (body && e instanceof AmazonError && e.notSent) report.posted = false;
           if (!body && e instanceof AmazonError && e.code === "ERESPONSE") throw e;
+          if (!body && left() <= 0) throw Object.assign(new AmazonError("EDEADLINE"), {coverageAttempted:true});
           return fail(report.posted ? "EREPORT_UNKNOWN" : left() <= 0 ? "EDEADLINE" : "ENETWORK");
         }
         this.rates.observe(rateKey, op, this.now(), r.headers["x-amzn-ratelimit-limit"]);
@@ -226,7 +287,7 @@ export class AmazonService {
           // A throttled report POST was refused, not created, and is never
           // retried automatically.
           if (body) report.posted = false;
-          if (body || attempt === 2 || delay > maxWait()) throw new AmazonError("ERATE", undefined, retryIn());
+          if (body || attempt === 2 || delay > maxWait()) throw Object.assign(new AmazonError("ERATE", undefined, retryIn()), {coverageCause:"provider" as const});
           continue;
         }
         if (r.status < 200 || r.status >= 300) {
@@ -244,11 +305,18 @@ export class AmazonService {
     };
     let truncated = false;
     const single = (value: unknown, shape: Shape) => {
-      const rec = projectRecord(value, shape, scrub);
+      if(authorized&&(shape===shapes.catalog||shape===shapes.listing)) {
+        const attributes=object(value).attributes;
+        if(attributes!==undefined&&(!attributes||typeof attributes!=="object"||Array.isArray(attributes)))fail("ERESPONSE");
+      }
+      // Internal content checks select only evidence their snapshots consume.
+      // Unused tool fields must not spend a watch record's projection budget.
+      const selected = authorized && shape === shapes.listing ? shapes.watchListing : authorized && shape === shapes.catalog ? shapes.watchCatalog : shape;
+      const rec = projectRecord(value, selected, scrub, authorized ? watchText : undefined);
       truncated ||= rec.truncated;
       return JSON.parse(rec.json);
     };
-    const binding = digest([fingerprint, operation, Object.fromEntries(Object.entries(p).filter(([k]) => k !== "cursor").sort(([a],[b])=>a.localeCompare(b)))]);
+    const binding = digest([fingerprint, authorized ? "watch" : "tool", operation, Object.fromEntries(Object.entries(p).filter(([k]) => k !== "cursor").sort(([a],[b])=>a.localeCompare(b)))]);
     // A snapshot of the caller's cursor, taken before any await, so a config
     // change or eviction during this call cannot break the continuation.
     const resumed = p.cursor === undefined ? undefined : this.cursors.get(text(p.cursor, 64), binding, this.now());
@@ -256,6 +324,7 @@ export class AmazonService {
       const query = resumed?.query ?? s.query;
       let batch: Batch, start = 0, next: string | undefined, nextExpires = 0;
       if (resumed?.batch && resumed.index < resumed.batch.recs.length) {
+        if (authorized) await ensureCurrent(deadline);
         // Serve the unreturned remainder of a provider page before advancing.
         batch = resumed.batch; start = resumed.index; next = resumed.token; nextExpires = resumed.tokenExpires;
       } else {
@@ -264,7 +333,7 @@ export class AmazonService {
         const j = await api(s.op, s.path, resumed ? { ...(s.exclusive ? {} : query), [s.tokenParam]: resumed.token } : query, undefined, s.grantless);
         const rows = s.rows(j);
         if (!Array.isArray(rows)) fail("ERESPONSE");
-        batch = projectBatch(rows as unknown[], s.shape, scrub);
+        batch = projectBatch(rows as unknown[], s.shape, scrub, authorized ? watchText : undefined);
         next = providerToken(s.next(j));
         // Only documented provider lifetimes are hard limits. Each new local
         // cursor still expires after 15 minutes, including cached remainders.
@@ -305,10 +374,10 @@ export class AmazonService {
       // Even an allowed storage host must never receive LWA credentials or
       // access tokens echoed into a provider-supplied path/query string.
       if (redact(url.href,sensitive.filter(v=>v!==creds.sellerId)) !== url.href) fail("EDOWNLOAD");
-      await ensureCurrent();
+      await ensureCurrent(deadline);
       if (left() < 2_000) fail("EDEADLINE");
       let downloaded;
-      try { downloaded = await this.send(url,"GET",{ "accept-encoding": "identity", "user-agent": "PaperclipAmazon/0.1.0 (Language=JavaScript)" },undefined,signal()); }
+      try { downloaded = await this.send(url,"GET",{ "accept-encoding": "identity", "user-agent": "PaperclipAmazon/0.3.0 (Language=JavaScript)" },undefined,signal()); }
       catch (e) {
         if (e instanceof AmazonError && e.code === "ERESPONSE") throw e;
         return fail(left() <= 0 ? "EDEADLINE" : "ENETWORK");
@@ -324,7 +393,7 @@ export class AmazonService {
         return { report: meta, dates: dates.recs, asins: asins.recs, bytes: dates.bytes + asins.bytes, expires };
       }
       const parsed = parseTsv(document, j.reportType === REPORT_TYPES[0] ? shapes.settlementColumns : shapes.inventoryColumns);
-      const clean = scrubber ??= redactor(sensitive);
+      const clean = redactor(sensitive);
       let normalizedText = false;
       const rows = parsed.rows.map(row => {
         const scrubbed = clean(row), safe = jsonText(scrubbed);
@@ -335,6 +404,23 @@ export class AmazonService {
     };
     let result: Record<string, any>;
     switch (operation) {
+      case "list_listings": {
+        const page = await list({op:"searchListingsItems",path:`/listings/2021-08-01/items/${encodeURIComponent(creds.sellerId)}`,query:{marketplaceIds:market(),includedData:"summaries,issues,offers,fulfillmentAvailability",pageSize:Math.min(limit,20)},tokenParam:"pageToken",rows:j=>j.items,next:j=>j.pagination?.nextToken,shape:shapes.listing,max:limit});
+        result = {listings:page.values,nextCursor:page.nextCursor}; break;
+      }
+      case "get_item_offers": {
+        const asin = text(p.asin,10,/^[A-Z0-9]{10}$/);
+        const j = await api("getItemOffers",`/products/pricing/v0/items/${asin}/offers`,{MarketplaceId:market(),ItemCondition:"New"});
+        if (j.payload?.ASIN !== asin || !Array.isArray(j.payload?.Offers) || !object(j.payload?.Summary).TotalOfferCount && object(j.payload?.Summary).TotalOfferCount !== 0) fail("ERESPONSE");
+        // MyOffer is the useful ownership evidence. Omit our configured seller
+        // ID before projection so expected credential scrubbing does not make
+        // every normal status snapshot appear incomplete.
+        const payload={...j.payload,Offers:j.payload.Offers.map((offer:unknown)=>{
+          const row=object(offer);if(row.MyOffer!==true&&row.SellerId!==creds.sellerId)return row;
+          const {SellerId:_ownSeller,...rest}=row;return rest;
+        })};
+        result = {offers:single(payload,shapes.offers)}; break;
+      }
       case "test_connection": {
         const j = await api("searchListingsItems", `/listings/2021-08-01/items/${encodeURIComponent(creds.sellerId)}`, { marketplaceIds: market(), includedData: "summaries", pageSize: 1 });
         if (!Array.isArray(j.items)) fail("ERESPONSE");
@@ -455,14 +541,14 @@ export class AmazonService {
       }
       case "get_catalog_item": {
         const asin = text(p.asin,10,/^[A-Z0-9]{10}$/);
-        const j = await api("getCatalogItem", `/catalog/2022-04-01/items/${asin}`, { marketplaceIds: market(), includedData: "attributes,images,identifiers,productTypes,relationships,summaries" });
+        const j = await api("getCatalogItem", `/catalog/2022-04-01/items/${asin}`, { marketplaceIds: market(), includedData: authorized ? "attributes,images,productTypes,summaries" : "attributes,images,identifiers,productTypes,relationships,summaries" });
         if (j.asin !== asin) fail("ERESPONSE");
         result = { item: single(j,shapes.catalog), note: "Catalog content may differ from submitted seller attributes. API data does not identify override authors or guarantee the rendered retail page." }; break;
       }
       case "get_listing": {
         const sku = text(p.sku,100);
         if (sku === "." || sku === "..") fail();
-        const j = await api("getListingsItem", `/listings/2021-08-01/items/${encodeURIComponent(creds.sellerId)}/${encodeURIComponent(sku)}`, { marketplaceIds: market(), includedData: "attributes,summaries,issues,fulfillmentAvailability,productTypes" });
+        const j = await api("getListingsItem", `/listings/2021-08-01/items/${encodeURIComponent(creds.sellerId)}/${encodeURIComponent(sku)}`, { marketplaceIds: market(), includedData: authorized ? "attributes" : "attributes,summaries,issues,offers,fulfillmentAvailability,productTypes" });
         if (j.sku !== sku) fail("ERESPONSE");
         result = { listing: single(j,shapes.listing), note: "Attributes are the seller's latest submissions; fulfillmentAvailability is live purchasable inventory. Issue messages and contact/compliance attributes are omitted." }; break;
       }
@@ -475,6 +561,18 @@ export class AmazonService {
         result = { records: page.values, nextCursor: page.nextCursor }; break;
       }
       case "get_aplus_content": {
+        if (p.asin !== undefined) {
+          if (p.contentReferenceKey !== undefined || p.moduleOffset !== undefined) fail("ECOMPAT");
+          const refs = await this.execute("list_aplus_publish_records",{account:account.key,asin:p.asin,marketplaceId:market()},company,deadline,report);
+          if (refs.nextCursor || !Array.isArray(refs.records) || refs.records.length > 5) fail("ECOMPAT");
+          const documents = [];
+          for (const ref of refs.records as unknown[]) {
+            const doc = await this.execute("get_aplus_content",{account:account.key,contentReferenceKey:object(ref).contentReferenceKey,marketplaceId:market()},company,deadline,report);
+            if (doc.nextModuleOffset !== null) fail("ECOMPAT");
+            truncated ||= doc.truncated === true; documents.push(doc);
+          }
+          result = {documents, note:"Legacy ASIN lookup supports at most five complete documents. For larger results use list_aplus_publish_records, then get_aplus_content with contentReferenceKey and offsets."}; break;
+        }
         const key = text(p.contentReferenceKey,128,/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/), from = integer(p.moduleOffset,0,100000);
         const j = await api("getContentDocument", `/aplus/2020-11-01/contentDocuments/${encodeURIComponent(key)}`, { marketplaceId: market(), includedDataSet: "CONTENTS,METADATA" });
         if (j.contentRecord?.contentReferenceKey !== key || !Array.isArray(j.contentRecord?.contentDocument?.contentModuleList)) fail("ERESPONSE");
@@ -482,7 +580,13 @@ export class AmazonService {
         if (modules.length > 100) truncated = true;
         // Whole modules per response, each with its own text budget, so a
         // text-heavy document pages instead of failing or being cut short.
-        const recs = modules.slice(0,100).map(m => projectWith(pr => extractModule(m,pr),scrub));
+        const recs = modules.slice(0,100).map(m => {
+          const moduleHash = authorized ? watchModuleFingerprint(m,scrub) : undefined;
+          const rec = projectWith(pr => ({...extractModule(m,pr),...(authorized?{fingerprint:moduleHash}:{})}),scrub,undefined,authorized ? watchText : undefined);
+          // A successful full bounded hash covers text beyond display cuts.
+          // Document/module/page bounds and public truncation remain separate.
+          return authorized ? {...rec,truncated:false} : rec;
+        });
         const page = take(recs, from, Number.MAX_SAFE_INTEGER);
         truncated ||= page.truncated;
         result = { metadata: single(j.contentRecord,shapes.contentMetadata), content: { ...single(doc,documentFields), modules: page.values }, moduleCount: recs.length, nextModuleOffset: page.next < recs.length ? page.next : null }; break;
@@ -501,10 +605,13 @@ export class AmazonService {
       }
       default: return fail();
     }
-    await ensureCurrent();
+    // Internal watch intermediates stay inside one authorized check. Remote
+    // attempts, cached-page reuse, cached-evidence reuse and the final commit
+    // still validate current ownership; external tools always check here.
+    if (!authorized) await ensureCurrent(deadline);
     const output = redact({ ...result, truncated, provenance: { provider: "amazon-sp-api", operation, region: account.region, retrievedAt: new Date(this.now()).toISOString() } },sensitive);
     // Pages are sized well below this; it only guards against a defect.
-    if (Buffer.byteLength(JSON.stringify(output)) > 96 * 1024) fail("ERESPONSE");
+    if (Buffer.byteLength(JSON.stringify(output)) > 96 * 1024) {if(operation==="get_aplus_content"&&p.asin!==undefined)compatibilityFailure("aplus");fail("ERESPONSE");}
     return output;
   }
 }

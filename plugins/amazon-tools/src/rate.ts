@@ -1,7 +1,9 @@
+import { AmazonError } from "./safety.js";
 // Published default usage plans (requests per second, burst) from Amazon's
 // official API models, checked 2026-10-18. x-amzn-RateLimit-Limit replaces the
 // rate for that seller, application and operation only.
 export const USAGE: Record<string, readonly [rate: number, burst: number]> = {
+  getItemOffers: [0.5,1],
   searchOrders: [0.0056, 20], getOrder: [0.5, 30], listTransactions: [0.5, 10], listBalances: [0.5, 10],
   getReports: [0.0222, 10], getReport: [2, 15], createReport: [0.0167, 15], getReportDocument: [0.0167, 15],
   getInventorySummaries: [2, 2], searchListingsItems: [5, 5], getListingsItem: [5, 10], getCatalogItem: [2, 2],
@@ -51,4 +53,27 @@ export class RateLimiter {
     b.blockedUntil = Math.max(b.blockedUntil, now + delay);
   }
   clear() { this.buckets.clear(); }
+}
+
+// Reserve lookups, not credentials. Every resolve still asks the host for its
+// current company-owned secret. Watch traffic leaves half the host window free.
+export class SecretBudget {
+  private entries: {at:number;cost:number;background:boolean}[]=[];
+  async reserve(cost:number,background:boolean,deadline:number,now:()=>number,sleep:(ms:number)=>Promise<void>) {
+    let waited=false;
+    for (;;) {
+      const time=now(); this.entries=this.entries.filter(e=>e.at>time-60_000);
+      const total=this.entries.reduce((n,e)=>n+e.cost,0);
+      const jobs=this.entries.reduce((n,e)=>n+(e.background?e.cost:0),0);
+      if(total+cost<=900 && (!background||jobs+cost<=600)) {
+        // After sleeping, let the caller revalidate configuration first.
+        // Reserve only on its next immediate attempt, never before another RPC.
+        if(waited)return true;
+        this.entries.push({at:time,cost,background});return waited;
+      }
+      const wait=Math.max(1,Math.min(...this.entries.map(e=>e.at+60_001-time)));
+      if(time+wait+2_000>=deadline)throw new AmazonError("EDEADLINE");
+      await sleep(wait);waited=true;
+    }
+  }
 }

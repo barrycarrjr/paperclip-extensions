@@ -1,0 +1,2 @@
+# Historical migration checksums must survive Windows checkouts unchanged.
+migrations/*.sql text eol=lf

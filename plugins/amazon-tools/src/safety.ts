@@ -9,13 +9,20 @@ export class AmazonError extends Error {
   dispatch?: "unknown" | "accepted";
   // Transport only: the connection failed before any request byte was sent.
   notSent = false;
+  // Internal monitoring distinguishes local inability to attempt a read from
+  // a provider refusal. This never changes a tool's failure/retry policy.
+  coverageCause?: "budget" | "provider";
+  coverageAttempted = false;
   constructor(public readonly code: string, public readonly status?: number, public readonly retryAfterSeconds?: number) {
     super(`[${code}] ${status ? `Amazon returned HTTP ${status}.` : MESSAGES[code] ?? "Amazon request failed."}${retryAfterSeconds ? ` Retry after ${retryAfterSeconds} seconds.` : ""}`);
   }
 }
 const MESSAGES: Record<string, string> = {
+  ECOMPAT: "Legacy argument cannot be used safely. Use reportId, contentReferenceKey and opaque cursor from the current tools; see the upgrade guide.",
+  EINCOMPLETE: "Listing Watch coverage is incomplete. Inspect health for failed or unavailable reads; known observations may have saved.",
+  ECONCURRENT: "Another Listing Watch check saved first. Retry on the next schedule.",
   EINPUT: "Invalid tool arguments. Check the tool schema.",
-  ECONFIG: "Check Amazon account configuration and company access.",
+  ECONFIG: "Correct all configured accounts: unique lowercase keys, explicit company IDs, valid defaultAccount and one complete credential mode (legacy includes sellerId). One invalid entry rejects every account.",
   ECOMPANY: "This company cannot use this Amazon connection.",
   ECREDENTIALS: "Check the encrypted Amazon credentials reference and JSON fields.",
   EAUTH: "Amazon authorization failed. Check credentials and app roles.",
@@ -32,6 +39,10 @@ const MESSAGES: Record<string, string> = {
   EAUDIT: "The activity log is unavailable. Retry after the host recovers.",
   EHOST: "Amazon connection settings or secret lookup is temporarily unavailable. Retry after the host recovers.",
 };
+export function compatibilityFailure(kind:"items"|"aplus"):never {
+  const message=kind==="items"?"Use includeItems: true or omit it; safe item summaries are always returned.":"Use list_aplus_publish_records, then get_aplus_content with contentReferenceKey and nextModuleOffset; the ASIN aggregate exceeds its safe bound.";
+  throw Object.assign(new AmazonError("ECOMPAT"),{message:"[ECOMPAT] "+message});
+}
 export const fail = (code = "EINPUT"): never => { throw new AmazonError(code); };
 export const object = (v: unknown): Record<string, any> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, any> : {};
 export function text(v: unknown, max = 256, pattern?: RegExp): string {
@@ -165,7 +176,7 @@ function prefixEnd(value: string, end: number): number {
 export class Projector {
   truncated = false;
   private remaining: number;
-  constructor(private readonly budget = 1400, private stringBytes = 32 * 1024, private readonly scrub: (value: string) => string = value => value) { this.remaining = budget; }
+  constructor(private readonly budget = 1400, private stringBytes = 32 * 1024, private readonly scrub: (value: string) => string = value => value, private readonly summarize?: (value:string)=>string) { this.remaining = budget; }
   get nodesUsed() { return this.budget - Math.max(0, this.remaining); }
   pick(value: unknown, shape: Shape, depth = 0): any {
     if (value === undefined) return undefined;
@@ -195,8 +206,9 @@ export class Projector {
     // Scrub the complete selected string before any normalization or cut can
     // leave an unmatched credential prefix. Unselected objects are not walked.
     const clean = this.scrub(jsonText(this.scrub(value)));
-    let s = clean.slice(0, prefixEnd(clean, Math.min(clean.length, 1500)));
-    if (s !== value) this.truncated = true;
+    const source = this.summarize ? this.summarize(clean) : clean;
+    let s = source.slice(0, prefixEnd(source, Math.min(source.length, 1500)));
+    if (clean !== value || s !== source) this.truncated = true;
     const size = (v: string) => Buffer.byteLength(JSON.stringify(v));
     if (size(s) > this.stringBytes) {
       this.truncated = true;

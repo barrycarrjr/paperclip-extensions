@@ -31,12 +31,19 @@ export const attributes: Shape = {
   main_product_image_locator: [{ media_location: true, marketplace_id: true }],
   other_product_image_locator_1: [{ media_location: true, marketplace_id: true }],
 };
-const summary: Shape = scalars("marketplaceId asin itemName brand brandName manufacturer modelNumber partNumber itemClassification color size productType conditionType createdDate lastUpdatedDate");
+const summary: Shape = {...scalars("marketplaceId asin itemName brand brandName manufacturer modelNumber partNumber itemClassification color size productType conditionType createdDate lastUpdatedDate"),mainImage:{link:true},browseClassification:{displayName:true}};
 export const listing: Shape = {
   sku: true, summaries: [{ ...summary as object, status: [true] }], attributes,
   productTypes: [scalars("marketplaceId productType")],
   issues: [{ ...scalars("code severity"), attributeNames: [true], categories: [true] }],
   fulfillmentAvailability: [scalars("fulfillmentChannelCode quantity")],
+  offers: [{marketplaceId:true,offerType:true,price:money}],
+};
+// Shipping locations, seller feedback, addresses and every unlisted field stay out.
+const offerMoney = scalars("Amount CurrencyCode");
+export const offers: Shape = {
+  ASIN:true, Summary:{TotalOfferCount:true,BuyBoxPrices:[{LandedPrice:offerMoney}]},
+  Offers:[{MyOffer:true,IsBuyBoxWinner:true,IsFulfilledByAmazon:true,SubCondition:true,SellerId:true,ListingPrice:offerMoney,Shipping:offerMoney}],
 };
 export const catalog: Shape = {
   asin: true, attributes, summaries: [summary],
@@ -44,6 +51,17 @@ export const catalog: Shape = {
   identifiers: [{ marketplaceId: true, identifiers: [scalars("identifierType identifier")] }],
   productTypes: [scalars("marketplaceId productType")],
   relationships: [{ marketplaceId: true, relationships: [{ type: true, parentAsins: [true], childAsins: [true] }] }],
+};
+// ListingWatch content snapshots use these fields only. Keep their ordinary
+// array/node/string bounds fatal instead of ignoring a partial used value.
+export const watchListing: Shape = {
+  sku:true, attributes:{item_name:attrValue,brand:attrValue,bullet_point:attrValue,product_description:attrValue,generic_keyword:attrValue},
+};
+export const watchCatalog: Shape = {
+  asin:true, attributes:{bullet_point:attrValue,product_description:attrValue},
+  summaries:[{marketplaceId:true,itemName:true,brand:true,browseClassification:{displayName:true}}],
+  images:[{marketplaceId:true,images:[{variant:true,link:true}]}],
+  productTypes:[scalars("marketplaceId productType")],
 };
 export const inventory: Shape = {
   ...scalars("asin fnSku sellerSku condition totalQuantity lastUpdatedTime"),

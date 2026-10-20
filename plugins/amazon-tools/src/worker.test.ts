@@ -15,6 +15,7 @@ async function setup(handler: Parameters<typeof fixture>[0] = ()=>json({items:[]
   const logs:unknown[]=[],warnings:string[]=[];
   let auditFails=false,completionFails=false;
   const ctx={...f.ctx,tools:{register:(name:string,_declaration:unknown,handler:any)=>handlers.set(name,handler)},activity:{log:async(entry:any)=>{if(auditFails||(completionFails&&/completed/.test(entry.message)))throw Error(CREDS.clientSecret);logs.push(entry);}},logger:{warn:(message:string)=>warnings.push(message)}} as unknown as PluginContext;
+  ctx.jobs={register:()=>{}};
   const plugin=createPlugin(f.deps);await plugin.definition.setup(ctx);
   const run={companyId:COMPANY,agentId:"example-agent",runId:"example-run"};
   return {f,handlers,logs,warnings,plugin,run,failAudit:()=>auditFails=true,failCompletion:()=>completionFails=true};

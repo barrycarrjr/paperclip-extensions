@@ -2,11 +2,13 @@ import { definePlugin, operationFailure, runWorker, type PluginContext, type Too
 import { AmazonService, accounts } from "./amazon.js";
 import { TIMEOUT_MARGIN_MS, TOOLS } from "./manifest.js";
 import { AmazonError, fail, object, text } from "./safety.js";
+import { ListingWatch } from "./watch.js";
+import { compatibleParams } from "./compatibility.js";
 
 type FailureCode = Parameters<typeof operationFailure>[0];
 // Host failure codes tell an agent whether retrying can help (PLUGIN_SPEC 11.6).
 const FAILURES: Record<string, FailureCode> = {
-  EINPUT: "invalid_input", ECURSOR: "invalid_input", EPAGE_EXPIRED: "invalid_input",
+  EINPUT: "invalid_input", ECOMPAT: "invalid_input", ECURSOR: "invalid_input", EPAGE_EXPIRED: "invalid_input",
   ECOMPANY: "not_authorized", ECONFIG: "not_authorized", EREPORT: "not_authorized",
   ECREDENTIALS: "needs_reconnect", EAUTH: "needs_reconnect",
   ENETWORK: "unavailable", ERATE: "unavailable", EAUDIT: "unavailable", EHOST: "unavailable", EDEADLINE: "timeout",
@@ -37,10 +39,14 @@ function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 export function createPlugin(deps: ConstructorParameters<typeof AmazonService>[1] = {}) {
   let service: AmazonService | undefined;
+  let watch: ListingWatch | undefined;
   const now = deps.now ?? Date.now;
   return definePlugin({
     async setup(ctx: PluginContext) {
       service = new AmazonService(ctx,deps);
+      watch = new ListingWatch(ctx,service,now);
+      ctx.jobs.register("listing_watch_status",async()=>watch!.scheduled("status"));
+      ctx.jobs.register("listing_watch_content",async()=>watch!.scheduled("content"));
       for (const declaration of TOOLS) {
         const operation = declaration.name.replace(/^amazon_/, "");
         ctx.tools.register(declaration.name,declaration,async (params: unknown,run: ToolRunContext): Promise<ToolResult> => {
@@ -52,8 +58,8 @@ export function createPlugin(deps: ConstructorParameters<typeof AmazonService>[1
             // errors, report URLs, identifiers or resolved secrets.
             await bounded(ctx.activity.log({ companyId:run.companyId, message:`Amazon ${operation} started`, metadata:{ operation, outcome:"started" } }), finishBy - now());
             started = true;
-            const p = validateParams(params,declaration);
-            const data = await service!.run(operation,p,run.companyId,startedAt);
+            const p = validateParams(compatibleParams(operation,params),declaration);
+            const data = operation === "list_listing_changes" ? await watch!.listChanges(p,run.companyId,finishBy) : await service!.run(operation,p,run.companyId,startedAt);
             const arrays = [...["reports","transactions","balances","inventory","orders","rows","records","destinations","salesAndTrafficByDate","salesAndTrafficByAsin"].map(k => data[k]), object(data.content).modules];
             const count = arrays.reduce((total: number,v)=>total+(Array.isArray(v) ? v.length : 0),0);
             // The work is done, so a slow or failed outcome log never turns a
@@ -79,12 +85,12 @@ export function createPlugin(deps: ConstructorParameters<typeof AmazonService>[1
         });
       }
     },
-    async onConfigChanged() { service?.clear(); },
-    async onShutdown() { service?.clear(); },
+    async onConfigChanged() { service?.clear(); watch?.clear(); },
+    async onShutdown() { service?.clear(); watch?.clear(); },
     async onHealth() { return { status:"ok",message:"Amazon worker ready. Use amazon_test_connection in an allowed company to test credentials." }; },
     async onValidateConfig(config) {
       try { const rows=accounts(config); return { ok:true,warnings:rows.length ? ["Local validation only. Run amazon_test_connection from an allowed company to verify Amazon authorization."] : ["No seller connections configured."] }; }
-      catch { return { ok:false,errors:["Invalid Amazon configuration. Use unique connection keys, encrypted secret references, region, marketplaces and explicit company IDs."] }; }
+      catch { return { ok:false,errors:["Invalid Amazon configuration. Use unique keys, explicit company IDs (no wildcards), and either credentialsRef or all three legacy references plus sellerId. Never mix credential modes."] }; }
     },
   });
 }

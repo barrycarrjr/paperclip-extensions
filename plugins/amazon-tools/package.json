@@ -1,22 +1,43 @@
 {
   "name": "paperclip-plugin-amazon-tools",
-  "version": "0.1.0",
-  "description": "Company-scoped, read-only Amazon Selling Partner API tools.",
+  "version": "0.3.0",
+  "description": "Company-scoped Amazon seller reads and monitoring, plus governed report generation.",
   "type": "module",
   "private": true,
-  "exports": { ".": "./src/index.ts" },
-  "paperclipPlugin": { "manifest": "./dist/manifest.js", "worker": "./dist/worker.js" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js"
+  },
   "scripts": {
     "build": "node ../../scripts/check-vendored-sdk.mjs && node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx src/amazon.test.ts src/continuation.test.ts src/limits.test.ts src/worker.test.ts",
-    "test:runtime": "node --test test/runtime.test.mjs"
+    "test": "node --test --import tsx src/amazon.test.ts src/continuation.test.ts src/limits.test.ts src/worker.test.ts src/listings.test.ts src/upgrade.test.ts src/repair.test.ts src/coverage.test.ts",
+    "test:runtime": "node --test test/runtime.test.mjs test/watch-runtime.test.mjs"
   },
-  "dependencies": { "@paperclipai/plugin-sdk": "^2026.427.0" },
-  "devDependencies": { "@types/node": "^24.6.0", "esbuild": "^0.27.3", "tsx": "^4.23.12", "typescript": "^5.7.3" },
-  "pnpm": { "overrides": { "@paperclipai/plugin-sdk": "file:../../vendor/sdk/plugin-sdk.tgz", "@paperclipai/shared": "file:../../vendor/sdk/shared.tgz" } },
-  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@paperclipai/plugin-sdk": "^2026.427.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.23.12",
+    "typescript": "^5.7.3",
+    "@electric-sql/pglite": "0.3.15",
+    "js-yaml": "^4.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@paperclipai/plugin-sdk": "file:../../vendor/sdk/plugin-sdk.tgz",
+      "@paperclipai/shared": "file:../../vendor/sdk/shared.tgz"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "license": "MIT",
-  "author": "Barry Carr & Tony Allard",
+  "author": "Paperclip contributors",
   "packageManager": "pnpm@10.28.0"
 }

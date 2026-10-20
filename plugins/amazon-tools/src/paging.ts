@@ -12,12 +12,12 @@ export interface Batch { recs: Rec[]; bytes: number }
 // Scrubs selected strings before cuts, then scrubs the projected record again. A record too
 // large for one response alone is projected again with half the nodes until
 // it fits, and is flagged truncated, so a page can never be stuck empty.
-export function projectRecord(raw: unknown, shape: Shape, scrub: (v: unknown) => unknown): Rec {
-  return projectWith(p => p.pick(raw, shape), scrub);
+export function projectRecord(raw: unknown, shape: Shape, scrub: (v: unknown) => unknown, summarize?: (value:string)=>string): Rec {
+  return projectWith(p => p.pick(raw, shape), scrub, undefined, summarize);
 }
-export function projectWith(project: (p: Projector) => unknown, scrub: (v: unknown) => unknown, nodes = PAGE_NODES): Rec {
+export function projectWith(project: (p: Projector) => unknown, scrub: (v: unknown) => unknown, nodes = PAGE_NODES, summarize?: (value:string)=>string): Rec {
   for (;;) {
-    const p = new Projector(nodes, 32 * 1024, value => scrub(value) as string);
+    const p = new Projector(nodes, 32 * 1024, value => scrub(value) as string, summarize);
     const json = JSON.stringify(scrub(project(p)) ?? null);
     const bytes = Buffer.byteLength(json);
     if (bytes <= PAGE_BYTES || nodes <= 16) return { json, bytes, nodes: p.nodesUsed, truncated: p.truncated };
@@ -26,10 +26,10 @@ export function projectWith(project: (p: Projector) => unknown, scrub: (v: unkno
 }
 // A provider page is projected whole before anything is returned, so the
 // unreturned remainder is sanitized data, never raw provider output.
-export function projectBatch(rows: unknown[], shape: Shape, scrub: (v: unknown) => unknown): Batch {
+export function projectBatch(rows: unknown[], shape: Shape, scrub: (v: unknown) => unknown, summarize?: (value:string)=>string): Batch {
   const recs: Rec[] = []; let bytes = 0;
   for (const row of rows) {
-    const rec = projectRecord(row, shape, scrub);
+    const rec = projectRecord(row, shape, scrub, summarize);
     bytes += rec.bytes;
     // A valid provider page is at most 8 MiB, and projection only removes data.
     if (bytes > 9 * 1024 * 1024) fail("ERESPONSE");

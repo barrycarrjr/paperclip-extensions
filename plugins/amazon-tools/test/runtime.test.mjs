@@ -20,7 +20,7 @@ test("dist-only isolated installation validates manifest and speaks real worker 
   const scratchRoot=path.resolve(ROOT,"../../.smoke-tests");
   await mkdir(scratchRoot,{recursive:true});
   const scratch=await mkdtemp(path.join(scratchRoot,"issue-43-install-"));
-  t.after(async()=>{assert.equal(path.dirname(scratch),scratchRoot);await rm(scratch,{recursive:true,force:true});});
+  t.after(async()=>{assert.equal(path.dirname(scratch),scratchRoot);}); // Retain isolated installation evidence.
   await cp(path.join(ROOT,"dist"),path.join(scratch,"dist"),{recursive:true});
   const pkg=JSON.parse(await readFile(path.join(ROOT,"package.json"),"utf8"));
   await writeFile(path.join(scratch,"package.json"),JSON.stringify({name:pkg.name,version:pkg.version,type:"module",paperclipPlugin:pkg.paperclipPlugin}));
@@ -30,7 +30,8 @@ test("dist-only isolated installation validates manifest and speaks real worker 
   const schemas=Object.keys(shared).filter(k=>/plugin.*manifest.*schema/i.test(k));
   assert.ok(schemas.length,"host manifest validator is available in vendored shared");
   const validated=shared[schemas[0]].parse(manifest);
-  assert.equal(manifest.version,pkg.version);assert.equal(manifest.tools.length,18);
+  assert.equal(manifest.version,pkg.version);assert.equal(manifest.tools.length,22);
+  assert.equal(manifest.database.namespaceSlug,"amazon");assert.equal(manifest.jobs.length,2);
   assert.ok(manifest.capabilities.includes("activity.log.write"));
   // The host reads these declarations: every read is writes:false, only report
   // generation is a write, and each tool carries its own execution timeout.
@@ -81,6 +82,7 @@ test("dist-only isolated installation validates manifest and speaks real worker 
     res.setHeader("x-amzn-RateLimit-Limit","1000");res.end(JSON.stringify({items:[]}));
   });
   server.listen(0,"127.0.0.1");await once(server,"listening");t.after(()=>{server.closeAllConnections();server.close();});
+  assert.ok(![3100,54329].includes(server.address().port));
   const child=spawn(process.execPath,["--import",pathToFileURL(path.join(ROOT,"test/loopback-loader.mjs")).href,path.join(scratch,"dist/worker.js")],{cwd:scratch,env:{...process.env,AMAZON_TEST_PORT:String(server.address().port)},stdio:["pipe","pipe","pipe"]});
   t.after(()=>child.kill());
   const pending=new Map();let seq=0,stderr="";child.stderr.on("data",v=>stderr+=v);
@@ -201,4 +203,5 @@ test("dist-only isolated installation validates manifest and speaks real worker 
   assert.ok(!JSON.stringify(audit).includes("page2")&&!JSON.stringify(ids).includes("page2"));
   assert.equal(stderr,"");
   await rpc("shutdown",{});const [exitCode]=await once(child,"exit");assert.equal(exitCode,0);
+  await writeFile(path.join(scratch,"receipt.json"),JSON.stringify({pid:child.pid,exit:exitCode,port:server.address().port,calls:calls.length,retained:true}));
 });
