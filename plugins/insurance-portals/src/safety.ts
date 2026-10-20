@@ -269,7 +269,7 @@ export function policyNumberIn(text: string): string | null {
   return all.sort((a, b) => score(b) - score(a))[0];
 }
 
-/** Street addresses written in `text` ("12 Oak St", "900 W Elm Avenue", "929 W 3RD ST"). */
+/** Street addresses written in `text` ("12 Oak St", "900 W Elm Avenue", "45 N 2ND ST"). */
 export function streetAddressesIn(text: string): string[] {
   const street = new RegExp(String.raw`(?<![\w-])(\d{1,6}(?: [A-Z0-9][A-Za-z0-9.']*){1,4} (?:${STREET_SUFFIX})\b)`, "g");
   return [...text.matchAll(street)].map((m) => m[1].trim());

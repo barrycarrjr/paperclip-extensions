@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.6.29";
+const PLUGIN_VERSION = "0.6.30";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -96,7 +96,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
   setupInstructions: SETUP_INSTRUCTIONS,
   description:
     "Read-only: signs in to Foremost, Liberty Mutual and Selective and saves the current policy and declarations-page PDFs to Google Drive (through Drive for desktop or the Drive API). Login codes are read from email; agents never see credentials.",
-  author: "Bryon Stout",
+  author: "Paperclip contributors",
   categories: ["automation", "connector"],
   capabilities: [
     "agent.tools.register",

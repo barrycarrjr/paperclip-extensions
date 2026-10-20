@@ -238,7 +238,7 @@ export function PlaceCallModal({
               type="text"
               value={calleeName}
               onChange={(e) => setCalleeName(e.target.value)}
-              placeholder="e.g. Bryon at Acme"
+              placeholder="e.g. Jane at Acme"
               style={input}
             />
           </div>
