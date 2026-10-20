@@ -497,6 +497,15 @@
       "description": "When a new portfolio company is added, an automated playbook hires the standard agent suite (CEO/CFO/COO/CMO/CTO), installs standard plugins, and creates baseline routines.",
       "status": "idea",
       "addedAt": "2026-05-11"
+    },
+    {
+      "id": "feature-domain-leakage-investor",
+      "type": "feature",
+      "title": "Domain Leakage Investor",
+      "description": "Finds exact-match .com domains that catch type-in traffic from businesses advertising a name their own site does not use, alerts the owner when one can be registered at regular price, tracks parking income, and prices sale offers.",
+      "status": "idea",
+      "addedAt": "2026-10-19",
+      "notes": "Plan and decisions: [issue #24](https://github.com/barrycarrjr/paperclip-extensions/issues/24). Phase 1 skills + agent, Phase 2 domain-tools plugin, Phase 3 routines + bundle."
     }
   ]
 }
