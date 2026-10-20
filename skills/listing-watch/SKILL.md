@@ -1,6 +1,6 @@
 ---
 name: listing-watch
-description: Review the changes amazon-tools Listing Watch recorded on a seller's own Amazon listings, judge each one (the seller's own edit, harmless, or a problem), post urgent problems to the company's Slack channel at once, and post a weekly digest of everything else. Read-only on Amazon. Use when the listing-watch-review or listing-watch-digest routine fires, or when an operator asks "did anything change on our listings?".
+description: Review the changes amazon-tools Listing Watch recorded on a seller's own Amazon listings, judge each one (the seller's own edit, harmless, or a problem), send urgent problems to the operator as a Slack direct message at once, and send a weekly digest of everything else. Read-only on Amazon. Use when the listing-watch-review or listing-watch-digest routine fires, or when an operator asks "did anything change on our listings?".
 ---
 
 # Listing Watch
@@ -16,15 +16,16 @@ It never changes anything on Amazon. Fixes are drafted for the operator to make.
 - `amazon_list_listing_changes` (amazon-tools): the change log and the last checks.
 - `amazon_get_listing`, `amazon_get_catalog_item`, `amazon_get_item_offers`,
   `amazon_get_aplus_content` (amazon-tools): look closer before judging.
-- `slack_list_channels`, `slack_send_channel` (slack-tools): post to the channel.
+- `slack_send_dm` (slack-tools): message the operator.
 
 ## Setup the skill expects
 
 - amazon-tools has a seller account with Listing Watch on, allowed for this company.
 - slack-tools has a workspace allowed for this company.
-- A Slack channel named in the routine's `channel` variable (default
-  `listing-watch`) exists, and the Slack bot is a member. If it is missing, say so
-  on the run's issue and stop. Do not create channels.
+- The routine's `slackUserId` variable is the operator's own Slack member ID.
+  Paperclip's "messages to yourself" setting should list it, so these direct
+  messages go out without waiting for approval. If a message is held for
+  approval instead, say so on the run's issue; do not retry it.
 
 ## Where the last review is remembered
 
@@ -72,8 +73,8 @@ urgent and say what is unclear. Never guess a cause you did not see.
 
 ## Alert: urgent changes
 
-Post one message per SKU to the channel with `slack_send_channel`, as soon as the
-review finds it:
+Send one direct message per SKU with `slack_send_dm` (`userId` = the routine's
+`slackUserId`), as soon as the review finds it:
 
 ```
 :rotating_light: Listing Watch: <one-line problem>
@@ -88,8 +89,8 @@ the change log or the detail tools. Never claim a fix was made.
 
 ## Digest: everything else
 
-The **listing-watch-digest** routine posts once a week. Read the last 7 days of
-changes, and post one message:
+The **listing-watch-digest** routine runs once a week. Read the last 7 days of
+changes, and send one direct message:
 
 ```
 :clipboard: Listing Watch weekly digest, <start> to <end>
@@ -104,12 +105,12 @@ Then comment on the **Listing Watch log** issue with the same counts.
 ## Also say so when the watch itself is unhealthy
 
 `amazon_list_listing_changes` returns the last checks. If the latest status check
-is older than 8 hours, or a check failed, post one urgent message about the watch
+is older than 8 hours, or a check failed, send one urgent message about the watch
 itself (what failed, the error code) instead of staying silent.
 
 ## Never
 
 - Change anything on Amazon, or tell the operator a change was made.
-- Post outside the configured channel.
-- Post when nothing changed: a review with no urgent items posts nothing to
+- Message anyone but the operator.
+- Message when nothing changed: a review with no urgent items sends nothing to
   Slack and only comments on the log issue.

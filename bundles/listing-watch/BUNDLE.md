@@ -25,7 +25,6 @@ that reads those changes, decides which ones matter, and tells a person.
 ## After installing
 
 1. In amazon-tools, set the account's Seller ID and turn on **Listing Watch**.
-2. In Slack, create a `listing-watch` channel and invite the slack-tools bot.
-3. Give the Listing Watch agent the amazon-tools read tools and the slack-tools
-   `slack_list_channels` and `slack_send_channel` tools.
-4. Run **Review listing changes** once by hand to check the setup.
+2. Add the operator's Slack member ID to Paperclip's "messages to yourself"
+   setting, and set it as `slackUserId` on both routines.
+3. Run **Review listing changes** once by hand to check the setup.

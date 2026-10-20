@@ -1,11 +1,11 @@
 ---
 name: listing-watch-digest
-description: Weekly digest of every listing change Listing Watch recorded in the last 7 days, posted to the Listing Watch Slack channel.
+description: Weekly digest of every listing change Listing Watch recorded in the last 7 days, sent to the operator as a Slack direct message.
 routineTitle: Weekly listing changes digest
 routineDescription: |
   Use the listing-watch skill's digest section. Summarize the last 7 days of
   listing changes (own edits, harmless changes, urgent alerts sent, problems
-  still open) in one message to the {{channel}} Slack channel, then comment the
+  still open) in one direct message to the operator (Slack member {{slackUserId}}), then comment the
   counts on the Listing Watch log issue. Read-only on Amazon.
 priority: low
 concurrencyPolicy: coalesce_if_active
@@ -17,11 +17,10 @@ triggers:
     cronExpression: "0 9 * * 1"
     timezone: America/New_York
 variables:
-  - name: channel
-    label: Slack channel for the digest
+  - name: slackUserId
+    label: Operator's Slack member ID (also in Paperclip's messages-to-yourself setting)
     type: text
     required: true
-    defaultValue: listing-watch
 requiresSkills:
   - listing-watch
 requiresPlugins:
