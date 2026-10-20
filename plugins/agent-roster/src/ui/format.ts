@@ -22,17 +22,17 @@ export function daysAgo(iso: string | null, now: Date = new Date()): string {
 }
 
 export const VERDICT_LABELS: Record<Verdict, string> = {
-  idle: "Idle",
-  low_use: "Low use",
-  kept: "Kept on purpose",
-  active: "Active",
-  new: "New",
+  Idle: "Idle",
+  "Low use": "Low use",
+  "Kept on purpose": "Kept on purpose",
+  Active: "Active",
+  New: "New",
 };
 
 export const VERDICT_HINTS: Record<Verdict, string> = {
-  idle: "No run in 30 days.",
-  low_use: "3 runs or fewer in 30 days, and no open issues.",
-  kept: "Idle or low use, kept on purpose by the board.",
-  active: "Runs regularly or has open issues.",
-  new: "Created in the last 7 days. Not judged yet.",
+  Idle: "No run in 30 days.",
+  "Low use": "3 runs or fewer in 30 days, and no open issues.",
+  "Kept on purpose": "Idle or low use, kept on purpose by the board.",
+  Active: "Runs regularly or has open issues.",
+  New: "Created in the last 7 days. Not judged yet.",
 };

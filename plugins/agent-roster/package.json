@@ -1,7 +1,7 @@
 {
   "name": "paperclip-plugin-agent-roster",
-  "version": "0.1.1",
-  "description": "Shows which agents in a company are idle or barely used, what each costs, and lets an instance admin pause them.",
+  "version": "0.2.0",
+  "description": "Company-scoped agent activity, costs and reversible board pause controls.",
   "type": "module",
   "private": true,
   "exports": {
