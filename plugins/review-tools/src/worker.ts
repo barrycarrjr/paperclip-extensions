@@ -38,8 +38,11 @@ function refuse(code: string, sentence: string): never {
   throw new Error(`[${code}] ${sentence}`);
 }
 import { findAccount, getOAuthClient, wrapGbpError } from "./gbpAuth.js";
+import { registerConnectFlow, SCOPE_GMAIL } from "./oauthConnect.js";
 import {
   getAllReviews,
+  getGbpAccounts,
+  getGbpLocations,
   getReview,
   listReviews,
   postReply,
@@ -360,6 +363,9 @@ const LOCATION_NOT_VISIBLE = "That location is not one this company can see.";
 
 // ─── plugin definition ───────────────────────────────────────────────────────
 
+/** Shuts the consent listener down when the worker is replaced or stops. */
+let stopConnectFlow: (() => void) | undefined;
+
 const plugin = definePlugin({
   async setup(ctx) {
     // ── Job: poll Gmail for GBP review emails (Phase 1) ──────────────────────
@@ -398,6 +404,11 @@ const plugin = definePlugin({
 
       const messages = await searchReviewEmails(oauth2, lastCheckedSeconds);
       ctx.logger.info("poll-review-emails: found messages", { count: messages.length });
+
+      // Counted rather than logged per message: on a read-only Gmail scope
+      // every single one is refused, and one line a run says that plainly
+      // without burying the run's real output.
+      let couldNotMarkRead = 0;
 
       for (const msg of messages) {
         try {
@@ -438,7 +449,12 @@ const plugin = definePlugin({
             parsed.receivedAt,
           );
 
-          await markEmailRead(oauth2, msg.id);
+          // Best effort only. The plugin asks for read-only Gmail access, so
+          // Google refuses this, and that is fine: which messages have been
+          // handled is the state key below, not the mailbox's unread flag.
+          // It is reported once per run rather than silently every time.
+          const marked = await markEmailRead(oauth2, msg.id).catch(() => false);
+          if (!marked) couldNotMarkRead++;
           await ctx.state.set({ scopeKind: "instance", stateKey: processedKey }, true);
 
           if (issueId) {
@@ -450,6 +466,13 @@ const plugin = definePlugin({
             error: wrapGbpError(err),
           });
         }
+      }
+
+      if (couldNotMarkRead > 0) {
+        ctx.logger.info(
+          "poll-review-emails: left messages unread (the Gmail scope is read-only, which is expected)",
+          { count: couldNotMarkRead },
+        );
       }
 
       await ctx.state.set({ scopeKind: "instance", stateKey: "last-email-check" }, new Date().toISOString());
@@ -464,15 +487,39 @@ const plugin = definePlugin({
         return;
       }
 
+      // Counted, because a job that catches every failure and still exits
+      // cleanly reports a green run while fetching nothing. That is exactly
+      // what happened here: the credential lost its Business Profile
+      // permission on 2026-10-19 and this job went on "succeeding" daily
+      // while every single location was refused. One location failing is a
+      // problem with that location; all of them failing is the job failing.
+      let succeeded = 0;
+      const failures: string[] = [];
+
       for (const location of locations) {
         try {
           await syncLocationReviews(ctx, config, location);
+          succeeded++;
         } catch (err) {
+          const message = wrapGbpError(err);
+          failures.push(`${location.key}: ${message}`);
           ctx.logger.error("sync-all-reviews: failed for location", {
             locationKey: location.key,
-            error: wrapGbpError(err),
+            error: message,
           });
         }
+      }
+
+      if (failures.length > 0 && succeeded === 0) {
+        throw new Error(
+          `sync-all-reviews: every location failed (${failures.length} of ${locations.length}). ${failures[0]}`,
+        );
+      }
+      if (failures.length > 0) {
+        ctx.logger.warn("sync-all-reviews: some locations failed", {
+          failed: failures.length,
+          succeeded,
+        });
       }
     });
 
@@ -976,11 +1023,145 @@ const plugin = definePlugin({
       };
     });
 
-    ctx.logger.info("GBP Reviews plugin started.");
+    // ── Google connection: consent, check, and discovery ─────────────────────
+    //
+    // Everything below exists because the only way to connect an account used
+    // to be a terminal script, and the only way to find an account id or a
+    // location id was to copy a number out of a browser URL. A wrong number
+    // and a wrong-scoped token look identical once they are in the settings:
+    // both just fail every call.
+    /**
+     * The account the page named, checked against the company the host
+     * validated. The portfolio root may reach any account, exactly as it may
+     * read any location's reviews.
+     */
+    async function resolveAccountForScope(config: InstanceConfig, scope: CompanyScope, accountKey: unknown) {
+      const key = typeof accountKey === "string" ? accountKey : "";
+      const account = findAccount(config, key);
+      if (!account) refuse("EACCOUNT_NOT_FOUND", `No Google account called "${key}" is in the plugin settings.`);
+      const allowed = isCompanyAllowedForAccount(account.allowedCompanies, scope.companyId);
+      if (!allowed) {
+        const isRoot = await isPortfolioRootCompany(ctx, scope.companyId);
+        if (!isRoot) {
+          refuse("ECOMPANY_NOT_ALLOWED", "This Google account is not allowed for the company you are viewing.");
+        }
+      }
+      return account;
+    }
+
+    stopConnectFlow?.();
+    // Reconnecting an account the settings already hold reads its OAuth
+    // client id and secret from the secrets it references, so nobody has to
+    // find and paste them a second time. Only the refresh token is replaced.
+    stopConnectFlow = registerConnectFlow(ctx, async (params) => {
+      if (typeof params.accountKey !== "string" || !params.accountKey.trim()) return null;
+      const scope = requireCompanyScope(params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const account = await resolveAccountForScope(config, scope, params.accountKey);
+      const [clientId, clientSecret] = await Promise.all([
+        ctx.secrets.resolve(account.clientIdRef),
+        ctx.secrets.resolve(account.clientSecretRef),
+      ]);
+      if (!clientId || !clientSecret) {
+        refuse("ECONFIG", "This account's OAuth client id or secret is empty. Connect it again as a new account.");
+      }
+      return { clientId, clientSecret };
+    });
+
+    /**
+     * What the configured Google accounts can actually do right now.
+     *
+     * This asks Google rather than reading the settings, because the settings
+     * cannot tell you that a refresh token was minted for a different product.
+     * One live call per account, and the failure is reported as the sentence
+     * the error mapper produced rather than as a dead page.
+     */
+    ctx.data.register("google-connection", async (params) => {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+
+      const accounts = (config.accounts ?? []).filter(
+        (a) => isPortfolioRoot || isCompanyAllowedForAccount(a.allowedCompanies, scope.companyId),
+      );
+
+      const checked = [];
+      for (const account of accounts) {
+        const entry: {
+          key: string;
+          displayName: string;
+          userEmail: string | null;
+          gmailPolling: boolean;
+          ok: boolean;
+          error: string | null;
+          accounts: Array<{ accountId: string; accountName: string; type: string }>;
+        } = {
+          key: account.key,
+          displayName: account.displayName ?? account.key,
+          userEmail: account.userEmail ?? null,
+          gmailPolling: (config.gmailAccountKey ?? "") === account.key,
+          ok: false,
+          error: null,
+          accounts: [],
+        };
+        try {
+          const oauth2 = await getOAuthClient(ctx, config, account.key, scope.companyId, {
+            skipCompanyCheck: isPortfolioRoot,
+          });
+          entry.accounts = await getGbpAccounts(oauth2);
+          entry.ok = true;
+        } catch (err) {
+          entry.error = wrapGbpError(err);
+        }
+        checked.push(entry);
+      }
+
+      return {
+        accounts: checked,
+        locations: (config.locations ?? []).map((l) => ({
+          key: l.key,
+          displayName: l.displayName,
+          accountKey: l.accountKey,
+          googleAccountId: l.googleAccountId,
+          locationId: l.locationId,
+          targetCompanyId: l.targetCompanyId,
+          // The one configuration mistake that cannot be seen by reading the
+          // settings: the same number in both fields. It is what the live
+          // instance had, and it makes every call 404 or 403.
+          looksMisconfigured: l.googleAccountId === l.locationId,
+        })),
+        allowReplies: config.allowReplies === true,
+        gmailScope: SCOPE_GMAIL,
+      };
+    });
+
+    /** Every location under one Google account, for the settings page to pick from. */
+    ctx.data.register("google-locations", async (params) => {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const account = await resolveAccountForScope(config, scope, params.accountKey);
+      const accountId = typeof params.accountId === "string" ? params.accountId.trim() : "";
+      if (!accountId) refuse("EINVALID_INPUT", "Pick a Google account id first.");
+
+      try {
+        const oauth2 = await getOAuthClient(ctx, config, account.key, scope.companyId, {
+          skipCompanyCheck: isPortfolioRoot,
+        });
+        const locations = await getGbpLocations(oauth2, accountId);
+        return { accountId, locations };
+      } catch (err) {
+        throw new Error(wrapGbpError(err));
+      }
+    });
+
+    ctx.logger.info("Review Tools plugin started.");
+  },
+
+  async onShutdown() {
+    stopConnectFlow?.();
   },
 
   async onHealth() {
-    return { status: "ok", message: "GBP Reviews worker is running." };
+    return { status: "ok", message: "Review Tools worker is running." };
   },
 });
 

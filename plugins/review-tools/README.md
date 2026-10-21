@@ -6,6 +6,57 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 ## Recent changes
 
+- **v0.2.0**: Connecting Google works from inside the app, and a failure now
+  says which thing is wrong.
+
+  The plugin had been unable to read a single review since 2026-10-06. Two
+  separate faults, and neither was visible in the settings.
+
+  First, the refresh token. It is held in three secrets that this plugin
+  shared with the google-workspace plugin, so when that plugin was
+  reconnected on 2026-10-19 the shared token was replaced with one granted
+  for Google Calendar. A Calendar token authenticates perfectly here and can
+  read nothing, so the daily sync went on reporting success while fetching
+  no reviews at all, and the email poll failed 202 times in a row with
+  "Request had insufficient authentication scopes". This version gives the
+  plugin its own secrets, named for it, so reconnecting another Google
+  plugin can no longer log this one out.
+
+  Second, the location. Its Google account id and location id were both set
+  to the same number, which cannot be right: they are different ids. Every
+  call for that location would have failed even with a good token. There was
+  no way to discover the right values, because the script that lists
+  accounts called a v4 path Google answers with a 404 HTML page. Account
+  listing moved to the Account Management API and location listing to the
+  Business Information API; both are now used, and the new page lists the
+  locations so the two ids are picked rather than typed.
+
+  New **Google connection** page (route `reviews-setup`), per company:
+  it asks Google what the stored token can actually do rather than reporting
+  what the settings say, runs the consent flow in the browser with a
+  loopback callback, refuses to save a grant that is missing permission to
+  manage business listings, and lists the real locations to choose from. It
+  also points out a location whose two ids are identical.
+
+  Error messages now separate the three refusals that all arrive as an HTTP
+  403 and all used to read the same: a token missing a permission
+  (`EAUTH_SCOPE`), an API not switched on in the Google Cloud project
+  (`EGBP_API_DISABLED`), and no approved quota (`EGBP_QUOTA`, which for this
+  API usually means the access request has not been granted). A refused
+  token refresh says whether Google rejected the refresh token
+  (`EAUTH_INVALID_GRANT`) or the client credentials (`EAUTH_CLIENT`),
+  instead of the bare word "invalid_grant".
+
+  Email polling: the job tried to mark each notification read, which needs a
+  write permission the plugin does not ask for and should not have, so it
+  failed silently every time and every message stayed unread and was
+  re-fetched for ever. It no longer depends on that, and a first run is
+  limited to the last seven days so switching polling on cannot open a task
+  for every review notification in the mailbox's history.
+
+  Still to do, and it needs a person: someone has to run the consent once
+  on the new page. Nothing here can grant Google access on their behalf.
+
 - **v0.1.15**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
 
 - **v0.1.14** - Patch bump alongside the cross-plugin release. No functional changes; ensures the Plugin Manager surfaces the update so installed copies stay current with the registry.
@@ -77,8 +128,8 @@ Multi-platform customer review management and response suite for a portfolio. Su
   says it covers people as well as agents.
 
   Attended live check: not yet done. One real post through the confirm
-  panel, to a review Barry wrote on a listing he owns, is to be made with him
-  present and then removed in Google's console; the result (receipt shown,
+  panel, to a review the operator wrote on a listing they own, is to be made
+  with them present and then removed in Google's console; the result (receipt shown,
   `reply_posts` row posted, host activity row present, review flipped to
   replied, summary count dropped, a second click made no second post, and a
   later `gbp_reply_to_review` on the same review held for approval and then
@@ -163,76 +214,55 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 | Job | Schedule (cron) | What it does |
 |---|---|---|
-| `poll-review-emails` | `*/15 * * * *` | Searches the configured Gmail inbox for unread GBP review notifications, parses them, and creates a review issue with a drafted reply. Skipped unless `gmailAccountKey` is set. |
+| `poll-review-emails` | `*/15 * * * *` | Searches the configured Gmail inbox for review notifications since the last run, parses them, and creates a review issue with a drafted reply. A first run looks back seven days. Skipped unless `gmailAccountKey` is set. |
 | `sync-all-reviews` | `0 6 * * *` | Pulls every configured location's reviews via the My Business API into the local table; opens issues for new unreplied reviews. |
 | `send-weekly-digest` | `0 8 * * 1` | Creates a per-location weekly digest issue (counts, avg rating, unreplied list). |
 
 ### UI
 
 - `ReviewSummaryWidget`: dashboard widget showing per-location unreplied / avg / total.
+- `GoogleSetupPage`: full page at route `reviews-setup`. Connects a Google account, says what the stored token can actually do, and lists real locations to choose from. Bridge handlers `google-connection` and `google-locations` (reads), and the actions `google_connect_start`, `google_connect_poll`, `google_connect_submit_callback` and `google_connect_cancel`. Both reads scope on the host's company stamp like every other handler here.
 - `ReviewDashboardPage`: full page at route `reviews`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
 
 The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `review-tools:draft:<companyId>:<reviewName>`).
 
 ## Setup
 
-### 1. Create a Google Cloud OAuth client
+All of this happens on the **Google connection** page inside a company (route `reviews-setup`). No terminal, and no pasting a refresh token between fields.
 
-Once per Google account that has **Owner or Manager** access to the GBP location(s).
+### Run sheet
 
-1. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials).
-2. Pick (or create) a project.
-3. **Enable APIs** (APIs & Services → Library): **My Business Account API** and **Gmail API**.
-4. **Create OAuth 2.0 Client ID**: Application type **Web application**. Add `http://localhost:8080/callback` as an Authorized redirect URI.
-   - Note: the "TVs and Limited Input devices" (device-code) flow does **not** support the `business.manage` scope. Web application type is required for GBP.
-5. Note the **Client ID** and **Client Secret**.
+1. Google Cloud console: pick the project that has Business Profile API access.
+2. Enable **My Business Account Management API**, **My Business Business Information API**, **Google My Business API**, and **Gmail API** if you want email polling.
+3. Create an OAuth client, type **Desktop app** (simplest), or reuse a Web application client that has `http://127.0.0.1:54321/oauth/callback` among its authorised redirect URIs. Copy the client ID and secret.
+4. Paperclip: open the company, then **Google connection**. Name the account, paste the ID and secret, press **Connect to Google**.
+5. Grant every permission. STOP if the page says a permission is missing: nothing is saved, and reviews cannot be read without `business.manage`.
+6. **Choose which locations to watch**: pick the listing group, then the location. The account id and location id are filled in for you.
+7. Turn on **Allow posting review replies** in the plugin settings when replies should actually publish.
 
-Scopes requested:
+### Which redirect address is used
 
-- `https://www.googleapis.com/auth/business.manage`
-- `https://www.googleapis.com/auth/gmail.readonly` (only needed for Phase 1 email polling)
+A Desktop app client accepts any loopback address. A Web application client accepts only the addresses registered on it, so the page tries, in order, `http://127.0.0.1:54321/oauth/callback`, then `http://localhost:8080/callback` (the two the earlier terminal scripts told people to register), then a random loopback port. Each is checked with Google first, without a browser: Google answers an unregistered address with a redirect to its error page before anyone signs in. A client that accepts none of them is reported on the page with the address to register, rather than sending anyone to Google's "redirect_uri_mismatch" screen.
 
-### 2. Get a refresh token
+### Which API is on which host
 
-From the `paperclip-extensions` repo:
+Worth knowing, because getting it wrong fails in a way that reads like a missing location:
 
-```bash
-cd plugins/review-tools
-GBP_CLIENT_ID="…" GBP_CLIENT_SECRET="…" pnpm grant
-```
-
-It opens a localhost listener, runs the OAuth consent in your browser, and prints the refresh token. Use a Google account with Owner/Manager access to the location(s).
-
-### 3. Create Paperclip secrets
-
-For each account, create three secrets (names are cosmetic, the config references them by UUID; `ALL_CAPS_SNAKE_CASE` to match the env-var names above):
-
-- `GBP_CLIENT_ID` → the OAuth client ID
-- `GBP_CLIENT_SECRET` → the OAuth client secret
-- `GBP_REFRESH_TOKEN` → the refresh token from step 2
-
-### 4. Configure the plugin (Configuration tab)
-
-Add a **GBP account** entry:
-
-| Field | Example | Notes |
+| What | Host | Why |
 |---|---|---|
-| Key | `primary-gbp` | Short stable ID referenced by locations. |
-| OAuth client ID / secret / Refresh token | _(secret UUIDs)_ | Paste the UUIDs of the three secrets. |
-| Allowed companies | _(company UUIDs)_ | Which companies' agents may use this account. Empty = unusable (fail-safe deny). |
+| Reviews, replies | `mybusiness.googleapis.com/v4` | Never migrated. v4 is correct here and is not going away for reviews. |
+| Listing the accounts a credential can see | `mybusinessaccountmanagement.googleapis.com/v1` | The v4 `/accounts` path answers 404 with an HTML page. |
+| Listing locations | `mybusinessbusinessinformation.googleapis.com/v1` | Needs an explicit `readMask`. |
 
-Add a **GBP location** entry per location:
+### Secrets
 
-| Field | Example | Notes |
-|---|---|---|
-| Key | `main-st-store` | Short stable ID. |
-| Display name | `Main St Store` | Shown in issues, digests, and the dashboard. |
-| Google Account ID | `1234567890` | Numeric GBP account ID: find it with `pnpm tsx scripts/list-accounts.ts`. |
-| Location ID | `1234567890123456789` | Numeric GBP location ID. |
-| Account key | `primary-gbp` | References the account entry above. |
-| Target company ID | _(company UUID)_ | Paperclip company where review issues are created. |
+The page creates three secrets named `review_tools_<account>_client_id`, `_client_secret` and `_refresh_token`, owned by the company you connect from, and references them by UUID.
 
-To enable Phase 1 email polling, set **Gmail account key** to the account whose refresh token includes the `gmail.readonly` scope.
+They are deliberately **not** shared with the google-workspace plugin. Sharing one set of `gbp_*` secrets between the two is what caused the October 2026 outage: reconnecting Workspace replaced the refresh token with a Calendar-scoped one, which authenticated perfectly and could not read a single review.
+
+### Doing it from a terminal instead
+
+`scripts/grant.ts` and `scripts/list-accounts.ts` still work and are the fallback when a browser cannot reach this machine. The page is the supported path.
 
 ## Error codes
 
@@ -254,7 +284,12 @@ The plugin wraps errors in a stable `[E…]` envelope so skills can pattern-matc
 | `[EPOST_UNCONFIRMED]` | The connection dropped after the write was sent, so it is not known whether Google received it. | Try again; the retry checks Google first and will not post twice. |
 | `[ECONFIG]` | A required secret-ref is missing, or a secret resolved empty. | Re-paste the secret UUIDs; verify non-empty values. |
 | `[ECONFIG_SECRET_MISSING]` | A configured secret-ref UUID doesn't exist in the company's store. | Create the missing secret; fix the UUID. |
-| `[EAUTH]` | Failed to obtain a GBP access token. | Re-run the grant script; the refresh token may be revoked/expired. |
+| `[EAUTH]` | Failed to obtain a Google access token for a reason not listed below. | Reconnect the account on the Google connection page. |
+| `[EAUTH_SCOPE]` | The token was granted without the permission the call needs. The message names which one. | Reconnect the account and leave every permission ticked. This is what the October 2026 outage looked like. |
+| `[EAUTH_INVALID_GRANT]` | Google no longer accepts the refresh token: revoked, expired, or minted by a different OAuth client. | Reconnect the account. |
+| `[EAUTH_CLIENT]` | Google does not recognise the OAuth client ID and secret. | Check both against the Google Cloud console. |
+| `[EGBP_API_DISABLED]` / `[EGMAIL_API_DISABLED]` | The named API is not enabled on the Cloud project behind the OAuth client. | Enable it under APIs and Services, then press Check again. |
+| `[EGBP_QUOTA]` / `[EGMAIL_QUOTA]` | Google refused over quota. | A Business Profile quota of zero means API access has not been approved for that project; that is a request to Google, not a setting. |
 | `[EGBP_HTTP_<status>]` | The My Business API returned an error. | The message follows the code. `invalid_grant` → re-grant. |
 | `[EGMAIL_HTTP_<status>]` | The Gmail API returned an error. | Confirm the refresh token includes `gmail.readonly`. |
 | `[EGBP_UNKNOWN]` | Unrecognized error shape. | Check worker logs for the raw error. |
@@ -275,4 +310,5 @@ Each account entry lists which Paperclip companies may use it (`allowedCompanies
 ## Versioning
 
 - `0.1.0`: initial release.
+- `0.2.0`: the Google connection page, this plugin's own secrets, current account and location APIs, and error messages that separate the three different HTTP 403s. Needs one consent run by a person before reviews flow.
 - `0.1.10`: the Reviews page reply editor and the shared guarded post path. Requires a host that stamps `params.hostScope` on bridge calls; on an older host every screen shows an access sentence rather than data.

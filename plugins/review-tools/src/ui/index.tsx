@@ -11,6 +11,10 @@ import { locationRatingLabel, locationReplyBadge, type BadgeTone } from "./edito
 import { describeReplyError } from "./replyErrors.js";
 import { ErrorNote, css, linkButton, mutedText } from "./shared.js";
 
+// The Google connection screen is its own page slot, re-exported here
+// because the manifest points every UI slot at this one bundle entry.
+export { GoogleSetupPage } from "./GoogleSetup.js";
+
 interface LocationSummary {
   locationKey: string;
   locationName: string;

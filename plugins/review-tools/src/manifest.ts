@@ -1,84 +1,53 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "review-tools";
-const PLUGIN_VERSION = "0.1.15";
+const PLUGIN_VERSION = "0.2.0";
 
 const SETUP_INSTRUCTIONS = `# Setup: Review Tools
 
-Review Tools coordinates customer review workflows across multiple review platforms for your portfolio companies, allowing agents and team members to track reviews, draft suggested responses, and post replies directly from Paperclip.
+Review Tools tracks customer reviews and replies to them from inside Paperclip. It supports Google Business Profile today, with room for other review platforms later.
 
-Currently supports **Google Business Profile (GBP)**, with architecture for connecting additional review platforms (Trustpilot, Facebook, Yelp, App Store, etc.).
+Everything below is done on the **Google connection** page inside a company. You do not need a terminal.
+
+## Run sheet
+
+1. In the Google Cloud console, pick (or create) the project that has Business Profile API access.
+2. Enable **My Business Account Management API**, **My Business Business Information API**, **Google My Business API**, and (only for email polling) **Gmail API**.
+3. Create an OAuth client, type **Desktop app** (simplest). A Web application client works too if its authorised redirect URIs include http://127.0.0.1:54321/oauth/callback. Copy the client ID and secret.
+4. In Paperclip, open the company, then **Google connection**. Give the account a short name, paste the ID and secret, and press **Connect to Google**.
+5. Grant every permission Google asks for. STOP if it reports a missing permission: nothing is saved, and the plugin cannot work without permission to manage business listings.
+6. Under **Choose which locations to watch**, pick the listing group and then the location. This fills in the account id and location id for you.
+7. Turn on **Allow posting review replies** in the plugin settings when you want replies to publish. Until then replies are drafted but never posted.
+
+## Why the setup page rather than a script
+
+The two things that go wrong here are invisible in the settings:
+
+- A refresh token granted for a different Google product authenticates perfectly and can read nothing. The page asks Google what the token can actually do and says so.
+- The Google account id and the location id are different numbers that look alike. Typed in by hand, the same number often ends up in both fields and every call fails. Picking the location from a list fills in both.
+
+The credentials are stored as this plugin's own secrets, so connecting a different Google plugin cannot overwrite them.
 
 ## What it does
-- **Multi-platform support**: Unified review tracking and responses across connected review APIs
-- **Phase 1**: Polls Gmail for review notification emails and creates Paperclip issues with suggested replies
-- **Phase 2**: Posts approved replies back via review provider APIs, from an agent tool or the Reviews dashboard
-- **Phase 3**: Daily/weekly review digest, sentiment tracking, and cross-channel dashboard
 
----
+- **Daily sync** pulls every configured location's reviews and opens a task for each new unreplied one.
+- **Email polling** (optional) watches for Google's review notification emails so a review is noticed within minutes rather than at the next daily sync.
+- **Weekly digest** summarises each location's week.
+- **Reviews page** lists reviews per location and posts approved replies back to Google.
 
-## Google Business Profile (GBP) Setup
+## Permissions asked for
 
-### 1. Create a GCP project and OAuth credentials
+- The business.manage scope reads reviews and posts replies. Required.
+- The gmail.readonly scope reads review notification emails. Optional, and read-only: the plugin cannot change anything in the mailbox, so notification emails stay marked unread.
 
-Go to [https://console.cloud.google.com](https://console.cloud.google.com):
-1. Create (or reuse) a project
-2. Enable: **My Business API** and **Gmail API**
-3. Create OAuth 2.0 credentials (Desktop app type)
-4. Download client ID and secret
+## If something is wrong
 
-### 2. Get a refresh token
+The Google connection page names the fault and who has to fix it. The common ones:
 
-From the \`paperclip-extensions\` repo:
-\`\`\`bash
-pnpm --filter paperclip-plugin-review-tools grant <account-key>
-\`\`\`
-Use a Google account that has **Owner or Manager** access to the GBP location(s).
-
-Required scopes:
-- \`https://www.googleapis.com/auth/business.manage\`
-- \`https://www.googleapis.com/auth/gmail.readonly\`
-
-### 3. Create Paperclip secrets
-
-For each Google account, create three secrets in Paperclip:
-- \`GBP_CLIENT_ID\` → the OAuth client ID
-- \`GBP_CLIENT_SECRET\` → the OAuth client secret
-- \`GBP_REFRESH_TOKEN\` → the refresh token from step 2
-
-### 4. Configure the plugin (Configuration tab)
-
-Under **Google / GBP OAuth accounts**, add an entry:
-| Field | Value |
-|---|---|
-| **Key** | e.g. \`primary-gbp\` |
-| **Google Account ID** | The numeric GBP account ID (get from the GBP URL or API) |
-| **OAuth client ID** | UUID of the client ID secret |
-| **OAuth client secret** | UUID of the client secret secret |
-| **Refresh token** | UUID of the refresh token secret |
-| **Allowed companies** | Companies that may use this account |
-
-Under **Monitored review locations**, add each location:
-| Field | Value |
-|---|---|
-| **Key** | e.g. \`main-st-store\` |
-| **Display name** | e.g. \`Main St Store\` |
-| **Google Account ID** | Same as above |
-| **Location ID** | The GBP location ID (e.g. \`1234567890123456789\`) |
-| **Account key** | References the account entry above |
-| **Target company ID** | Paperclip company where review issues should be created |
-
----
-
-## Additional Review Providers
-Support for additional review platforms (Trustpilot, Facebook, Yelp) uses the same unified review database schema and response pipeline. Contact your administrator or check upcoming extension releases for provider connectors.
-
----
-
-## Troubleshooting
-- **\`invalid_grant\`**: re-run the grant script and update the refresh token secret.
-- **Missing Gmail permissions**: make sure the refresh token was obtained with the \`gmail.readonly\` scope.
-- **Reviews not appearing**: confirm the Google account has Owner/Manager access to the location.
+- **Permission missing from the token**: reconnect the account and leave every permission ticked.
+- **API not enabled**: enable the named API in the Google Cloud project, then press Check again.
+- **Quota refused**: a Business Profile quota of zero means Google has not approved API access for that project yet. That is an access request to Google, not a setting.
+- **Google no longer accepts the refresh token**: it was revoked or expired. Reconnect the account.
 `;
 
 const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
@@ -284,6 +253,13 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         displayName: "Review Dashboard",
         exportName: "ReviewDashboardPage",
         routePath: "reviews",
+      },
+      {
+        type: "page",
+        id: "review-google-setup",
+        displayName: "Review Tools: Google connection",
+        exportName: "GoogleSetupPage",
+        routePath: "reviews-setup",
       },
     ],
   },

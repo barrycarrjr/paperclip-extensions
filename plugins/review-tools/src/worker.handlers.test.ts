@@ -341,7 +341,10 @@ test("review-detail still answers when Google cannot be read, and says so", asyn
   const data = (await harness.getData("review-detail", scoped(COMPANY_A, { reviewName: REVIEW_NAME }))) as Record<string, unknown>;
   assert.equal(data.liveChecked, false);
   assert.equal(data.liveReply, null);
-  assert.match(String(data.liveError), /^\[EGBP_HTTP_429\]/);
+  // A refusal over quota gets its own code rather than a bare HTTP status:
+  // on this API it usually means Google has not approved access for the
+  // project at all, which no amount of retrying will fix.
+  assert.match(String(data.liveError), /^\[EGBP_QUOTA\]/);
   assert.equal((data.review as { reviewName: string }).reviewName, REVIEW_NAME);
 });
 
@@ -912,4 +915,48 @@ test("an agent tool call a person drove records the person as well as the agent"
   assert.equal(audit.params?.[5], USER, "the person who drove the tool is on the audit row");
   assert.equal(audit.params?.[6], "agent-1");
   assert.equal(audit.params?.[7], "run-1");
+});
+
+test("sync-all-reviews fails when every location was refused, instead of reporting success", async () => {
+  // The outage this guards against: the credential lost its Business
+  // Profile permission, every location was refused, and the job went on
+  // reporting a clean run every morning for a fortnight because it caught
+  // each failure and returned normally.
+  const harness = await makeHarness();
+  answerGoogle(() =>
+    json(
+      {
+        error: {
+          code: 403,
+          message: "Request had insufficient authentication scopes.",
+          details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT", metadata: { service: "mybusiness.googleapis.com" } }],
+        },
+      },
+      403,
+    ),
+  );
+
+  await assert.rejects(
+    () => harness.runJob("sync-all-reviews"),
+    (err: Error) => {
+      assert.match(err.message, /every location failed \(2 of 2\)/);
+      // The reason travels with the failure, so the run's own error says
+      // what to do rather than only "failed".
+      assert.match(err.message, /EAUTH_SCOPE/);
+      return true;
+    },
+  );
+});
+
+test("sync-all-reviews still succeeds when only some locations fail", async () => {
+  const harness = await makeHarness();
+  let call = 0;
+  answerGoogle(() => {
+    call++;
+    // First location is refused, second answers with an empty list.
+    if (call === 1) return json({ error: { code: 403, message: "nope" } }, 403);
+    return json({ reviews: [] });
+  });
+
+  await harness.runJob("sync-all-reviews");
 });

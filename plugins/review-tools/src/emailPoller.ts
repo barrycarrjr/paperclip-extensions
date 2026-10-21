@@ -12,6 +12,7 @@
 
 import type { OAuth2Client } from "google-auth-library";
 import { getAccessToken } from "./gbpAuth.js";
+import { describeGoogleApiError } from "./googleError.js";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1";
 const GBP_SENDER = "review-noreply@google.com";
@@ -35,17 +36,41 @@ async function gmailFetch(
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
-    throw new Error(`[EGMAIL_HTTP_${res.status}] ${(await res.text()).slice(0, 200)}`);
+    // A token granted without gmail.readonly fails here with a 403 whose
+    // text is about "scopes" and names no product. The mapped message says
+    // which permission is missing and that reconnecting is the fix.
+    throw new Error(describeGoogleApiError("gmail", res.status, await res.text()));
   }
   return res.json();
+}
+
+/**
+ * How far back to look when the plugin has never polled before.
+ *
+ * Without a bound, a first run searches the whole mailbox and can open an
+ * issue for every review notification the account has ever received. Seven
+ * days is enough to catch anything recent without a flood on the day
+ * somebody switches polling on.
+ */
+export const FIRST_RUN_WINDOW_DAYS = 7;
+
+export function firstRunAfterSeconds(now: Date): number {
+  return Math.floor((now.getTime() - FIRST_RUN_WINDOW_DAYS * 24 * 60 * 60 * 1000) / 1000);
 }
 
 export async function searchReviewEmails(
   oauth2Client: OAuth2Client,
   afterEpochSeconds?: number,
 ): Promise<Array<{ id: string; threadId: string }>> {
-  const afterClause = afterEpochSeconds ? ` after:${afterEpochSeconds}` : "";
-  const query = encodeURIComponent(`from:${GBP_SENDER} subject:"${GBP_SUBJECT_PREFIX}"${afterClause} is:unread`);
+  // Always bounded: the caller's recorded checkpoint, or the first-run
+  // window when there is none.
+  const after = afterEpochSeconds ?? firstRunAfterSeconds(new Date());
+  // `is:unread` used to be part of this. It was doing the job of an
+  // idempotency check, badly: the plugin cannot mark anything read on a
+  // read-only scope, so every matching email stayed unread and was fetched
+  // again on every poll for ever. Which messages have been handled is held
+  // in plugin state by message id, which works whatever the mailbox says.
+  const query = encodeURIComponent(`from:${GBP_SENDER} subject:"${GBP_SUBJECT_PREFIX}" after:${after}`);
   const res = await gmailFetch(oauth2Client, `/users/me/messages?q=${query}&maxResults=50`) as {
     messages?: Array<{ id: string; threadId: string }>;
   };
@@ -162,12 +187,27 @@ export async function fetchAndParseEmail(
   };
 }
 
+/**
+ * Try to clear the UNREAD label, and say whether Google allowed it.
+ *
+ * This can never succeed on the scope this plugin asks for: marking a
+ * message read is a write, so it needs `gmail.modify`, while the plugin
+ * requests `gmail.readonly` and should keep doing so, because a plugin that
+ * reads notification emails has no business being able to change a mailbox.
+ *
+ * The call used to ignore its own response, so the failure was invisible and
+ * the message stayed unread for ever. Nothing depends on it now: which
+ * emails have been handled is recorded in plugin state by message id, and
+ * the search no longer filters on unread. It is still attempted because a
+ * token that happens to carry `gmail.modify` makes the mailbox tidier, and
+ * the caller logs the refusal once rather than silently retrying for ever.
+ */
 export async function markEmailRead(
   oauth2Client: OAuth2Client,
   messageId: string,
-): Promise<void> {
+): Promise<boolean> {
   const token = await getAccessToken(oauth2Client);
-  await fetch(`${GMAIL_BASE}/users/me/messages/${messageId}/modify`, {
+  const res = await fetch(`${GMAIL_BASE}/users/me/messages/${messageId}/modify`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -175,4 +215,5 @@ export async function markEmailRead(
     },
     body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
   });
+  return res.ok;
 }

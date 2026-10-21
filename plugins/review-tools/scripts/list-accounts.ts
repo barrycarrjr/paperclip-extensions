@@ -57,7 +57,11 @@ async function main(): Promise<void> {
   let pageToken: string | undefined;
 
   do {
-    const url = `https://mybusiness.googleapis.com/v4/accounts${pageToken ? `?pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+    // Account Management v1, NOT the v4 host. The v4 /accounts path this
+    // script used to call answers 404 with an HTML page, so this listing was
+    // never able to work and the account id had to be copied out of a
+    // browser URL instead. Reviews are the only thing still served by v4.
+    const url = `https://mybusinessaccountmanagement.googleapis.com/v1/accounts?pageSize=20${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
