@@ -12,6 +12,7 @@ import {
   findPendingAttempt,
   findReviewForLocation,
   listReviewsForLocation,
+  parseReviewFilter,
   resolveScopedLocation,
   resolveScopedLocationForReview,
   summaryForLocation,
@@ -39,6 +40,8 @@ function refuse(code: string, sentence: string): never {
 }
 import { findAccount, getOAuthClient, wrapGbpError } from "./gbpAuth.js";
 import { registerConnectFlow, SCOPE_GMAIL } from "./oauthConnect.js";
+import { closeReviewIssue, ensureParentIssue } from "./reviewTasks.js";
+import { generateReplyWithAgent, pickReplyAgent } from "./aiReply.js";
 import {
   getAllReviews,
   getGbpAccounts,
@@ -98,6 +101,51 @@ function buildReviewIssueBody(
 
 /** The plugin context, spelled out once instead of at every call site. */
 type PluginCtx = Parameters<Parameters<typeof definePlugin>[0]["setup"]>[0];
+
+/**
+ * The agent that writes replies for this company, or null when the feature
+ * is switched off.
+ *
+ * The words come from one of the company's own agents, so they are produced
+ * by whatever that agent already runs on and are counted like every other
+ * agent run. There is no second credential to find and paste, which is the
+ * whole reason this does not call a provider directly.
+ */
+async function resolveReplyAgent(
+  ctx: PluginCtx,
+  config: InstanceConfig,
+  companyId: string,
+): Promise<{ agentId: string; agentName: string } | null> {
+  const ai = config.aiReplies;
+  if (!ai?.enabled) return null;
+
+  if (ai.agentId) {
+    const named = await ctx.agents.get(ai.agentId, companyId).catch(() => null);
+    if (!named) {
+      throw new Error(
+        "[ECONFIG] The agent chosen to write replies is not in this company any more. Pick another under AI-written replies in the plugin settings.",
+      );
+    }
+    const status = (named as unknown as { status?: string }).status;
+    if (status === "paused" || status === "terminated") {
+      throw new Error(
+        `[EAGENT_UNAVAILABLE] The agent chosen to write replies is ${status}. Resume it, or pick another under AI-written replies in the plugin settings.`,
+      );
+    }
+    return { agentId: named.id, agentName: named.name ?? named.id };
+  }
+
+  const agents = await ctx.agents.list({ companyId, limit: 50 }).catch((err: Error) => {
+    throw new Error(`[EAGENT_UNAVAILABLE] Could not read this company's agents: ${err.message}`);
+  });
+  const picked = pickReplyAgent(agents as unknown as Array<{ id: string; name?: string; status?: string; role?: string }>);
+  if (!picked) {
+    throw new Error(
+      "[EAGENT_UNAVAILABLE] No agent in this company is available to write a reply. Every agent is paused or terminated.",
+    );
+  }
+  return { agentId: picked.id, agentName: picked.name ?? picked.id };
+}
 
 /**
  * Where a location's last sync time is kept: one instance-wide key per
@@ -187,6 +235,17 @@ async function createReviewIssue(
   const body = buildReviewIssueBody(reviewerName, starRating, reviewText, businessName, draftReply);
 
   try {
+    // A subtask under the location's one parent task, so a sync that finds
+    // many unreplied reviews adds lines under one heading rather than
+    // opening a task per review. If the parent cannot be found or made, the
+    // review still gets a task; it just sits at the top level.
+    const parentId = await ensureParentIssue(ctx, location).catch((err) => {
+      ctx.logger.warn("review-tools: could not get the parent task, filing at top level", {
+        locationKey: location.key,
+        error: (err as Error).message,
+      });
+      return undefined;
+    });
     const issue = await ctx.issues.create({
       companyId: location.targetCompanyId,
       title,
@@ -194,6 +253,7 @@ async function createReviewIssue(
       priority: reviewPriority(starRating),
       originKind: "plugin:review-tools",
       originId: reviewName,
+      ...(parentId ? { parentId } : {}),
       ...(location.targetProjectId ? { projectId: location.targetProjectId } : {}),
     });
     ctx.logger.info("Created review issue", { reviewName, issueId: issue.id, companyId: location.targetCompanyId });
@@ -219,8 +279,13 @@ async function syncLocationReviews(
 
   let newCount = 0;
   for (const review of reviews) {
-    const existing = await ctx.db.query<{ review_name: string; reply_text: string | null; reply_source: string | null }>(
-      `SELECT review_name, reply_text, reply_source FROM ${ns}.reviews WHERE review_name = $1`,
+    const existing = await ctx.db.query<{
+      review_name: string;
+      reply_text: string | null;
+      reply_source: string | null;
+      paperclip_issue_id: string | null;
+    }>(
+      `SELECT review_name, reply_text, reply_source, paperclip_issue_id FROM ${ns}.reviews WHERE review_name = $1`,
       [review.name],
     );
 
@@ -253,6 +318,11 @@ async function syncLocationReviews(
           review.name,
         ],
       );
+      // A reply written in Google's own console, or posted here and not
+      // recorded at the time, is still a reply: its subtask is finished.
+      if (!stored.reply_text && review.reviewReply?.comment && stored.paperclip_issue_id) {
+        await closeReviewIssue(ctx, location.targetCompanyId, stored.paperclip_issue_id, "replied-on-google");
+      }
       continue;
     }
 
@@ -734,6 +804,8 @@ const plugin = definePlugin({
             },
           );
 
+          await closeReviewIssue(ctx, runCtx.companyId, receipt.issueId, "posted");
+
           if (!receipt.recordedLocally) {
             // The reply is public; the local table just does not know yet.
             // Say both, rather than reporting a failed post.
@@ -835,9 +907,10 @@ const plugin = definePlugin({
       const { location, isRollup, canPostFromHere } = resolved;
       const account = findAccount(config, location.accountKey);
 
+      const filter = parseReviewFilter(params.filter);
       const [lastSyncedAt, reviews] = await Promise.all([
         readLastSyncedAt(ctx, location.key),
-        listReviewsForLocation(ctx.db, location),
+        listReviewsForLocation(ctx.db, location, filter),
       ]);
 
       return {
@@ -849,6 +922,7 @@ const plugin = definePlugin({
         lastSyncedAt,
         canPostFromHere,
         isRollup,
+        filter,
         reviews,
       };
     });
@@ -975,7 +1049,7 @@ const plugin = definePlugin({
       // own company, the text, the live overwrite check, the audit row, the
       // one PUT) is the shared guard, the same one the agent tool goes
       // through. A refusal is thrown as-is so the bridge reports a failure.
-      return postReplyGuarded(
+      const receipt = await postReplyGuarded(
         {
           config,
           store: createDbReplyStore(ctx.db),
@@ -994,9 +1068,64 @@ const plugin = definePlugin({
           replaceExisting: params.replaceExisting === true,
         },
       );
+      // The reply is on Google; the task for it is finished, whoever
+      // finishes it. Done after the post so a task problem never blocks one.
+      await closeReviewIssue(ctx, scope.companyId, receipt.issueId, "posted");
+      return receipt;
     });
 
     // ── Action: pull one location's reviews in now ───────────────────────────
+    // -- Action: write a reply for one review ----------------------------------
+    //
+    // The whole point of the plugin for the person using it. The model's
+    // text lands in the editor, where it is read and can be changed before
+    // the separate, guarded Post step; this action never posts anything.
+    // With no AI settings it answers with the fixed template and says so,
+    // rather than failing a button the page shows regardless.
+    ctx.actions.register("review-generate-reply", async (params) => {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      const config = (await ctx.config.get()) as InstanceConfig;
+
+      const parsed = parseReviewName(params.reviewName);
+      if (!parsed) refuse("EINVALID_INPUT", "That is not a Google review this plugin can show.");
+      const resolved = resolveScopedLocationForReview(config, scope, isPortfolioRoot, parsed);
+      if (!resolved) refuse("ELOCATION_NOT_FOUND", LOCATION_NOT_VISIBLE);
+      const { location } = resolved;
+
+      const review = await findReviewForLocation(ctx.db, canonicalReviewName(parsed), location);
+      if (!review) {
+        refuse("EREVIEW_NOT_FOUND", "That review is not in Paperclip yet. Press Sync now on its location, then open it again.");
+      }
+
+      const draft = typeof params.draft === "string" ? params.draft.slice(0, 4096) : null;
+      const agent = await resolveReplyAgent(ctx, config, scope.companyId);
+      if (!agent) {
+        return {
+          text: buildDraftReply(location.displayName, review.reviewerName, review.starRating, review.reviewText ?? undefined),
+          source: "template",
+          note: "This is the standard template. Switch on AI-written replies in the plugin settings to have one of this company's agents write a reply for each review.",
+        };
+      }
+
+      try {
+        const text = await generateReplyWithAgent(
+          { ctx, companyId: scope.companyId, agentId: agent.agentId },
+          {
+            businessName: location.displayName,
+            reviewerName: review.reviewerName,
+            rating: review.starRating,
+            reviewText: review.reviewText ?? null,
+            draft,
+            instructions: config.aiReplies?.instructions,
+          },
+        );
+        return { text, source: "ai", agentName: agent.agentName };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(/^\[E[A-Z_0-9]+\]/.test(message) ? message : `[EAI_FAILED] ${message.slice(0, 200)}`);
+      }
+    });
+
     ctx.actions.register("review-sync-location", async (params) => {
       const scope = requireCompanyScope(params);
       const config = (await ctx.config.get()) as InstanceConfig;

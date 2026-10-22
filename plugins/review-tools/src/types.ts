@@ -18,11 +18,20 @@ export interface LocationConfig {
   targetProjectId?: string;
 }
 
+export interface AiRepliesConfig {
+  /** Off by default, because it spends an agent run per press. */
+  enabled?: boolean;
+  /** Which agent writes the replies. Empty means pick one. */
+  agentId?: string;
+  instructions?: string;
+}
+
 export interface InstanceConfig {
   accounts?: AccountConfig[];
   locations?: LocationConfig[];
   allowReplies?: boolean;
   gmailAccountKey?: string;
+  aiReplies?: AiRepliesConfig;
 }
 
 export const STAR_NUMBERS: Record<string, number> = {

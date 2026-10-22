@@ -83,7 +83,11 @@ function toPostReceipt(raw: unknown, text: string): PostReceipt {
 export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, onClose }: ReviewEditorProps) {
   const { data, loading, error, refresh } = usePluginData<ReviewDetail>("review-detail", { companyId, reviewName });
   const postReply = usePluginAction("review-post-reply");
+  const generateReply = usePluginAction("review-generate-reply");
   const toast = usePluginToast();
+  const [writing, setWriting] = useState(false);
+  const [writeNote, setWriteNote] = useState<string | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
   const storage = useMemo(() => browserStorage(), []);
   const draftKey = draftStorageKey(companyId, reviewName);
@@ -187,10 +191,40 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
                 placeholder="Write the reply here, or start from the suggested reply."
                 style={textareaStyle}
               />
+              {writeNote && <Note>{writeNote}</Note>}
+              {writeError && <ErrorNote>{writeError}</ErrorNote>}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <button type="button" onClick={() => setText(data.suggestedReply)} style={secondaryButton}>
-                  Start from the suggested reply
-                </button>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={writing}
+                    style={disabledStyle(primaryButton, writing)}
+                    title="Writes a reply for this review. You can edit it before posting; nothing is posted by this button."
+                    onClick={async () => {
+                      setWriting(true);
+                      setWriteNote(null);
+                      setWriteError(null);
+                      try {
+                        const result = (await generateReply({ companyId, reviewName, draft: state.text })) as {
+                          text?: string;
+                          source?: string;
+                          note?: string;
+                        };
+                        if (typeof result?.text === "string" && result.text.trim()) setText(result.text);
+                        if (result?.note) setWriteNote(result.note);
+                      } catch (err) {
+                        setWriteError(describeReplyError(err));
+                      } finally {
+                        setWriting(false);
+                      }
+                    }}
+                  >
+                    {writing ? "Writing..." : state.text.trim() ? "Improve this reply with AI" : "Write a reply with AI"}
+                  </button>
+                  <button type="button" onClick={() => setText(data.suggestedReply)} style={secondaryButton}>
+                    Use the standard template
+                  </button>
+                </div>
                 <span style={{ ...mutedText, color: tooLong ? css.danger : css.muted }}>
                   {trimmedLength} / {MAX_REPLY_LENGTH}
                 </span>

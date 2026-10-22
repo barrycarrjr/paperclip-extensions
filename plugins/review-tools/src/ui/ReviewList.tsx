@@ -13,12 +13,21 @@ import { describeReplyError } from "./replyErrors.js";
 import { ErrorNote, Note, Stars, css, disabledStyle, mutedText, secondaryButton } from "./shared.js";
 
 /** What review-list returns. Mirrors the worker's handler. */
+type ReviewFilter = "unreplied" | "replied" | "all";
+
+const FILTER_LABELS: Record<ReviewFilter, string> = {
+  unreplied: "Needs a reply",
+  replied: "Replied",
+  all: "All reviews",
+};
+
 interface ReviewListData {
   location: { key: string; displayName: string };
   account: { key: string; label: string };
   lastSyncedAt: string | null;
   canPostFromHere: boolean;
   isRollup: boolean;
+  filter: ReviewFilter;
   reviews: EditorReview[];
 }
 
@@ -42,7 +51,10 @@ export interface ReviewListProps {
 export function ReviewList({ companyId, locationKey, selectedReviewName, onOpenReview, onChanged, refreshKey }: ReviewListProps) {
   // companyId is sent so the host can check it matches the company it
   // validated; the worker scopes on the host's own stamp, never on this.
-  const { data, loading, error, refresh } = usePluginData<ReviewListData>("review-list", { companyId, locationKey });
+  // Unreplied by default, because that is the work; the others are there
+  // so an earlier reply can be found and read back.
+  const [filter, setFilter] = useState<ReviewFilter>("unreplied");
+  const { data, loading, error, refresh } = usePluginData<ReviewListData>("review-list", { companyId, locationKey, filter });
   const sync = usePluginAction("review-sync-location");
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -104,8 +116,29 @@ export function ReviewList({ companyId, locationKey, selectedReviewName, onOpenR
       {syncNote && <Note>{syncNote}</Note>}
       {syncError && <ErrorNote>{syncError}</ErrorNote>}
 
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {(Object.keys(FILTER_LABELS) as ReviewFilter[]).map((f) => (
+          <button
+            key={f}
+            type="button"
+            onClick={() => setFilter(f)}
+            aria-pressed={filter === f}
+            style={filter === f ? filterOn : filterOff}
+          >
+            {FILTER_LABELS[f]}
+          </button>
+        ))}
+      </div>
+
       {data.reviews.length === 0 ? (
-        <Note>No reviews are stored for this location yet. {data.canPostFromHere ? "Press Sync now to pull them in." : ""}</Note>
+        <Note>
+          {filter === "unreplied"
+            ? "Every stored review for this location has a reply."
+            : filter === "replied"
+              ? "No replied reviews are stored for this location yet."
+              : "No reviews are stored for this location yet."}{" "}
+          {data.canPostFromHere ? "Press Sync now to pull in anything new." : ""}
+        </Note>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
           {data.reviews.map((review) => {
@@ -148,6 +181,18 @@ export function ReviewList({ companyId, locationKey, selectedReviewName, onOpenR
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max).trimEnd()}...` : text;
 }
+
+const filterOff: CSSProperties = {
+  ...secondaryButton,
+  padding: "4px 10px",
+  fontSize: 13,
+};
+
+const filterOn: CSSProperties = {
+  ...filterOff,
+  fontWeight: 700,
+  background: "color-mix(in oklab, var(--primary, #2563eb) 18%, var(--card, #fff))",
+};
 
 function rowStyle(selected: boolean, unreplied: boolean): CSSProperties {
   return {

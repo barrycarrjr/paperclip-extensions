@@ -124,13 +124,29 @@ const REVIEW_COLUMNS =
 /** Newest first, with the ones still waiting for a reply on top. */
 export const REVIEW_LIST_LIMIT = 200;
 
+/** Which reviews the list shows. Unreplied is the default, because that is the work. */
+export type ReviewFilter = "unreplied" | "replied" | "all";
+
+export function parseReviewFilter(value: unknown): ReviewFilter {
+  return value === "replied" || value === "all" ? value : "unreplied";
+}
+
+const FILTER_CLAUSE: Record<ReviewFilter, string> = {
+  unreplied: "AND reply_text IS NULL",
+  replied: "AND reply_text IS NOT NULL",
+  all: "",
+};
+
 export async function listReviewsForLocation(
   db: ReviewQueryDb,
   location: LocationConfig,
+  filter: ReviewFilter = "unreplied",
 ): Promise<ReviewListItem[]> {
+  // Filtered in SQL rather than on the page: the list is capped, and a cap
+  // applied before the filter would hide older replied reviews entirely.
   const rows = await db.query<ReviewRow>(
     `SELECT ${REVIEW_COLUMNS} FROM ${db.namespace}.reviews
-     WHERE location_key = $1 AND company_id = $2
+     WHERE location_key = $1 AND company_id = $2 ${FILTER_CLAUSE[filter]}
      ORDER BY (reply_text IS NULL) DESC, review_time DESC
      LIMIT ${REVIEW_LIST_LIMIT}`,
     [location.key, location.targetCompanyId],

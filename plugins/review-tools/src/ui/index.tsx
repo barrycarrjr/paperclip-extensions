@@ -230,16 +230,21 @@ export function ReviewDashboardPage(_props: PluginPageProps) {
             refreshKey={listRefreshKey}
           />
           {view.reviewName && (
-            // Keyed by the review so switching reviews starts a fresh editor
-            // (its own draft, its own idempotency key).
-            <ReviewEditor
-              key={view.reviewName}
-              companyId={companyId}
-              companyPrefix={host.companyPrefix}
-              reviewName={view.reviewName}
-              onPosted={onPosted}
-              onClose={() => setView({ locationKey: view.locationKey })}
-            />
+            // The editor stays in view while the list scrolls, so a review
+            // picked from far down the list still has its reply box beside
+            // it rather than somewhere above the fold.
+            <div style={stickyEditor}>
+              <ReviewEditor
+                // Keyed by the review so switching reviews starts a fresh
+                // editor (its own draft, its own idempotency key).
+                key={view.reviewName}
+                companyId={companyId}
+                companyPrefix={host.companyPrefix}
+                reviewName={view.reviewName}
+                onPosted={onPosted}
+                onClose={() => setView({ locationKey: view.locationKey })}
+              />
+            </div>
           )}
         </div>
       )}
@@ -277,6 +282,14 @@ const pageRoot: CSSProperties = {
   gap: 16,
   padding: 24,
   maxWidth: 1200,
+};
+
+const stickyEditor: CSSProperties = {
+  position: "sticky",
+  top: 12,
+  alignSelf: "start",
+  maxHeight: "calc(100vh - 24px)",
+  overflowY: "auto",
 };
 
 const splitLayout: CSSProperties = {

@@ -547,10 +547,11 @@ test("review-post-reply posts once: audit row, one PUT, then the local upsert, a
   assert.ok(harness.dbExecutes.indexOf(audit) < harness.dbExecutes.indexOf(posted));
   assert.ok(harness.dbExecutes.indexOf(posted) < harness.dbExecutes.indexOf(upsert));
 
-  // The success path reached its end with the manifest's capabilities alone:
-  // the harness would have thrown on any call to issues.update or
-  // issue comment creation, which the manifest does not declare.
-  await assert.rejects(harness.ctx.issues.update("issue-1", { status: "done" }, COMPANY_A), /issues\.update/);
+  // The success path reached its end with the manifest's capabilities alone.
+  // issues.update IS declared now (a posted reply closes its subtask), so it
+  // fails on the missing issue rather than on a missing capability; comment
+  // creation is still not declared and the harness still refuses it.
+  await assert.rejects(harness.ctx.issues.update("issue-1", { status: "done" }, COMPANY_A), /Issue not found/);
   await assert.rejects(harness.ctx.issues.createComment("issue-1", "posted", COMPANY_A), /issue\.comments\.create/);
 });
 
@@ -602,11 +603,12 @@ test("review-sync-location refuses another company's location and HQ, with no Go
 
 test("review-sync-location pulls the location's reviews, files the issue, and the issue text is plain", async () => {
   const harness = await makeHarness();
-  const created: Array<{ title: string; description: string; companyId: string }> = [];
+  const created: Array<{ id: string; title: string; description: string; companyId: string; parentId?: string }> = [];
   const realCreate = harness.ctx.issues.create.bind(harness.ctx.issues);
   harness.ctx.issues.create = async (input) => {
-    created.push({ title: input.title, description: input.description ?? "", companyId: input.companyId });
-    return realCreate(input);
+    const made = await realCreate(input);
+    created.push({ id: made.id, title: input.title, description: input.description ?? "", companyId: input.companyId, parentId: input.parentId });
+    return made;
   };
   answerGoogle((method, url) => {
     if (method === "GET" && url.includes("/locations/222/reviews")) return json({ reviews: [LIVE_REVIEW] });
@@ -619,8 +621,14 @@ test("review-sync-location pulls the location's reviews, files the issue, and th
   assert.equal(result.new, 1);
   assert.equal(typeof result.syncedAt, "string");
 
-  assert.equal(created.length, 1);
-  const issue = created[0]!;
+  // One parent task for the location, then the review as a subtask under
+  // it. A second sync must not open a second parent.
+  assert.equal(created.length, 2);
+  const parent = created[0]!;
+  assert.match(parent.title, /Google reviews awaiting a reply: Main St Store/);
+  assert.equal(parent.parentId, undefined);
+  const issue = created[1]!;
+  assert.equal(issue.parentId, parent.id);
   assert.equal(issue.companyId, COMPANY_A);
   assert.doesNotMatch(issue.title, LONG_DASHES);
   assert.doesNotMatch(issue.description, LONG_DASHES);

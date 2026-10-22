@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "review-tools";
-const PLUGIN_VERSION = "0.2.0";
+const PLUGIN_VERSION = "0.3.0";
 
 const SETUP_INSTRUCTIONS = `# Setup: Review Tools
 
@@ -69,6 +69,18 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "events.subscribe",
     "events.emit",
     "issues.create",
+    // Each review's task is a subtask under one parent task per location,
+    // and it is closed by the plugin when the review gets its reply, so the
+    // plugin reads and updates the tasks it created.
+    "issues.read",
+    "issues.update",
+    // The Reviews page can ask one of the company's own agents to write a
+    // reply. It runs on that agent's existing adapter, so there is no
+    // second credential to configure and the run is counted like any other.
+    "agents.read",
+    "agent.sessions.create",
+    "agent.sessions.send",
+    "agent.sessions.close",
     "plugin.state.read",
     "plugin.state.write",
     "database.namespace.migrate",
@@ -120,6 +132,29 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         title: "Allow posting review replies (Google GBP)",
         description: "Master switch. When enabled, allows agents and operators to post replies directly to review platforms. When off, replies remain drafts. Default: off.",
         default: false,
+      },
+      aiReplies: {
+        type: "object",
+        title: "AI-written replies",
+        description: "Lets the Reviews page ask one of this company's agents to write a reply for a review. It runs on that agent's own adapter, so there is no API key to configure here. Nothing is ever posted without a person reading it first.",
+        properties: {
+          enabled: {
+            type: "boolean",
+            title: "Let an agent write replies",
+            description: "Off by default, because each press spends one agent run.",
+            default: false,
+          },
+          agentId: {
+            type: "string",
+            title: "Which agent writes them",
+            description: "Optional. Leave empty and the plugin picks one: an agent whose name mentions reviews, else a general-purpose agent, else the assistant, else the CEO. Paused and terminated agents are skipped.",
+          },
+          instructions: {
+            type: "string",
+            title: "Instructions for the writer",
+            description: "Optional. Tone, how to sign off, things never to say. For example: 'Sign as The team. Mention we are open Saturdays if it fits.'",
+          },
+        },
       },
       gmailAccountKey: {
         type: "string",

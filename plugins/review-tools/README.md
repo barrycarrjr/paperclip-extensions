@@ -6,6 +6,48 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 ## Recent changes
 
+- **v0.3.0**: Four things people asked for after the first day of real use.
+
+  **One task per location, not one per review.** The first sync opened 115
+  tasks in one company, one per unreplied review back to 2013. Each location
+  now has a single parent task, "Google reviews awaiting a reply", and every
+  review is a subtask under it. A subtask closes itself when the review gets
+  its reply, however that happened: posted from the Reviews page, posted by
+  an agent, or written in Google's own console and noticed by the next
+  sync. Closing the parent by hand starts a fresh list next time. Needs the
+  `issues.read` and `issues.update` capabilities, which are now declared.
+
+  **A reply written for you, by one of your own agents.** The editor has a
+  "Write a reply with AI" button (it reads "Improve this reply with AI" once
+  something is typed). It fills the text box and nothing more; posting stays
+  the separate, guarded step.
+
+  It runs through `ctx.agents.sessions`, the same path the notepad plugin
+  uses, so the words come from one of the company's agents on whatever
+  adapter that agent already has, and the run is counted like every other
+  agent run. There is no API key to configure in this plugin. Switch it on
+  under **AI-written replies**: a toggle (off by default, because each press
+  spends one agent run), optionally which agent to ask, and free-text
+  instructions such as how to sign off. Leave the agent empty and the plugin
+  picks one, preferring an agent whose name mentions reviews, then a
+  general-purpose agent, then the assistant, then the CEO; paused and
+  terminated agents are skipped. With the toggle off the button gives the
+  standard template and says so.
+
+  The prompt keeps replies short, names one specific thing from the review,
+  apologises plainly on low ratings without promising anything, and never
+  uses long dashes. The agent is asked for JSON so there is something
+  unambiguous to find in its output; prose is still used if that is all it
+  gives. New capabilities: `agents.read` and the three
+  `agent.sessions.*` ones.
+
+  **Replied reviews can be found again.** The list has three filters:
+  Needs a reply (default), Replied, and All reviews. The filter is applied
+  in the database, so older replied reviews are not hidden by the list cap.
+
+  **The reply box stays on screen.** It is now sticky beside the list, so a
+  review chosen from far down the page still has its reply box in view.
+
 - **v0.2.0**: Connecting Google works from inside the app, and a failure now
   says which thing is wrong.
 
@@ -222,7 +264,7 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 - `ReviewSummaryWidget`: dashboard widget showing per-location unreplied / avg / total.
 - `GoogleSetupPage`: full page at route `reviews-setup`. Connects a Google account, says what the stored token can actually do, and lists real locations to choose from. Bridge handlers `google-connection` and `google-locations` (reads), and the actions `google_connect_start`, `google_connect_poll`, `google_connect_submit_callback` and `google_connect_cancel`. Both reads scope on the host's company stamp like every other handler here.
-- `ReviewDashboardPage`: full page at route `reviews`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
+- `ReviewDashboardPage`: full page at route `reviews`. The list takes a `filter` (`unreplied`, `replied`, `all`), and the editor's `review-generate-reply` action returns `{ text, source }` where source is `ai` (with `agentName`) or `template`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
 
 The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `review-tools:draft:<companyId>:<reviewName>`).
 
@@ -310,5 +352,6 @@ Each account entry lists which Paperclip companies may use it (`allowedCompanies
 ## Versioning
 
 - `0.1.0`: initial release.
+- `0.3.0`: parent task per location with self-closing subtasks, agent-written replies, list filters, sticky editor.
 - `0.2.0`: the Google connection page, this plugin's own secrets, current account and location APIs, and error messages that separate the three different HTTP 403s. Needs one consent run by a person before reviews flow.
 - `0.1.10`: the Reviews page reply editor and the shared guarded post path. Requires a host that stamps `params.hostScope` on bridge calls; on an older host every screen shows an access sentence rather than data.
