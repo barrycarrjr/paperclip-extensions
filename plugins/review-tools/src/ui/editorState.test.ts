@@ -12,6 +12,7 @@ import {
   canShowPostButton,
   clearDraft,
   confirmReady,
+  defaultMintKey,
   draftStorageKey,
   initialEditorState,
   locationRatingLabel,
@@ -420,4 +421,81 @@ test("the receipt lists the steps and never calls a public post failed", () => {
 
   const again = receiptSteps({ ...base, alreadyPosted: true }, "ACME");
   assert.match(again[0]!.detail, /nothing was sent twice/);
+});
+
+test("an idempotency key can be minted without a secure context", () => {
+  // Paperclip is commonly reached over plain http on a LAN name, where
+  // crypto.randomUUID does not exist. Calling it there threw
+  // "crypto.randomUUID is not a function" the moment somebody pressed Post,
+  // and the whole Reviews page went to the error boundary.
+  const real = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  const install = (value: unknown) =>
+    Object.defineProperty(globalThis, "crypto", { value, configurable: true, writable: true });
+  try {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+    // A secure context: the built-in is used as before.
+    install({ randomUUID: () => "11111111-1111-4111-8111-111111111111" });
+    assert.equal(defaultMintKey(), "11111111-1111-4111-8111-111111111111");
+
+    // Plain http: randomUUID is gone, getRandomValues remains.
+    let tick = 0;
+    install({
+      getRandomValues: (a: Uint8Array) => {
+        for (let i = 0; i < a.length; i++) a[i] = (i * 7 + 3 + tick) & 0xff;
+        tick++;
+        return a;
+      },
+    });
+    const built = defaultMintKey();
+    assert.match(built, uuid, "the fallback still looks like a version 4 UUID");
+    assert.notEqual(built, defaultMintKey(), "a second panel gets a different key");
+
+    // Nothing cryptographic at all: still a usable, unique-enough key.
+    install(undefined);
+    const bare = defaultMintKey();
+    assert.ok(bare.length > 12);
+    assert.notEqual(bare, defaultMintKey());
+  } finally {
+    if (real) Object.defineProperty(globalThis, "crypto", real);
+  }
+});
+
+test("the receipt says what became of the task rather than always saying it is open", () => {
+  const base: PostReceipt = {
+    postedAt: "2026-10-22T00:41:27.000Z",
+    location: { key: "main-st", displayName: "Main St Store" },
+    account: "owner@example.test",
+    replyText: "Thank you.",
+    replaced: false,
+    previousReplyText: null,
+    issueId: "issue-1",
+    recordedLocally: true,
+    alreadyPosted: false,
+  };
+  const taskStep = (receipt: PostReceipt) => receiptSteps(receipt, "MME").find((s) => s.label === "Task")!;
+
+  // The bug: a task the worker had just closed was still reported as open,
+  // telling the person to go and close it themselves.
+  const closed = taskStep({ ...base, issueClosed: true });
+  assert.equal(closed.status, "done");
+  assert.match(closed.detail, /Closed, because this review now has a reply/);
+  assert.doesNotMatch(closed.detail, /yourself/);
+  assert.equal(closed.href, "/MME/issues/issue-1");
+
+  // Closing genuinely failed: the person does have something to do.
+  const stillOpen = taskStep({ ...base, issueClosed: false });
+  assert.equal(stillOpen.status, "note");
+  assert.match(stillOpen.detail, /Still open/);
+  assert.match(stillOpen.detail, /Close it yourself/);
+
+  // An older worker sends no verdict; neither claim is made.
+  const unknown = taskStep(base);
+  assert.doesNotMatch(unknown.detail, /Closed, because/);
+  assert.doesNotMatch(unknown.detail, /Still open/);
+
+  // No task at all is unchanged.
+  assert.match(taskStep({ ...base, issueId: null }).detail, /No task is linked/);
+
+  for (const step of [closed, stillOpen, unknown]) assert.doesNotMatch(step.detail, LONG_DASHES);
 });

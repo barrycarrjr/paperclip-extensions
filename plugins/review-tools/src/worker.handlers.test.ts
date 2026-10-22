@@ -968,3 +968,81 @@ test("sync-all-reviews still succeeds when only some locations fail", async () =
 
   await harness.runJob("sync-all-reviews");
 });
+
+test("a review task links straight to the review and to the Google listing when both are known", async () => {
+  const harness = await makeHarness();
+  // The company's URL prefix and the listing's Google address are what turn
+  // the old three-step instruction into two links.
+  harness.seed({
+    companies: [{ id: COMPANY_A, name: "Company A", issuePrefix: "CMA" }] as unknown as Parameters<TestHarness["seed"]>[0]["companies"],
+  });
+  await harness.ctx.state.set(
+    { scopeKind: "instance", stateKey: `location-links:${MAIN_ST.key}` },
+    { placeId: "ChIJabc", mapsUri: "https://maps.google.com/maps?cid=123", fetchedAt: "2026-10-22T00:00:00.000Z" },
+  );
+
+  const created: Array<{ title: string; description: string }> = [];
+  const realCreate = harness.ctx.issues.create.bind(harness.ctx.issues);
+  harness.ctx.issues.create = async (input) => {
+    created.push({ title: input.title, description: input.description ?? "" });
+    return realCreate(input);
+  };
+  answerGoogle((method, url) => {
+    // The sync reads the listing's links first, then its reviews.
+    if (method === "GET" && url.includes("/v1/locations/222")) {
+      return json({ name: "locations/222", metadata: { placeId: "ChIJabc", mapsUri: "https://maps.google.com/maps?cid=123" } });
+    }
+    if (method === "GET" && url.includes("/locations/222/reviews")) return json({ reviews: [LIVE_REVIEW] });
+    throw new Error(`unexpected Google call ${method} ${url}`);
+  });
+
+  await harness.performAction("review-sync-location", scoped(COMPANY_A, { locationKey: MAIN_ST.key }));
+
+  const review = created.find((c) => c.title.includes("Review from"));
+  assert.ok(review, "the review task was created");
+  assert.match(review.description, /\[Open this review and reply\]\(\/CMA\/reviews\?location=main-st&review=accounts%2F111%2Flocations%2F222%2Freviews%2Fabc-123\)/);
+  assert.match(review.description, /\[Open Main St Store on Google Maps\]\(https:\/\/maps\.google\.com\/maps\?cid=123\)/);
+  // The directions it replaces must be gone, so there is one obvious route.
+  assert.doesNotMatch(review.description, /open Reviews inside this company/);
+  assert.match(review.description, /use the link at the top of this task/);
+  assert.doesNotMatch(review.description, LONG_DASHES);
+});
+
+test("the reply tab finds the review a task was opened for, and refuses across companies", async () => {
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: "paperclip_issue_id = $1", rows: [STORED_ROW] }],
+  });
+
+  const found = (await harness.getData("review-for-issue", scoped(COMPANY_A, { issueId: "issue-1" }))) as {
+    reviewName: string | null;
+  };
+  assert.equal(found.reviewName, REVIEW_NAME);
+  // The company is part of the lookup, not just the task id, so a task id
+  // from elsewhere cannot reach this company's reviews.
+  assert.deepEqual(harness.dbQueries.at(-1)?.params, ["issue-1", COMPANY_A]);
+
+  await rejectsWith(harness.getData("review-for-issue", scoped(COMPANY_A, {})), "EINVALID_INPUT");
+  await rejectsWith(harness.getData("review-for-issue", { issueId: "issue-1" }), "ESCOPE");
+});
+
+test("a task that is not a review, and one that only arrived by email, each say so", async () => {
+  const plain = await makeHarness(CONFIG as unknown as Record<string, unknown>, { rows: [] });
+  const none = (await plain.getData("review-for-issue", scoped(COMPANY_A, { issueId: "issue-9" }))) as {
+    reviewName: string | null;
+    reason?: string;
+  };
+  assert.equal(none.reviewName, null);
+  assert.equal(none.reason, undefined, "an ordinary task needs no explanation beyond the default line");
+
+  // An email-sourced review has a synthetic name the editor cannot open.
+  const emailish = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: "paperclip_issue_id = $1", rows: [{ ...STORED_ROW, review_name: "email/abc123" }] }],
+  });
+  const emailOnly = (await emailish.getData("review-for-issue", scoped(COMPANY_A, { issueId: "issue-2" }))) as {
+    reviewName: string | null;
+    reason?: string;
+  };
+  assert.equal(emailOnly.reviewName, null);
+  assert.match(String(emailOnly.reason), /came in by email/);
+  assert.match(String(emailOnly.reason), /Sync now/);
+});

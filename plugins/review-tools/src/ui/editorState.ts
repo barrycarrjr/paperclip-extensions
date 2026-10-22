@@ -57,6 +57,10 @@ export interface ReviewDetail {
      */
     accountKey?: string | null;
   };
+  /** Google's own address for the listing, or null when it is not known yet. */
+  googleListingUrl?: string | null;
+  /** This review's own address inside Paperclip, for sharing or bookmarking. */
+  reviewPageUrl?: string | null;
   canPostFromHere: boolean;
   isRollup: boolean;
   pendingAttempt: { createdAt: string; status: "posting" | "unknown" } | null;
@@ -74,6 +78,11 @@ export interface PostReceipt {
   issueId: string | null;
   recordedLocally: boolean;
   alreadyPosted: boolean;
+  /**
+   * Whether the review's task is finished. Absent on a receipt from an
+   * older worker, which is reported as unknown rather than as closed.
+   */
+  issueClosed?: boolean;
 }
 
 /**
@@ -229,8 +238,38 @@ export function initialEditorState(text: string = ""): EditorState {
 /** The key minter is injected so tests can see which key a state carries. */
 export type MintKey = () => string;
 
+/**
+ * A fresh idempotency key for one confirm panel.
+ *
+ * `crypto.randomUUID` exists only in a secure context, which means HTTPS or
+ * localhost. Paperclip is commonly reached over plain http on a name such as
+ * `http://paperclip.lan:3100`, and there the function is simply absent, so
+ * calling it threw `crypto.randomUUID is not a function` the moment somebody
+ * pressed Post. The whole Reviews page then went to the error boundary and
+ * no reply could ever be sent from that address.
+ *
+ * `crypto.getRandomValues` carries no such restriction, so the key is built
+ * from it instead. The last resort needs no crypto at all: this value only
+ * has to be unique enough to stop one panel posting twice, and the worker
+ * holds the real guarantees (the audit row, the one-attempt-at-a-time lock,
+ * and the live read of Google before any write).
+ */
 export function defaultMintKey(): string {
-  return crypto.randomUUID();
+  const webCrypto = (globalThis as { crypto?: Partial<Crypto> }).crypto;
+
+  if (typeof webCrypto?.randomUUID === "function") return webCrypto.randomUUID();
+
+  if (typeof webCrypto?.getRandomValues === "function") {
+    const bytes = webCrypto.getRandomValues(new Uint8Array(16));
+    // Version 4 and variant bits, so this reads like the value the branch
+    // above returns rather than looking like a different kind of key.
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  return `key-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function reduceEditor(state: EditorState, event: EditorEvent, mintKey: MintKey = defaultMintKey): EditorState {
@@ -414,8 +453,13 @@ export function receiptSteps(receipt: PostReceipt, companyPrefix: string | null)
   if (receipt.issueId) {
     steps.push({
       label: "Task",
-      status: "note",
-      detail: "Still open. Close it yourself when you are done with this review.",
+      status: receipt.issueClosed === true ? "done" : "note",
+      detail:
+        receipt.issueClosed === true
+          ? "Closed, because this review now has a reply."
+          : receipt.issueClosed === false
+            ? "Still open: it could not be closed automatically. Close it yourself when you are done."
+            : "Open the task to see where it stands.",
       href: companyPrefix ? `/${companyPrefix}/issues/${receipt.issueId}` : undefined,
     });
   } else {

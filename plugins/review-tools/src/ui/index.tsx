@@ -15,6 +15,10 @@ import { ErrorNote, css, linkButton, mutedText } from "./shared.js";
 // because the manifest points every UI slot at this one bundle entry.
 export { GoogleSetupPage } from "./GoogleSetup.js";
 
+// The reply box as a tab on a task, so a review can be answered without
+// leaving the task it was opened for.
+export { ReviewReplyTab } from "./ReviewReplyTab.js";
+
 interface LocationSummary {
   locationKey: string;
   locationName: string;

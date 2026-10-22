@@ -6,6 +6,101 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 ## Recent changes
 
+- **v0.5.2**: The receipt stopped claiming the task was still open, and the
+  Google link stopped implying it opens one review.
+
+  Posting did close the review's task, and had done since v0.3.0, but the
+  receipt panel still said "Still open. Close it yourself when you are done
+  with this review." That sentence was written before auto-closing existed
+  and never asked whether it was true. The worker now sends the outcome back
+  with the receipt and the panel reports it: closed, or still open because
+  closing genuinely failed, or nothing claimed at all when an older worker
+  sent no verdict. A task that was already closed counts as settled, so a
+  second post never produces a scary sentence about a task nobody has to
+  touch.
+
+  The Google link was read as "show me this review" and lands on the
+  listing's Overview tab, which looked like a broken link. Google publishes
+  no address that opens a single review: the Maps URLs it documents address
+  a place, not a review, and the undocumented review paths return an empty
+  shell. The link now says what it does, "Open <location> on Google Maps,
+  then choose its Reviews tab", in the editor and in new task bodies alike.
+  Existing task bodies keep the older wording; the link in them works the
+  same way.
+
+- **v0.5.1**: Posting works over plain http. Pressing Post used to break the
+  whole page.
+
+  The editor mints an idempotency key when the confirm panel opens, and it
+  used `crypto.randomUUID`. That function exists only in a secure context,
+  meaning HTTPS or localhost. Reached on a LAN name such as
+  `http://paperclip.lan:3100` it is simply absent, so pressing Post threw
+  `crypto.randomUUID is not a function`, React sent the whole Reviews page to
+  its error boundary, and no reply could ever be sent from that address. The
+  reply never reached Google, so nothing was published and nothing was lost.
+
+  The key now comes from `crypto.getRandomValues`, which has no such
+  restriction, formatted as the same kind of value. With no crypto at all it
+  falls back to a timestamp and randomness: the key only has to stop one
+  panel posting twice, and the real guarantees live in the worker, which
+  keeps the audit row, the one-attempt-at-a-time lock and the live read of
+  Google before any write. The setup page's secret-name suffix uses the same
+  helper rather than calling into crypto itself.
+
+  Also fixed in this release: the manifest declared the new Reply tab without
+  `ui.detailTab.register`, the capability the host validates slots against,
+  so installing 0.5.0 was rejected. A rejected reinstall tears the plugin
+  down first and does not restore it, which is what left the plugin
+  uninstalled and the page showing only an error box.
+
+- **v0.5.0**: The reply can be sent from the task itself.
+
+  A review task showed the review and a suggested reply and then stopped:
+  replying meant leaving for the Reviews page. Review tasks now carry a
+  **Reply** tab with the reply box on it, so the reply is written, checked
+  and sent where the person already is.
+
+  It is the same editor component the Reviews page uses, not a second copy,
+  so every rule about publishing is the same here by construction: the
+  master switch, the live read of Google immediately before the write, the
+  confirm panel showing the exact text, the audit row, one attempt at a time
+  across tabs and workers, and the refusal to replace an existing reply
+  unless a person has been shown it and asked to.
+
+  The host filters tabs by entity type, so the tab is present on every task
+  in the company. On a task that is not a review it says that in one line
+  instead of showing a box that cannot work. A review that so far arrived
+  only by email says to press Sync now first, because its synthetic name
+  has no Google record to open.
+
+  New bridge handler: `review-for-issue`, which maps a task id to its
+  review. It is constrained on the company as well as the task, so a task
+  id from one company can never reach another company's reviews.
+
+- **v0.4.0**: A review task now links to the review, instead of giving
+  directions to it.
+
+  Opening a task left two dead ends. It said to "open Reviews inside this
+  company, pick the location and choose this review", which is three manual
+  steps from a task that already knew exactly which review it meant; and
+  there was no way at all to see the review on Google.
+
+  Two links now sit at the top of the body. The first opens that exact
+  review in the Reviews page with its reply box on screen, built from the
+  company's own URL prefix. The second opens the listing on Google, using
+  the address Google itself publishes for it, which the sync records per
+  location. The editor carries the Google link too.
+
+  Neither link is ever guessed. With no company prefix there is no in-app
+  link rather than one pointing at the wrong company, and with no recorded
+  address there is no Google link rather than a search by business name,
+  which could land on somebody else's listing. A review that arrived by
+  email gets the listing link only, because it has no Google name to open.
+
+  Worth knowing: Google publishes no address for one individual review,
+  only for the listing. The wording says so rather than implying the link
+  lands on the review itself.
+
 - **v0.3.0**: Four things people asked for after the first day of real use.
 
   **One task per location, not one per review.** The first sync opened 115
@@ -264,6 +359,7 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 - `ReviewSummaryWidget`: dashboard widget showing per-location unreplied / avg / total.
 - `GoogleSetupPage`: full page at route `reviews-setup`. Connects a Google account, says what the stored token can actually do, and lists real locations to choose from. Bridge handlers `google-connection` and `google-locations` (reads), and the actions `google_connect_start`, `google_connect_poll`, `google_connect_submit_callback` and `google_connect_cancel`. Both reads scope on the host's company stamp like every other handler here.
+- `ReviewReplyTab`: a **Reply** tab on a task, rendering the same editor. Uses `review-for-issue` to map the task to its review.
 - `ReviewDashboardPage`: full page at route `reviews`. The list takes a `filter` (`unreplied`, `replied`, `all`), and the editor's `review-generate-reply` action returns `{ text, source }` where source is `ai` (with `agentName`) or `template`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
 
 The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `review-tools:draft:<companyId>:<reviewName>`).
@@ -352,6 +448,10 @@ Each account entry lists which Paperclip companies may use it (`allowedCompanies
 ## Versioning
 
 - `0.1.0`: initial release.
+- `0.5.2`: the receipt reports whether the task closed; the Google link says what it opens.
+- `0.5.1`: posting works over plain http; the Reply tab installs.
+- `0.5.0`: a Reply tab on review tasks, sharing the Reviews page editor and its guarded post path.
+- `0.4.0`: review tasks link to the review in Paperclip and to the listing on Google.
 - `0.3.0`: parent task per location with self-closing subtasks, agent-written replies, list filters, sticky editor.
 - `0.2.0`: the Google connection page, this plugin's own secrets, current account and location APIs, and error messages that separate the three different HTTP 403s. Needs one consent run by a person before reviews flow.
 - `0.1.10`: the Reviews page reply editor and the shared guarded post path. Requires a host that stamps `params.hostScope` on bridge calls; on an older host every screen shows an access sentence rather than data.

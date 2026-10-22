@@ -69,6 +69,19 @@ export async function ensureParentIssue(ctx: Ctx, location: LocationConfig): Pro
 }
 
 /**
+ * What happened to a review's subtask. Told apart because the receipt on
+ * the page reports it to a person: "closed" and "was already closed" both
+ * mean there is nothing left for them to do, while "failed" and "none"
+ * mean the task is still sitting there and saying otherwise would be a lie.
+ */
+export type CloseOutcome = "closed" | "already-closed" | "none" | "failed";
+
+/** True when the person has nothing left to do about the task. */
+export function taskIsSettled(outcome: CloseOutcome): boolean {
+  return outcome === "closed" || outcome === "already-closed";
+}
+
+/**
  * Close the subtask for a review that now has a reply. Quiet about a task
  * that is already closed or gone: the reply is what matters, and a missing
  * task is not a reason to fail a post that has already been made public.
@@ -78,20 +91,21 @@ export async function closeReviewIssue(
   companyId: string,
   issueId: string | null | undefined,
   reason: "posted" | "replied-on-google",
-): Promise<boolean> {
-  if (!issueId) return false;
+): Promise<CloseOutcome> {
+  if (!issueId) return "none";
   try {
     const issue = await ctx.issues.get(issueId, companyId);
-    if (!issue || DONE_STATUSES.has(issue.status)) return false;
+    if (!issue) return "none";
+    if (DONE_STATUSES.has(issue.status)) return "already-closed";
     await ctx.issues.update(issueId, { status: "done" }, companyId);
     ctx.logger.info("review-tools: closed a review subtask", { issueId, reason });
-    return true;
+    return "closed";
   } catch (err) {
     ctx.logger.warn("review-tools: could not close the review subtask", {
       issueId,
       reason,
       error: (err as Error).message,
     });
-    return false;
+    return "failed";
   }
 }

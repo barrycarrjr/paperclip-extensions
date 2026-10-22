@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { closeReviewIssue, ensureParentIssue, parentIssueStateKey } from "./reviewTasks.js";
+import { closeReviewIssue, ensureParentIssue, parentIssueStateKey, taskIsSettled } from "./reviewTasks.js";
 import type { LocationConfig } from "./types.js";
 
 const LOCATION: LocationConfig = {
@@ -82,16 +82,25 @@ test("a recorded parent that no longer exists is replaced", async () => {
   assert.equal(id, "issue-1");
 });
 
-test("closing a subtask marks it done once, and is quiet about a missing or already closed one", async () => {
+test("closing a subtask marks it done once, and names what happened each time", async () => {
   const host = fakeHost({ issues: { "issue-7": { id: "issue-7", status: "todo" } } });
-  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "posted"), true);
+  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "posted"), "closed");
   assert.deepEqual(host.updated, [{ id: "issue-7", patch: { status: "done" } }]);
-  // Already done: nothing further.
-  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "replied-on-google"), false);
+
+  // Already done: nothing further, but the person still has nothing to do,
+  // which is why this is told apart from a failure.
+  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "replied-on-google"), "already-closed");
   assert.equal(host.updated.length, 1);
+
   // Gone, or never recorded: nothing to do and no error.
-  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-nope", "posted"), false);
-  assert.equal(await closeReviewIssue(host.ctx, "company-a", null, "posted"), false);
+  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-nope", "posted"), "none");
+  assert.equal(await closeReviewIssue(host.ctx, "company-a", null, "posted"), "none");
+
+  // Only the first two mean the receipt can say the task is finished.
+  assert.equal(taskIsSettled("closed"), true);
+  assert.equal(taskIsSettled("already-closed"), true);
+  assert.equal(taskIsSettled("none"), false);
+  assert.equal(taskIsSettled("failed"), false);
 });
 
 test("a host error while closing is swallowed: the public reply is what matters", async () => {
@@ -99,5 +108,5 @@ test("a host error while closing is swallowed: the public reply is what matters"
   (host.ctx as unknown as { issues: { update: () => Promise<never> } }).issues.update = async () => {
     throw new Error("host down");
   };
-  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "posted"), false);
+  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "posted"), "failed");
 });

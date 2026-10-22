@@ -49,6 +49,11 @@ export interface ReviewEditorProps {
   /** Called after a successful post so the list and the dashboard refresh. */
   onPosted: () => void;
   onClose: () => void;
+  /**
+   * Whether to offer a way out of the editor. False on a task page, where
+   * the editor is the tab and there is no list behind it to return to.
+   */
+  showClose?: boolean;
 }
 
 /** window.localStorage, or nothing when the browser blocks it (the accessor itself can throw). */
@@ -75,12 +80,13 @@ function toPostReceipt(raw: unknown, text: string): PostReceipt {
     replaced: r.replaced === true,
     previousReplyText: typeof r.previousReplyText === "string" ? r.previousReplyText : null,
     issueId: typeof r.issueId === "string" ? r.issueId : null,
+    ...(typeof r.issueClosed === "boolean" ? { issueClosed: r.issueClosed } : {}),
     recordedLocally: r.recordedLocally === true,
     alreadyPosted: r.alreadyPosted === true,
   };
 }
 
-export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, onClose }: ReviewEditorProps) {
+export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, onClose, showClose = true }: ReviewEditorProps) {
   const { data, loading, error, refresh } = usePluginData<ReviewDetail>("review-detail", { companyId, reviewName });
   const postReply = usePluginAction("review-post-reply");
   const generateReply = usePluginAction("review-generate-reply");
@@ -163,10 +169,23 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
           </div>
           <div style={mutedText}>{formatTime(review.reviewTime)}</div>
         </div>
-        <button type="button" onClick={onClose} style={{ ...linkButton, fontWeight: 400, fontSize: 13, color: css.muted }}>
-          Close
-        </button>
+        {showClose && (
+          <button type="button" onClick={onClose} style={{ ...linkButton, fontWeight: 400, fontSize: 13, color: css.muted }}>
+            Close
+          </button>
+        )}
       </div>
+
+      {data.googleListingUrl && (
+        <div style={{ fontSize: 13 }}>
+          <a href={data.googleListingUrl} target="_blank" rel="noopener noreferrer" style={externalLink}>
+            Open the listing on Google Maps
+          </a>
+          <span style={{ ...mutedText, marginLeft: 6 }}>
+            then choose its Reviews tab. Google publishes no address that opens one review on its own.
+          </span>
+        </div>
+      )}
 
       {review.reviewText ? (
         <p style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 14 }}>{review.reviewText}</p>
@@ -177,7 +196,7 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
       <ExistingReply detail={data} />
 
       {state.stage === "posted" && state.receipt ? (
-        <Receipt receipt={state.receipt} companyPrefix={companyPrefix} onClose={onClose} />
+        <Receipt receipt={state.receipt} companyPrefix={companyPrefix} onClose={onClose} showClose={showClose} />
       ) : (
         <>
           <div style={{ fontSize: 13, fontWeight: 600 }}>{data.postsAs}</div>
@@ -383,7 +402,23 @@ function ConfirmPanel({
 }
 
 /** What actually happened, step by step, in the shape of the host's starter activation receipt. */
-function Receipt({ receipt, companyPrefix, onClose }: { receipt: PostReceipt; companyPrefix: string | null; onClose: () => void }) {
+const externalLink: CSSProperties = {
+  color: "inherit",
+  textDecoration: "underline",
+  fontWeight: 600,
+};
+
+function Receipt({
+  receipt,
+  companyPrefix,
+  onClose,
+  showClose = true,
+}: {
+  receipt: PostReceipt;
+  companyPrefix: string | null;
+  onClose: () => void;
+  showClose?: boolean;
+}) {
   const steps = receiptSteps(receipt, companyPrefix);
   return (
     <div style={panelStyle}>
@@ -405,7 +440,9 @@ function Receipt({ receipt, companyPrefix, onClose }: { receipt: PostReceipt; co
         <p style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 13 }}>{receipt.replyText}</p>
       </div>
       <div>
-        <button type="button" onClick={onClose} style={secondaryButton}>Back to the list</button>
+        {showClose && (
+          <button type="button" onClick={onClose} style={secondaryButton}>Back to the list</button>
+        )}
       </div>
     </div>
   );

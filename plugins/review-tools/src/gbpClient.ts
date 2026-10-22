@@ -169,6 +169,32 @@ export async function getGbpAccounts(
  * Business Information v1. The readMask is required: without it the call is
  * refused, and it is the reason this cannot be folded into the v4 client.
  */
+/**
+ * The links Google publishes for one listing.
+ *
+ * Business Information v1 again, and the readMask has to name the metadata
+ * field explicitly or it comes back empty. The maps link is Google's own
+ * address for the listing, and it is the only honest "see it on Google"
+ * link: Google publishes no address for one individual review.
+ */
+export async function getGbpLocationLinks(
+  oauth2Client: OAuth2Client,
+  locationId: string,
+): Promise<{ placeId?: string; mapsUri?: string; newReviewUri?: string }> {
+  const url =
+    `${LOCATIONS_BASE}/locations/${encodeURIComponent(locationId)}` +
+    `?readMask=${encodeURIComponent("name,title,metadata")}`;
+  const res = (await googleFetch(oauth2Client, url)) as {
+    metadata?: { placeId?: string; mapsUri?: string; newReviewUri?: string };
+  };
+  const meta = res.metadata ?? {};
+  return {
+    ...(meta.placeId ? { placeId: meta.placeId } : {}),
+    ...(meta.mapsUri ? { mapsUri: meta.mapsUri } : {}),
+    ...(meta.newReviewUri ? { newReviewUri: meta.newReviewUri } : {}),
+  };
+}
+
 export async function getGbpLocations(
   oauth2Client: OAuth2Client,
   accountId: string,

@@ -10,6 +10,7 @@ import { requireCompanyScope, type CompanyScope } from "./hostScope.js";
 import { isCompanyAllowedForAccount } from "./companyAccess.js";
 import {
   findPendingAttempt,
+  findReviewByIssueId,
   findReviewForLocation,
   listReviewsForLocation,
   parseReviewFilter,
@@ -40,11 +41,20 @@ function refuse(code: string, sentence: string): never {
 }
 import { findAccount, getOAuthClient, wrapGbpError } from "./gbpAuth.js";
 import { registerConnectFlow, SCOPE_GMAIL } from "./oauthConnect.js";
-import { closeReviewIssue, ensureParentIssue } from "./reviewTasks.js";
+import { closeReviewIssue, ensureParentIssue, taskIsSettled } from "./reviewTasks.js";
+import {
+  googleListingUrl,
+  locationLinksStateKey,
+  readLocationLinks,
+  reviewPageUrl,
+  reviewTaskLinkLines,
+  type LocationLinks,
+} from "./reviewLinks.js";
 import { generateReplyWithAgent, pickReplyAgent } from "./aiReply.js";
 import {
   getAllReviews,
   getGbpAccounts,
+  getGbpLocationLinks,
   getGbpLocations,
   getReview,
   listReviews,
@@ -68,15 +78,18 @@ function buildReviewIssueBody(
   reviewText: string | undefined,
   locationName: string,
   draftReply: string,
+  linkLines: string[] = [],
 ): string {
   const stars = starRatingToEmoji(starRating);
   const text = reviewText?.trim() || "_(no written review)_";
-  // The old instruction told people to comment "@CEO Agent reply approved",
-  // which nothing ever read. The Reviews page is the real path now; a review
-  // that arrived by email has no Google name yet, so it says how to get one.
+  // The links go at the top, because getting to the review is the first
+  // thing anyone opening this task wants. The old body gave directions
+  // ("open Reviews, pick the location, choose this review") from a task
+  // that already knew exactly which review it meant.
   return [
     `## ${stars} Review: ${locationName}`,
     "",
+    ...(linkLines.length > 0 ? [...linkLines, ""] : []),
     `**Reviewer:** ${reviewerName}`,
     `**Rating:** ${stars} (${starRatingToNumber(starRating)}/5)`,
     "",
@@ -91,7 +104,9 @@ function buildReviewIssueBody(
     "",
     "---",
     "",
-    "**To reply:** open Reviews inside this company, pick the location and choose this review. If it is not listed yet, press Sync now.",
+    ...(linkLines.length > 0
+      ? ["**To reply:** use the link at the top of this task. If the review is not listed yet, press Sync now on its location."]
+      : ["**To reply:** open Reviews inside this company, pick the location and choose this review. If it is not listed yet, press Sync now."]),
     "",
   ].join("\n");
 }
@@ -159,6 +174,62 @@ async function resolveReplyAgent(
  */
 function lastSyncStateKey(locationKey: string) {
   return { scopeKind: "instance" as const, stateKey: `last-sync:${locationKey}` };
+}
+
+/**
+ * The company's URL prefix, which every page in Paperclip sits under. Read
+ * through a widened shape because the installed SDK's Company type predates
+ * the field while the host sends it, the same approach used for
+ * isPortfolioRoot.
+ */
+async function companyUrlPrefix(ctx: PluginCtx, companyId: string): Promise<string | null> {
+  try {
+    const company = await ctx.companies.get(companyId);
+    const prefix = (company as unknown as { issuePrefix?: string } | null)?.issuePrefix;
+    return typeof prefix === "string" && prefix.length > 0 ? prefix : null;
+  } catch (err) {
+    ctx.logger.warn("review-tools: could not read the company's URL prefix", {
+      companyId,
+      error: (err as Error).message,
+    });
+    return null;
+  }
+}
+
+/** The Google links recorded for a location by the last sync, if any. */
+async function readStoredLocationLinks(ctx: PluginCtx, locationKey: string): Promise<LocationLinks | null> {
+  try {
+    return readLocationLinks(await ctx.state.get(locationLinksStateKey(locationKey)));
+  } catch (err) {
+    ctx.logger.warn("review-tools: could not read a location's Google links", {
+      locationKey,
+      error: (err as Error).message,
+    });
+    return null;
+  }
+}
+
+/**
+ * Ask Google for a location's links and record them. Best effort on
+ * purpose: a sync that cannot read them still syncs reviews, and the task
+ * simply carries one link instead of two.
+ */
+async function refreshLocationLinks(
+  ctx: PluginCtx,
+  oauth2: Parameters<typeof getGbpLocationLinks>[0],
+  locationKey: string,
+  locationId: string,
+): Promise<void> {
+  try {
+    const links = await getGbpLocationLinks(oauth2, locationId);
+    if (!links.mapsUri && !links.placeId) return;
+    await ctx.state.set(locationLinksStateKey(locationKey), { ...links, fetchedAt: new Date().toISOString() });
+  } catch (err) {
+    ctx.logger.warn("review-tools: could not read this location's Google links", {
+      locationKey,
+      error: wrapGbpError(err),
+    });
+  }
 }
 
 /** The recorded sync time for a location, or null when it has never been synced. */
@@ -232,7 +303,28 @@ async function createReviewIssue(
 
   const draftReply = buildDraftReply(businessName, reviewerName, starRatingToNumber(starRating), reviewText);
   const title = `${stars} ${n}-star Review from ${reviewerName} (${businessName})`;
-  const body = buildReviewIssueBody(reviewerName, starRating, reviewText, businessName, draftReply);
+  // An email-sourced review has no Google name yet, so it gets no deep
+  // link: parseReviewName refuses the synthetic name and the page could not
+  // open it. It still gets the listing link.
+  const linkable = parseReviewName(reviewName) != null;
+  const [companyPrefix, links] = await Promise.all([
+    companyUrlPrefix(ctx, location.targetCompanyId),
+    readStoredLocationLinks(ctx, location.key),
+  ]);
+  const body = buildReviewIssueBody(
+    reviewerName,
+    starRating,
+    reviewText,
+    businessName,
+    draftReply,
+    reviewTaskLinkLines({
+      companyPrefix,
+      locationKey: location.key,
+      reviewName: linkable ? reviewName : "",
+      locationName: businessName,
+      links,
+    }).filter((line) => linkable || !line.includes("/reviews?")),
+  );
 
   try {
     // A subtask under the location's one parent task, so a sync that finds
@@ -275,6 +367,10 @@ async function syncLocationReviews(
     ctx, config, location.accountKey, location.targetCompanyId,
     skipCompanyCheck ? { skipCompanyCheck: true } : undefined,
   );
+  // Refreshed before the reviews are walked, so any task opened below
+  // carries the Google link rather than waiting for the next sync.
+  await refreshLocationLinks(ctx, oauth2, location.key, location.locationId);
+
   const reviews = await getAllReviews(oauth2, location.googleAccountId, location.locationId);
 
   let newCount = 0;
@@ -1004,6 +1100,15 @@ const plugin = definePlugin({
         suggestedReply: buildDraftReply(location.displayName, review.reviewerName, review.starRating, review.reviewText ?? undefined),
         // Computed here from the settings and never editable on the page.
         postsAs: postsAs(location, account ?? { key: location.accountKey }),
+        // Shown in the editor so the listing is one click away, and so the
+        // exact review has an address worth copying.
+        googleListingUrl: googleListingUrl(await readStoredLocationLinks(ctx, location.key)),
+        reviewPageUrl: reviewPageUrl(
+          await companyUrlPrefix(ctx, location.targetCompanyId),
+          location.key,
+          review.reviewName,
+        ),
+
         posting: {
           enabled: config.allowReplies === true,
           // Two different problems, told apart. A location naming an account
@@ -1070,8 +1175,10 @@ const plugin = definePlugin({
       );
       // The reply is on Google; the task for it is finished, whoever
       // finishes it. Done after the post so a task problem never blocks one.
-      await closeReviewIssue(ctx, scope.companyId, receipt.issueId, "posted");
-      return receipt;
+      // The outcome travels with the receipt: the panel used to say "still
+      // open, close it yourself" even after the task had just been closed.
+      const outcome = await closeReviewIssue(ctx, scope.companyId, receipt.issueId, "posted");
+      return { ...receipt, issueClosed: taskIsSettled(outcome) };
     });
 
     // ── Action: pull one location's reviews in now ───────────────────────────
@@ -1124,6 +1231,27 @@ const plugin = definePlugin({
         const message = err instanceof Error ? err.message : String(err);
         throw new Error(/^\[E[A-Z_0-9]+\]/.test(message) ? message : `[EAI_FAILED] ${message.slice(0, 200)}`);
       }
+    });
+
+    // -- Data: which review a task was opened for -----------------------------
+    //
+    // The reply tab on a task knows the task id and nothing else. This is the
+    // one lookup that turns it into a review, so the reply box can be shown
+    // where the person already is instead of sending them to another page.
+    ctx.data.register("review-for-issue", async (params) => {
+      const { scope } = await requirePageScope(ctx, params);
+      const issueId = typeof params.issueId === "string" ? params.issueId.trim() : "";
+      if (!issueId) refuse("EINVALID_INPUT", "No task was named.");
+
+      const review = await findReviewByIssueId(ctx.db, issueId, scope.companyId);
+      if (!review) return { reviewName: null };
+
+      // A review that only ever arrived by email has a synthetic name the
+      // editor cannot open; say so rather than showing a box that fails.
+      const parsed = parseReviewName(review.reviewName);
+      return parsed
+        ? { reviewName: review.reviewName }
+        : { reviewName: null, reason: "This review came in by email and has no Google record yet. Press Sync now on its location, then open this tab again." };
     });
 
     ctx.actions.register("review-sync-location", async (params) => {

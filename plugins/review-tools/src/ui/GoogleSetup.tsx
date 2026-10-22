@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useHostContext, usePluginAction, usePluginData } from "@paperclipai/plugin-sdk/ui";
 import type { PluginPageProps } from "@paperclipai/plugin-sdk/ui";
+import { defaultMintKey } from "./editorState.js";
 import { describeReplyError } from "./replyErrors.js";
 import {
   ErrorNote,
@@ -482,7 +483,10 @@ function ConnectAccount({
       try {
         const existing = await hostJson<Array<{ name: string }>>(`/api/companies/${companyId}/secrets`);
         if (cancelled) return;
-        const suffix = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+        // Derived from the same helper the reply editor uses, so this cannot
+        // repeat the secure-context trap that stopped Post working over
+        // plain http. The suffix only has to make a secret name unique.
+        const suffix = defaultMintKey().replace(/-/g, "").slice(0, 8);
         const names = reviewSecretNames(key, existing.map((s) => s.name), suffix);
 
         const rt = await createSecret(companyId, names.refreshToken, held.refreshToken, `Review Tools refresh token for ${key}`);

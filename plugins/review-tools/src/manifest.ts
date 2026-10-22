@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "review-tools";
-const PLUGIN_VERSION = "0.3.0";
+const PLUGIN_VERSION = "0.5.2";
 
 const SETUP_INSTRUCTIONS = `# Setup: Review Tools
 
@@ -88,6 +88,9 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "database.namespace.write",
     "ui.page.register",
     "ui.dashboardWidget.register",
+    // Declared because of the Reply tab on a task. The host validates this
+    // against the slots: a detailTab slot without it fails the install.
+    "ui.detailTab.register",
     // Read-only, and needed for one thing: telling whether the company you
     // are viewing from is the portfolio root, so the review dashboard can
     // show HQ a cross-company roll-up while showing every other company only
@@ -288,6 +291,17 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
         displayName: "Review Dashboard",
         exportName: "ReviewDashboardPage",
         routePath: "reviews",
+      },
+      {
+        // Shown as a tab on a task. Review tasks get the reply box itself;
+        // every other task gets one line saying the tab is not for it,
+        // because the host filters tabs by entity type, not by what opened
+        // the task.
+        type: "detailTab",
+        id: "review-reply-tab",
+        displayName: "Reply",
+        exportName: "ReviewReplyTab",
+        entityTypes: ["issue"],
       },
       {
         type: "page",

@@ -250,3 +250,25 @@ export async function findPendingAttempt(
   if (!row) return null;
   return { createdAt: toIsoOrNull(row.created_at) ?? String(row.created_at), status: row.status };
 }
+
+/**
+ * The review a task was opened for, found by the task's own id.
+ *
+ * The task page knows which task it is showing and nothing about reviews,
+ * so this is the one lookup that turns a task into a review. Constrained on
+ * the company as well as the task, like every other read here, so a task id
+ * from one company can never reach another company's review.
+ */
+export async function findReviewByIssueId(
+  db: ReviewQueryDb,
+  issueId: string,
+  companyId: string,
+): Promise<ReviewListItem | null> {
+  const rows = await db.query<ReviewRow>(
+    `SELECT ${REVIEW_COLUMNS} FROM ${db.namespace}.reviews
+     WHERE paperclip_issue_id = $1 AND company_id = $2
+     LIMIT 1`,
+    [issueId, companyId],
+  );
+  return rows[0] ? toReviewListItem(rows[0]) : null;
+}
