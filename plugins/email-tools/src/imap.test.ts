@@ -11,7 +11,7 @@
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import type { ImapFlow } from "imapflow";
-import { enforceUidGt, fetchHeaders, fetchParsedMessage, hasFlag } from "./imap.js";
+import { buildSearchObject, enforceUidGt, fetchHeaders, fetchParsedMessage, hasFlag, searchMessages } from "./imap.js";
 
 test("the phantom newest message is filtered out on a quiet mailbox", () => {
   // Cursor at 102290, mailbox's newest message IS 102290: `102291:*`
@@ -87,4 +87,74 @@ test("hasFlag ignores case and copes with no flags at all", () => {
   assert.equal(hasFlag(new Set(["$FORWARDED"]), "$Forwarded"), true);
   assert.equal(hasFlag(["\\Seen"], "\\Answered"), false);
   assert.equal(hasFlag(undefined, "\\Answered"), false);
+});
+
+// A timestamp search must not lose the evening. Gmail decides which day a
+// message arrived on in Pacific time while the search date is written from
+// UTC, so "since 00:25 UTC on the 22nd" used to search from Pacific midnight
+// and every message in between was invisible to the triage cursor.
+function searchClient(arrivals: Array<{ uid: number; internalDate: Date | null }>, searched: unknown[]): ImapFlow {
+  return {
+    getMailboxLock: async () => ({ release: () => undefined }),
+    search: async (query: unknown) => {
+      searched.push(query);
+      return arrivals.map((a) => a.uid);
+    },
+    fetch: async function* (uids: number[]) {
+      for (const a of arrivals) {
+        if (uids.includes(a.uid)) yield { uid: a.uid, internalDate: a.internalDate ?? undefined };
+      }
+    },
+  } as unknown as ImapFlow;
+}
+
+test("an exact-time search asks the server for a day more on each side", () => {
+  const since = new Date("2026-10-22T00:25:30Z");
+  const before = new Date("2026-10-22T03:00:00Z");
+  const query = buildSearchObject({ folder: "INBOX", since, before, exactTimes: true });
+  assert.equal((query.since as Date).toISOString(), "2026-10-21T00:25:30.000Z");
+  assert.equal((query.before as Date).toISOString(), "2026-10-23T03:00:00.000Z");
+});
+
+test("a plain date search is sent unchanged", () => {
+  const since = new Date("2026-10-21");
+  const query = buildSearchObject({ folder: "INBOX", since });
+  assert.equal((query.since as Date).toISOString(), "2026-10-21T00:00:00.000Z");
+});
+
+test("an exact-time search keeps mail that arrived after the cursor, even across the UTC date line", async () => {
+  const searched: unknown[] = [];
+  const client = searchClient(
+    [
+      { uid: 10, internalDate: new Date("2026-10-21T23:50:00Z") },
+      { uid: 11, internalDate: new Date("2026-10-22T00:45:00Z") },
+      { uid: 12, internalDate: new Date("2026-10-22T01:13:33Z") },
+    ],
+    searched,
+  );
+  const uids = await searchMessages(client, {
+    folder: "INBOX",
+    since: new Date("2026-10-22T00:25:30Z"),
+    unseen: true,
+    exactTimes: true,
+  });
+  assert.deepEqual(uids, [11, 12]);
+  assert.equal(searched.length, 1);
+});
+
+test("an exact-time search drops mail at or after `before` and keeps mail with no arrival time", async () => {
+  const client = searchClient(
+    [
+      { uid: 1, internalDate: new Date("2026-10-22T00:59:59Z") },
+      { uid: 2, internalDate: new Date("2026-10-22T01:00:00Z") },
+      { uid: 3, internalDate: null },
+    ],
+    [],
+  );
+  const uids = await searchMessages(client, {
+    folder: "INBOX",
+    before: new Date("2026-10-22T01:00:00Z"),
+    exactTimes: true,
+  });
+  assert.deepEqual(uids, [1, 3]);
 });

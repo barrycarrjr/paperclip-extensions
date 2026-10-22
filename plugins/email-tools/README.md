@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.23.2**: `email_search` with an exact `since` or `before` time (an ISO timestamp, as the triage cursor gives) no longer misses mail that arrived late in the day. IMAP SINCE and BEFORE compare whole days in the server's timezone (Gmail uses Pacific time) while the date was written from UTC, so each evening a cursor search silently skipped everything that arrived after UTC midnight, and the cursor then moved past it for good. Timestamp searches now ask for a day more on each side and keep only messages whose arrival time is in range. Plain `YYYY-MM-DD` searches are unchanged.
+
 - **v0.23.1**: Add durable shared-mailbox routing with sending, deleting and moving excluded from routing permissions. Routing remains disabled until configured.
 
 - **v0.23.0** - Optional shared-mailbox routing inside the existing email-triage skill, off by default. One named router proposes admin-defined destination keys. Read-only verification, a durable cross-company routing ledger, standard host email handoffs, bounded Mail routing review/history, and honest wake/audit outcomes protect retries. Adds strict Message-ID reply selection alongside the existing UID selector. Requires the matching host email-handoff support; no live sending or agent policy is changed.
