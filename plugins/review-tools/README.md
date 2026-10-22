@@ -6,6 +6,21 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 ## Recent changes
 
+- **v0.5.3**: A dropped request now says so, instead of showing a host
+  message that reads like a broken plugin.
+
+  Reinstalling or reloading the plugin while a Reviews page is open leaves
+  that page holding a handle to the worker that has just been replaced. The
+  next call is refused by the host with "Host services have been disposed",
+  and that sentence reached the screen word for word, under the reply box,
+  which reads like a fault in the plugin. Nothing was wrong with the review,
+  the reply or the account, and the following press reaches the new worker.
+  It now says: "The plugin restarted a moment ago, so that request was
+  dropped. Press the button again."
+
+  The phrase is matched wherever it appears, because it arrives wrapped in
+  whichever error code the handler that hit it uses.
+
 - **v0.5.2**: The receipt stopped claiming the task was still open, and the
   Google link stopped implying it opens one review.
 
@@ -448,6 +463,7 @@ Each account entry lists which Paperclip companies may use it (`allowedCompanies
 ## Versioning
 
 - `0.1.0`: initial release.
+- `0.5.3`: a request dropped by a plugin restart says so.
 - `0.5.2`: the receipt reports whether the task closed; the Google link says what it opens.
 - `0.5.1`: posting works over plain http; the Reply tab installs.
 - `0.5.0`: a Reply tab on review tasks, sharing the Reviews page editor and its guarded post path.

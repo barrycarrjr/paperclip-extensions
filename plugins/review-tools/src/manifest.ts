@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "review-tools";
-const PLUGIN_VERSION = "0.5.2";
+const PLUGIN_VERSION = "0.5.3";
 
 const SETUP_INSTRUCTIONS = `# Setup: Review Tools
 

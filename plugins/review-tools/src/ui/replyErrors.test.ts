@@ -130,3 +130,18 @@ test("no mapped sentence contains a long dash", () => {
     assert.doesNotMatch(describeReplyError(input), LONG_DASHES, JSON.stringify(input));
   }
 });
+
+test("a worker replaced mid-session says to press again, not that something is broken", () => {
+  // The host refuses with this when the plugin was reinstalled or reloaded
+  // while a page was open. It reached the screen verbatim once, which reads
+  // like a fault in the plugin rather than a dropped request.
+  const sentence = describeReplyError(new Error("Host services have been disposed"));
+  assert.match(sentence, /restarted a moment ago/);
+  assert.match(sentence, /Press the button again/);
+
+  // It arrives wrapped in whichever code the handler that hit it used, so
+  // the phrase has to be recognised inside a coded message too.
+  assert.equal(describeReplyError(new Error("[EAI_FAILED] Host services have been disposed")), sentence);
+  assert.equal(describeReplyError({ code: "WORKER_ERROR", message: "Host services have been disposed" }), sentence);
+  assert.doesNotMatch(sentence, LONG_DASHES);
+});

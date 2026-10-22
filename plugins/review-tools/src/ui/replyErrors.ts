@@ -22,6 +22,14 @@ const ROLE_VIEW_ONLY =
 // whose access has been suspended. Nothing about their role would help.
 const NO_COMPANY_ACCESS = "You do not have access to this company's reviews.";
 const NO_REASON = "Something went wrong and no reason was given.";
+/**
+ * The worker was replaced between the page loading and this call. The host
+ * refuses with "Host services have been disposed", which reads like a fault
+ * in the plugin; it is not, and the next press reaches the new worker, so
+ * the sentence says exactly that. Seen for real after the plugin was
+ * reinstalled while a Reviews page was open.
+ */
+const WORKER_REPLACED = "The plugin restarted a moment ago, so that request was dropped. Press the button again.";
 
 /** The codes the worker throws, each with the one sentence the page shows. */
 const CODE_SENTENCES: Record<string, string> = {
@@ -64,6 +72,14 @@ function codeOf(err: unknown): string {
   return "";
 }
 
+/**
+ * True when the failure is the worker having been replaced mid-session
+ * rather than anything about the review, the reply or the person.
+ */
+function isWorkerReplaced(err: unknown): boolean {
+  return /host services have been disposed/i.test(messageOf(err));
+}
+
 /** True when the host, not the worker, refused the call over who the person is. */
 export function isAccessRefusal(err: unknown): boolean {
   return accessRefusalSentence(err) !== null;
@@ -91,6 +107,9 @@ function accessRefusalSentence(err: unknown): string | null {
 export function describeReplyError(err: unknown): string {
   const code = codeOf(err);
   if (code === "WORKER_UNAVAILABLE" || code === "TIMEOUT") return NOT_RUNNING;
+  // Checked before the code is read: this arrives wrapped in whatever code
+  // the handler that hit it uses, so the phrase is the only reliable mark.
+  if (isWorkerReplaced(err)) return WORKER_REPLACED;
 
   const message = messageOf(err).trim();
   const refusal = accessRefusalSentence(err);
