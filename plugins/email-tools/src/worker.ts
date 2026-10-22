@@ -81,7 +81,10 @@ import {
 } from "./contacts.js";
 import {
   parseStoredCursor,
+  cursorForFinishedRun,
+  finishRun,
   planCursorAdvance,
+  recordSearchStart,
   resolveSince,
   triageCursorScope,
 } from "./triage-cursor.js";
@@ -690,6 +693,8 @@ const plugin = definePlugin({
           before?: string;
           unseen?: boolean;
           limit?: number;
+          oldestFirst?: boolean;
+          afterUid?: number;
         };
         const gate = gateMailbox("email_search", p.mailbox, runCtx, config);
         if (!gate.ok) return { error: gate.error };
@@ -708,10 +713,11 @@ const plugin = definePlugin({
               since: parseDateArg(p.since),
               before: parseDateArg(p.before),
               unseen: !!p.unseen,
+              uidGt: Number.isInteger(p.afterUid) ? p.afterUid : undefined,
               exactTimes: hasTimeOfDay(p.since) || hasTimeOfDay(p.before),
             });
             const truncated = uids.length > limit;
-            const slice = uids.slice(-limit);
+            const slice = p.oldestFirst ? uids.slice(0, limit) : uids.slice(-limit);
             const headers = await fetchHeaders(client, folder, slice);
             if (String(await getUidValidity(client, folder)) !== uidValidity) throw new Error("UIDVALIDITY changed during search. Search again before acting.");
             return { items: headers, truncated, uidValidity };
@@ -1218,10 +1224,12 @@ const plugin = definePlugin({
         } catch (err) {
           return { error: (err as Error).message };
         }
-        const stored = parseStoredCursor(
-          await ctx.state.get(triageCursorScope(runCtx.companyId, p.mailbox)),
-        );
-        const { since, source } = resolveSince(stored, new Date());
+        const scope = triageCursorScope(runCtx.companyId, p.mailbox);
+        const raw = await ctx.state.get(scope);
+        const stored = parseStoredCursor(raw);
+        const now = new Date();
+        const { since, source } = resolveSince(stored, now);
+        await ctx.state.set(scope, recordSearchStart(raw, runCtx.runId, now));
         return {
           content:
             source === "cursor"
@@ -1237,7 +1245,7 @@ const plugin = definePlugin({
       {
         displayName: "Set Triage Cursor",
         description:
-          "Record how far the triage routine got. Call once at the end of a successful run, except on a bulk cleanup. Defaults to now. Refuses to move the cursor backwards unless force is set.",
+          "Record how far the triage routine got. Call once at the end of a successful run, except on a bulk cleanup. Defaults to when this run called email_get_triage_cursor (now, if it never did). Refuses to move the cursor backwards unless force is set.",
         parametersSchema: {
           type: "object",
           properties: {
@@ -1247,7 +1255,7 @@ const plugin = definePlugin({
             },
             lastRunAt: {
               type: "string",
-              description: "ISO timestamp. Omit to use the current time.",
+              description: "ISO timestamp. Omit to use when this run called email_get_triage_cursor.",
             },
             force: {
               type: "boolean",
@@ -1268,14 +1276,12 @@ const plugin = definePlugin({
           return { error: (err as Error).message };
         }
         const scope = triageCursorScope(runCtx.companyId, p.mailbox);
-        const stored = parseStoredCursor(await ctx.state.get(scope));
-        const proposed =
-          typeof p.lastRunAt === "string" && p.lastRunAt.trim()
-            ? p.lastRunAt
-            : new Date().toISOString();
-        const plan = planCursorAdvance(stored, proposed, { force: p.force === true });
-        if (!plan.ok) return { error: plan.reason ?? "Cursor write refused" };
-        await ctx.state.set(scope, { lastRunAt: plan.lastRunAt });
+        const raw = await ctx.state.get(scope);
+        const now = new Date();
+        const proposed = cursorForFinishedRun(raw, runCtx.runId, now, p.lastRunAt);
+        const plan = planCursorAdvance(parseStoredCursor(raw), proposed, { force: p.force === true });
+        if (!plan.ok || !plan.lastRunAt) return { error: plan.reason ?? "Cursor write refused" };
+        await ctx.state.set(scope, finishRun(raw, runCtx.runId, plan.lastRunAt, now));
         return {
           content: `Triage cursor for "${p.mailbox}" set to ${plan.lastRunAt}.`,
           data: { lastRunAt: plan.lastRunAt },

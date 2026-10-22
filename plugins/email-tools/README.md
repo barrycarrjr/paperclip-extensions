@@ -7,6 +7,8 @@ each gated by their own master switch.
 
 ## Recent changes
 
+- **v0.23.3**: Three more ways the triage routine could skip new mail are closed. The triage cursor is now stamped with the moment the run searched (when it called `email_get_triage_cursor`), not when it finished, so mail that arrives during a long run is picked up next time. `email_search` gains `oldestFirst` and `afterUid`, so a run with more than one page of new mail pages forward through all of it instead of keeping only the newest page. The email-triage skill now searches read and unread mail: mail the operator read on another device between runs is still looked at and routed, but never moved, marked, queued or flagged.
+
 - **v0.23.2**: `email_search` with an exact `since` or `before` time (an ISO timestamp, as the triage cursor gives) no longer misses mail that arrived late in the day. IMAP SINCE and BEFORE compare whole days in the server's timezone (Gmail uses Pacific time) while the date was written from UTC, so each evening a cursor search silently skipped everything that arrived after UTC midnight, and the cursor then moved past it for good. Timestamp searches now ask for a day more on each side and keep only messages whose arrival time is in range. Plain `YYYY-MM-DD` searches are unchanged.
 
 - **v0.23.1**: Add durable shared-mailbox routing with sending, deleting and moving excluded from routing permissions. Routing remains disabled until configured.
