@@ -191,6 +191,11 @@ function parseDateArg(v: string | undefined): Date | undefined {
   return d;
 }
 
+/** A timestamp such as the triage cursor, as opposed to a plain YYYY-MM-DD. */
+function hasTimeOfDay(v: string | undefined): boolean {
+  return typeof v === "string" && /\dT\d/.test(v);
+}
+
 interface SmtpSendResult {
   messageId: string;
   smtpResponse: string;
@@ -703,6 +708,7 @@ const plugin = definePlugin({
               since: parseDateArg(p.since),
               before: parseDateArg(p.before),
               unseen: !!p.unseen,
+              exactTimes: hasTimeOfDay(p.since) || hasTimeOfDay(p.before),
             });
             const truncated = uids.length > limit;
             const slice = uids.slice(-limit);

@@ -73,6 +73,18 @@ export interface SearchInput {
   unseen?: boolean;
   uidGt?: number;
   header?: { [key: string]: string };
+  /**
+   * Treat `since` and `before` as exact points in time instead of whole days.
+   * IMAP SINCE and BEFORE compare dates, and the server decides which day a
+   * message arrived on in its own timezone (Gmail uses Pacific time), while
+   * imapflow writes the date from UTC. So "since 00:25 UTC on the 22nd" became
+   * SINCE 22-Oct, which Gmail reads as Pacific midnight: everything that
+   * arrived in the hours between was invisible, every evening, and a triage
+   * cursor moving past it never saw it again. With this set the search asks
+   * for a day more on each side and keeps only messages whose arrival time is
+   * inside the range.
+   */
+  exactTimes?: boolean;
 }
 
 export interface SearchResultItem {
@@ -138,15 +150,18 @@ export async function getUidValidity(client: ImapFlow, folder: string): Promise<
   }
 }
 
-function buildSearchObject(q: SearchInput): SearchObject {
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function buildSearchObject(q: SearchInput): SearchObject {
   const obj: SearchObject = {};
+  const widen = q.exactTimes ? DAY_MS : 0;
   if (q.from) obj.from = q.from;
   if (q.to) obj.to = q.to;
   if (q.subject) obj.subject = q.subject;
   if (q.text) obj.text = q.text;
   if (q.body) obj.body = q.body;
-  if (q.since) obj.since = q.since;
-  if (q.before) obj.before = q.before;
+  if (q.since) obj.since = new Date(q.since.getTime() - widen);
+  if (q.before) obj.before = new Date(q.before.getTime() + widen);
   if (q.unseen) obj.seen = false;
   if (q.uidGt !== undefined && q.uidGt > 0) {
     obj.uid = `${q.uidGt + 1}:*`;
@@ -177,10 +192,36 @@ export async function searchMessages(client: ImapFlow, q: SearchInput): Promise<
   try {
     const result = await client.search(buildSearchObject(q), { uid: true });
     if (!result) return [];
-    return enforceUidGt(result.slice().sort((a, b) => a - b), q.uidGt);
+    const uids = enforceUidGt(result.slice().sort((a, b) => a - b), q.uidGt);
+    if (!q.exactTimes || (!q.since && !q.before)) return uids;
+    return await keepArrivedWithin(client, uids, q.since, q.before);
   } finally {
     lock.release();
   }
+}
+
+/**
+ * Keep the UIDs whose arrival time (INTERNALDATE, the time IMAP SINCE and
+ * BEFORE are based on) is at or after `since` and before `before`. A message
+ * whose arrival time cannot be read is kept: showing one extra message is
+ * cheaper than losing one. Call with the mailbox lock held.
+ */
+async function keepArrivedWithin(
+  client: ImapFlow,
+  uids: number[],
+  since: Date | undefined,
+  before: Date | undefined,
+): Promise<number[]> {
+  if (uids.length === 0) return uids;
+  const kept: number[] = [];
+  for await (const msg of client.fetch(uids, { uid: true, internalDate: true }, { uid: true })) {
+    const arrived = msg.internalDate ? new Date(msg.internalDate).getTime() : Number.NaN;
+    const outside =
+      !Number.isNaN(arrived) &&
+      ((since !== undefined && arrived < since.getTime()) || (before !== undefined && arrived >= before.getTime()));
+    if (!outside) kept.push(msg.uid);
+  }
+  return kept.sort((a, b) => a - b);
 }
 
 function addrToString(addr: AddressObject | AddressObject[] | undefined): string {

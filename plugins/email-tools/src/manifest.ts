@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.23.1";
+const PLUGIN_VERSION = "0.23.2";
 
 const routingSchema = {
   type: "object", additionalProperties: false, title: "Mail routing",
