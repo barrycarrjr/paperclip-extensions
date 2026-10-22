@@ -130,6 +130,17 @@ test("published record examples have flat, collision-free headers and resolvable
   assert.equal(records.get(path.basename(links[0], ".md")), decision.header);
 });
 
+test("a source's own note rules decide the format, with one replacement edit allowed", () => {
+  const section = /## When the source has its own note rules\r?\n([\s\S]*?)\r?\n## /.exec(templates.skill.body);
+  assert.ok(section, "skill has the source-rules section before the review section");
+  for (const topic of ["Headers and body", "Identity", "Links", "Verdicts", "Replacement edits", "Who may write"]) {
+    assert.ok(section[1].includes(`**${topic}.**`), `section covers ${topic}`);
+  }
+  assert.ok(!/```/.test(section[1]), "section adds no record example");
+  assert.match(templates.skill.body, /The one exception is a replacement edit the source's own note rules\s+require/);
+  assert.match(templates.routine.header.routineDescription, /except a replacement edit the source's own note rules\s+require/);
+});
+
 test("the real release packer discovers and hashes the pack in a synthetic workspace", (t) => {
   const checkoutOutputExisted = existsSync(path.join(repo, "dist-pcplugins"));
   const scratch = mkdtempSync(path.join(os.tmpdir(), "decision-outcomes-catalog-"));
