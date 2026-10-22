@@ -48,6 +48,8 @@ Before the first publication, finalize every field, body, stable ID, link and
 required identity annotation. After publication, never edit content or headers,
 rename, move, archive or delete the record, even to stamp a Drive ID or change
 status. Keep `status: active`; later records describe corrections and changes.
+The one exception is a replacement edit the source's own note rules require
+(see "When the source has its own note rules").
 
 Use a unique `record_id`, never the reserved `paperclip_id` that binds Memories.
 Check both the ID and destination before creation. Use an existing tool's
@@ -194,6 +196,35 @@ decision, and `next_review` on a `too_early` or `unknown` outcome only when an
 existing source or board decision approves that date. Cite that approval in
 the body. Do not invent a next review date or cadence. Omit `review_by` if no
 date was approved and flag that omission for the board.
+
+## When the source has its own note rules
+
+The format above is the default. When the operator confirms that the records
+source already has written note rules for decisions (a header contract, body
+sections, file naming, link style or a replacement rule), those rules decide
+the format, and this skill keeps deciding the behavior. Read the source's rules
+file before each run's first write; do not copy it into this skill.
+
+- **Headers and body.** Use the source's header fields and body sections
+  exactly. Do not add this skill's header fields. Where the source has a
+  matching section, the fact goes there: success criteria, review date,
+  evidence, verdict. If the source has no place for a fact this skill needs,
+  stop that write and ask the board; do not invent a field or section.
+- **Identity.** The source's stable identifier is the record ID, for example
+  a unique dated file name. Check it for collisions before creating, as above.
+- **Links.** Link an outcome to its decision, a correction to what it
+  corrects and a new decision to what it supersedes with the source's own
+  link and relation style. Chain resolution reads those links the same way it
+  reads `decision_record`, `corrects` and `supersedes`.
+- **Verdicts.** Use the source's verdict wording when it names one of the five
+  verdicts differently; the meanings must match one to one.
+- **Replacement edits.** If the source's rules require marking a replaced
+  record (for example a deprecated status with a link forward), make exactly
+  that edit, and only when a new record replaces it. It is the one edit ever
+  made to a published record. An outcome alone never replaces a decision.
+- **Who may write.** The source's own approval rules for creating or changing
+  notes apply on top of this skill's. A record waiting for approval is not
+  written.
 
 ## Review due decisions without duplicate outcomes
 

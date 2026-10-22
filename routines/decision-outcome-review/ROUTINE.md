@@ -21,7 +21,8 @@ routineDescription: |
      Do not duplicate an unchanged period, including unknown/too_early results.
      Publish only authorized, evidence-supported new outcomes; never edit,
      rename, move, archive or delete a published record, including its header
-     or Drive identity. If identities cannot be final before publication, stop
+     or Drive identity, except a replacement edit the source's own note rules
+     require. If the source has its own note rules, use its format. If identities cannot be final before publication, stop
      affected creation and ask for an operator-supported staging workflow.
   4. Batch necessary board questions on this issue. Do not invent evidence,
      criteria, verdicts or next dates. Suggest decision changes through existing
