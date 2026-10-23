@@ -16,6 +16,7 @@ import {
 } from "./githubClient.js";
 import { isCompanyAllowed } from "./companyAccess.js";
 import { NOTIFICATION_WATCH_JOB_KEY, runNotificationWatch } from "./notificationWatch.js";
+import { SETTLED_RECHECK_JOB_KEY, runSettledRecheck } from "./settledRecheck.js";
 
 type ResolveResult =
   | { ok: true; resolved: ResolvedAccount }
@@ -102,6 +103,12 @@ const plugin = definePlugin({
       const cfg = ((await ctx.config.get()) as InstanceConfig).notificationWatch;
       const result = await runNotificationWatch(ctx, cfg);
       ctx.logger.info("github-tools: notification watch run", { trigger: job.trigger, ...result });
+    });
+
+    ctx.jobs.register(SETTLED_RECHECK_JOB_KEY, async (job) => {
+      const cfg = ((await ctx.config.get()) as InstanceConfig).notificationWatch;
+      const result = await runSettledRecheck(ctx, cfg);
+      ctx.logger.info("github-tools: settled-task recheck run", { trigger: job.trigger, ...result });
     });
 
     function gateMutation(tool: string): { error: string } | null {

@@ -16,7 +16,7 @@ import {
 import { wrapGithubError } from "./githubClient.js";
 
 export const NOTIFICATION_WATCH_JOB_KEY = "watch-github-notifications";
-const ORIGIN_KIND = "plugin:github-tools" as const;
+export const ORIGIN_KIND = "plugin:github-tools" as const;
 const DEFAULT_LOOKBACK_HOURS = 24;
 const MAX_PAGES = 5;
 const PER_PAGE = 50;
@@ -81,16 +81,7 @@ export async function runNotificationWatch(
     return { ...summary, skipped: "GitHub asked to wait before polling again" };
   }
 
-  const token = await ctx.secrets.resolve(cfg.tokenRef!);
-  if (!token) throw new Error("[ECONFIG] notification watch token secret did not resolve.");
-  const client = new Octokit({
-    auth: token,
-    userAgent: "paperclip-plugin-github-tools",
-    request: { retries: 2 },
-    // Octokit logs every 304 as an error; failures are rethrown and reported by the job run instead.
-    log: { debug: () => {}, info: () => {}, warn: console.warn, error: () => {} },
-  });
-
+  const client = await createWatchClient(ctx, cfg);
   const page = await fetchNotifications(client, cursor);
   if (!page) {
     await ctx.state.set(cursorKey, { ...cursor, nextPollAt: null });
@@ -115,6 +106,30 @@ export async function runNotificationWatch(
     nextPollAt: new Date(now.getTime() + page.pollIntervalSec * 1000).toISOString(),
   } satisfies WatchCursor);
   return summary;
+}
+
+export async function createWatchClient(ctx: PluginContext, cfg: NotificationWatchConfig): Promise<Octokit> {
+  const token = await ctx.secrets.resolve(cfg.tokenRef!);
+  if (!token) throw new Error("[ECONFIG] notification watch token secret did not resolve.");
+  return new Octokit({
+    auth: token,
+    userAgent: "paperclip-plugin-github-tools",
+    request: { retries: 2 },
+    // Octokit logs every 304 as an error; failures are rethrown and reported by the job run instead.
+    log: { debug: () => {}, info: () => {}, warn: console.warn, error: () => {} },
+  });
+}
+
+/**
+ * A task the triage agent handed to a person goes back to that agent when the
+ * thread moves again, so someone reads the new activity and decides afresh.
+ */
+export function handBackPatch(
+  existing: { assigneeUserId?: string | null; assigneeAgentId?: string | null },
+  cfg: NotificationWatchConfig,
+): { assigneeAgentId: string; assigneeUserId: null; status: "todo" } | null {
+  if (!cfg.assigneeAgentId || !existing.assigneeUserId) return null;
+  return { assigneeAgentId: cfg.assigneeAgentId, assigneeUserId: null, status: "todo" };
 }
 
 async function readCursor(ctx: PluginContext, cfg: NotificationWatchConfig, now: Date): Promise<WatchCursor> {
@@ -264,7 +279,10 @@ async function handleThread(
 
   if (existing) {
     await ctx.issues.createComment(existing.id, task.body, companyId);
-    if (REOPEN_STATUSES.has(existing.status)) {
+    const handBack = handBackPatch(existing, cfg);
+    if (handBack) {
+      await ctx.issues.update(existing.id, handBack, companyId);
+    } else if (REOPEN_STATUSES.has(existing.status)) {
       await ctx.issues.update(existing.id, { status: "todo" }, companyId);
     }
     await ctx.state.set(threadKey(notification.id), {

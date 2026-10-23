@@ -226,3 +226,33 @@ test("a closed issue does not repeat a comment older than the last check", async
   assert.match(task.description!, /Closed\./);
   assert.doesNotMatch(task.description!, /Resolved in abc123/);
 });
+
+test("new activity on a task waiting on a person hands it back to the triage agent", async () => {
+  const { ctx, state, issues } = fakeContext();
+  const withAgent = { ...config, assigneeAgentId: "agent-1" };
+  serve([notification("1", "2026-01-02T11:00:00Z", 10)], { 10: "maintainer" });
+  await runNotificationWatch(ctx, withAgent, t0);
+  Object.assign(issues.get("issue-1")!, { assigneeAgentId: null, assigneeUserId: "user-1", status: "todo" });
+
+  routes = [];
+  state.set("notification-watch/cursor", { since: "2026-01-02T11:00:00Z", lastModified: null, nextPollAt: null });
+  serve([notification("1", "2026-01-02T12:30:00Z", 11)], { 11: "maintainer" });
+  await runNotificationWatch(ctx, withAgent, later(60));
+  const task = issues.get("issue-1")! as FakeIssue & { assigneeUserId?: string | null };
+  assert.equal(task.assigneeAgentId, "agent-1");
+  assert.equal(task.assigneeUserId, null);
+  assert.equal(task.status, "todo");
+});
+
+test("without an agent assignee, a task waiting on a person stays with them", async () => {
+  const { ctx, state, issues } = fakeContext();
+  serve([notification("1", "2026-01-02T11:00:00Z", 10)], { 10: "maintainer" });
+  await runNotificationWatch(ctx, config, t0);
+  Object.assign(issues.get("issue-1")!, { assigneeUserId: "user-1" });
+
+  routes = [];
+  state.set("notification-watch/cursor", { since: "2026-01-02T11:00:00Z", lastModified: null, nextPollAt: null });
+  serve([notification("1", "2026-01-02T12:30:00Z", 11)], { 11: "maintainer" });
+  await runNotificationWatch(ctx, config, later(60));
+  assert.equal((issues.get("issue-1")! as FakeIssue & { assigneeUserId?: string }).assigneeUserId, "user-1");
+});

@@ -11,6 +11,7 @@ Idempotent issue creation via auto-applied labels.
 
 ## Recent changes
 
+- **v0.4.0**: Watch tasks waiting on a person go back to the watch's agent assignee when the thread moves again. A new daily job, `recheck-settled-github-tasks`, also hands back tasks whose pull request was merged or closed, whose issue was closed, or whose failed run's branch was deleted or later passed, with the reason as a comment. Each task is handed back at most once per reason.
 - **v0.3.2**: Patch bump for the cross-plugin release so Plugin Manager offers the current build. No additional functional changes.
 
 - **v0.3.1** - Adds the notification watch that opens one Paperclip task per GitHub thread and includes the closing comment when an issue is closed.
@@ -165,6 +166,8 @@ A scheduled job, `watch-github-notifications`, runs every 15 minutes. It is plai
 - **Source:** GitHub's own notifications feed (`GET /notifications`), the same list behind the bell on github.com. GitHub decides what is relevant: comments on threads you opened or joined, mentions, assignments, review requests, merges and closes, finished Actions runs, on any repo.
 - **Cost:** the job replays GitHub's `Last-Modified` header, so an unchanged feed returns `304 Not Modified`, which does not count against the rate limit. It also honours `X-Poll-Interval`.
 - **Tasks:** one Paperclip task per GitHub thread (`originKind: plugin:github-tools`, `originId: notification-thread:<id>`). Later activity becomes a comment on that task, and a done or cancelled task is reopened to `todo`. Your own comments are ignored.
+
+- **Hand-back:** with an agent assignee set, a task the agent gave to a person is handed back to the agent (`todo`) when new activity arrives. Once a day (11:00 UTC) the `recheck-settled-github-tasks` job looks up each such task's thread and hands it back when it has settled on GitHub. Titles it can read: `owner/repo#N` issues and pull requests, and Actions `... workflow run failed for <branch> branch` runs. The notifications token reads public repositories; a private repository's thread is skipped unless the token can read it.
 - **Trust:** comments from `trustedLogins` are marked as requests (priority high). Everyone else's are marked information only. Comment text is quoted, never treated as instructions.
 - **Read state:** the job never marks notifications read, so github.com and email notifications are unaffected.
 - **Token:** a **classic** PAT with only the `notifications` scope, stored as a secret. GitHub's notifications API does not accept fine-grained tokens.
