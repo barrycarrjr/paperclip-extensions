@@ -15,6 +15,7 @@ interface FakeIssue {
 
 function fakeContext() {
   const state = new Map<string, unknown>();
+  const wakeups: string[] = [];
   const issues = new Map<string, FakeIssue>();
   const stateId = (key: { namespace?: string; stateKey: string }) => `${key.namespace ?? "default"}/${key.stateKey}`;
   const ctx = {
@@ -32,6 +33,10 @@ function fakeContext() {
         issues.set(issue.id, issue);
         return issue;
       },
+      requestWakeup: async (id: string) => {
+        wakeups.push(id);
+        return { queued: true };
+      },
       createComment: async (id: string, body: string) => {
         issues.get(id)!.comments.push(body);
         return { id: "comment" };
@@ -42,7 +47,7 @@ function fakeContext() {
       },
     },
   } as unknown as PluginContext;
-  return { ctx, state, issues };
+  return { ctx, state, issues, wakeups };
 }
 
 type Route = (url: URL, headers: Headers) => Response;
@@ -225,4 +230,50 @@ test("a closed issue does not repeat a comment older than the last check", async
   const task = issues.get("issue-1")!;
   assert.match(task.description!, /Closed\./);
   assert.doesNotMatch(task.description!, /Resolved in abc123/);
+});
+
+test("new activity on a task waiting on a person hands it back to the triage agent", async () => {
+  const { ctx, state, issues, wakeups } = fakeContext();
+  const withAgent = { ...config, assigneeAgentId: "agent-1" };
+  serve([notification("1", "2026-01-02T11:00:00Z", 10)], { 10: "maintainer" });
+  await runNotificationWatch(ctx, withAgent, t0);
+  Object.assign(issues.get("issue-1")!, { assigneeAgentId: null, assigneeUserId: "user-1", status: "todo" });
+
+  routes = [];
+  state.set("notification-watch/cursor", { since: "2026-01-02T11:00:00Z", lastModified: null, nextPollAt: null });
+  serve([notification("1", "2026-01-02T12:30:00Z", 11)], { 11: "maintainer" });
+  await runNotificationWatch(ctx, withAgent, later(60));
+  const task = issues.get("issue-1")! as FakeIssue & { assigneeUserId?: string | null };
+  assert.equal(task.assigneeAgentId, "agent-1");
+  assert.equal(task.assigneeUserId, null);
+  assert.equal(task.status, "todo");
+  assert.deepEqual(wakeups, ["issue-1"], "the agent is woken, since reassignment alone does not wake it");
+});
+
+test("without an agent assignee, a task waiting on a person stays with them", async () => {
+  const { ctx, state, issues } = fakeContext();
+  serve([notification("1", "2026-01-02T11:00:00Z", 10)], { 10: "maintainer" });
+  await runNotificationWatch(ctx, config, t0);
+  Object.assign(issues.get("issue-1")!, { assigneeUserId: "user-1" });
+
+  routes = [];
+  state.set("notification-watch/cursor", { since: "2026-01-02T11:00:00Z", lastModified: null, nextPollAt: null });
+  serve([notification("1", "2026-01-02T12:30:00Z", 11)], { 11: "maintainer" });
+  await runNotificationWatch(ctx, config, later(60));
+  assert.equal((issues.get("issue-1")! as FakeIssue & { assigneeUserId?: string }).assigneeUserId, "user-1");
+});
+
+test("reopening a done task that belongs to an agent wakes the agent", async () => {
+  const { ctx, state, issues, wakeups } = fakeContext();
+  const withAgent = { ...config, assigneeAgentId: "agent-1" };
+  serve([notification("1", "2026-01-02T11:00:00Z", 10)], { 10: "maintainer" });
+  await runNotificationWatch(ctx, withAgent, t0);
+  issues.get("issue-1")!.status = "done";
+
+  routes = [];
+  state.set("notification-watch/cursor", { since: "2026-01-02T11:00:00Z", lastModified: null, nextPollAt: null });
+  serve([notification("1", "2026-01-02T12:30:00Z", 11)], { 11: "maintainer" });
+  await runNotificationWatch(ctx, withAgent, later(60));
+  assert.equal(issues.get("issue-1")!.status, "todo");
+  assert.deepEqual(wakeups, ["issue-1"]);
 });

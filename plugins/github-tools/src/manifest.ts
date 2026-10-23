@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "github-tools";
-const PLUGIN_VERSION = "0.3.2";
+const PLUGIN_VERSION = "0.4.0";
 
 const notificationWatchSchema = {
   type: "object",
@@ -200,7 +200,7 @@ Opens a Paperclip task whenever GitHub would notify you (a comment on something 
 2. Store it as a secret (e.g. \`GITHUB_NOTIFICATIONS_TOKEN\`) and copy its UUID.
 3. Under **Notification watch** on the Configuration tab, tick **Watch my GitHub notifications**, pick the token secret and the company for the tasks. Optionally add trusted logins (their comments are marked as requests), an assignee, and a repo filter.
 
-Each GitHub thread gets one task. Later activity on that thread is added as a comment, and a done or cancelled task is reopened. Your own comments are ignored. Your GitHub read/unread state is left alone.
+Each GitHub thread gets one task. Later activity on that thread is added as a comment, and a done or cancelled task is reopened. If the task is waiting on a person and an agent assignee is set, new activity hands it back to that agent; a daily check also hands back tasks whose thread has settled on GitHub. Your own comments are ignored. Your GitHub read/unread state is left alone.
 
 ---
 
@@ -234,6 +234,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "issues.read",
     "issues.create",
     "issues.update",
+    "issues.wakeup",
     "issue.comments.create",
   ],
   entrypoints: {
@@ -246,6 +247,13 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       description:
         "Reads the configured GitHub notifications feed and opens or updates one Paperclip task per thread with new activity. Does nothing unless the notification watch is enabled.",
       schedule: "*/15 * * * *",
+    },
+    {
+      jobKey: "recheck-settled-github-tasks",
+      displayName: "Hand back settled GitHub tasks",
+      description:
+        "Once a day, looks up each watch task waiting on a person. When its pull request was merged or closed, its issue was closed, or a failed run's branch was deleted or passed later, the task goes back to the assigned triage agent with the reason. Does nothing unless the watch has an agent assignee.",
+      schedule: "0 11 * * *",
     },
   ],
   instanceConfigSchema: {
