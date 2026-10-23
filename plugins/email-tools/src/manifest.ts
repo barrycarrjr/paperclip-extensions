@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "email-tools";
-const PLUGIN_VERSION = "0.23.2";
+const PLUGIN_VERSION = "0.23.3";
 
 const routingSchema = {
   type: "object", additionalProperties: false, title: "Mail routing",
@@ -652,6 +652,16 @@ Routing selectors use the exact messageId of the CURRENT email_search item, or n
             description: "ISO date or 'YYYY-MM-DD'. Only messages before this date.",
           },
           unseen: { type: "boolean", description: "Only unseen (\\Unseen) messages." },
+          oldestFirst: {
+            type: "boolean",
+            description:
+              "When more than limit messages match, return the oldest ones instead of the newest. Use with afterUid to page forward through everything.",
+          },
+          afterUid: {
+            type: "number",
+            description:
+              "Only messages with a UID above this one. To read the next page, pass the highest uid from the previous page (with oldestFirst).",
+          },
           limit: {
             type: "number",
             description: "Max results. Default 50, max 200.",
@@ -798,7 +808,7 @@ Routing selectors use the exact messageId of the CURRENT email_search item, or n
       name: "email_set_triage_cursor",
       displayName: "Set Triage Cursor",
       description:
-        "Record how far the triage routine got. Call once at the end of a successful run, and NOT when bulkCleanup is true (a backlog pass must not disturb the regular cadence). Defaults to the current time when lastRunAt is omitted. Refuses to move the cursor backwards unless force is true, so a slow or retried run cannot rewind it and cause the next run to reprocess everything in between.",
+        "Record how far the triage routine got. Call once at the end of a successful run, and NOT when bulkCleanup is true (a backlog pass must not disturb the regular cadence). When lastRunAt is omitted it defaults to the moment this run called email_get_triage_cursor, so mail that arrives while the run is working is searched next time (the current time if the run never called it). Refuses to move the cursor backwards unless force is true, so a slow or retried run cannot rewind it and cause the next run to reprocess everything in between.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -809,7 +819,7 @@ Routing selectors use the exact messageId of the CURRENT email_search item, or n
           },
           lastRunAt: {
             type: "string",
-            description: "ISO timestamp. Omit to use the current time.",
+            description: "ISO timestamp. Omit to use when this run called email_get_triage_cursor.",
           },
           force: {
             type: "boolean",

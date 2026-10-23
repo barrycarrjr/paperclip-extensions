@@ -12,9 +12,13 @@ import { strict as assert } from "node:assert";
 import {
   DEFAULT_LOOKBACK_HOURS,
   OVERLAP_MINUTES,
+  SEARCH_START_TTL_HOURS,
   TRIAGE_STATE_NAMESPACE,
+  cursorForFinishedRun,
+  finishRun,
   parseStoredCursor,
   planCursorAdvance,
+  recordSearchStart,
   resolveSince,
   triageCursorScope,
 } from "./triage-cursor.js";
@@ -109,4 +113,41 @@ test("planCursorAdvance accepts any first write and rejects garbage", () => {
   const bad = planCursorAdvance(null, "not a date");
   assert.equal(bad.ok, false);
   assert.match(bad.reason ?? "", /unparseable/i);
+});
+
+test("a finished run records when it searched, not when it finished", () => {
+  const searched = new Date("2026-10-22T00:30:10.000Z");
+  const finished = new Date("2026-10-22T00:41:00.000Z");
+  const row = recordSearchStart({ lastRunAt: "2026-10-22T00:00:00.000Z" }, "run-a", searched);
+  assert.equal(parseStoredCursor(row), "2026-10-22T00:00:00.000Z");
+  assert.equal(cursorForFinishedRun(row, "run-a", finished), searched.toISOString());
+  assert.deepEqual(finishRun(row, "run-a", searched.toISOString(), finished), {
+    lastRunAt: searched.toISOString(),
+  });
+});
+
+test("overlapping runs each keep their own search time", () => {
+  const first = recordSearchStart(null, "run-a", new Date("2026-10-22T01:00:00.000Z"));
+  const both = recordSearchStart(first, "run-b", new Date("2026-10-22T01:02:00.000Z"));
+  const now = new Date("2026-10-22T01:05:00.000Z");
+  assert.equal(cursorForFinishedRun(both, "run-a", now), "2026-10-22T01:00:00.000Z");
+  assert.equal(cursorForFinishedRun(both, "run-b", now), "2026-10-22T01:02:00.000Z");
+  assert.deepEqual(finishRun(both, "run-b", "2026-10-22T01:02:00.000Z", now).searchStarts, {
+    "run-a": "2026-10-22T01:00:00.000Z",
+  });
+});
+
+test("an explicit timestamp wins, and a run that never asked falls back to now", () => {
+  const row = recordSearchStart(null, "run-a", new Date("2026-10-22T01:00:00.000Z"));
+  const now = new Date("2026-10-22T01:05:00.000Z");
+  assert.equal(cursorForFinishedRun(row, "run-a", now, "2026-10-22T00:59:00Z"), "2026-10-22T00:59:00Z");
+  assert.equal(cursorForFinishedRun(row, "run-z", now), now.toISOString());
+  assert.equal(cursorForFinishedRun("2026-10-22T00:00:00Z", "run-a", now), now.toISOString());
+});
+
+test("run starts from runs that never finished expire", () => {
+  const stale = recordSearchStart(null, "crashed", new Date("2026-10-20T00:00:00.000Z"));
+  const now = new Date(Date.parse("2026-10-20T00:00:00.000Z") + (SEARCH_START_TTL_HOURS + 1) * 3_600_000);
+  const row = recordSearchStart(stale, "run-a", now);
+  assert.deepEqual(Object.keys(row.searchStarts ?? {}), ["run-a"]);
 });

@@ -97,7 +97,7 @@ issue inherits it as its own description.
 | `mailbox` | yes | Mailbox identifier (e.g. `support`, `sales`). Must match a `key` in plugin config. |
 | `triageLabel` | no | Destination IMAP folder/label for moved mail. Defaults to `_paperclip/triage`. |
 | `markRead` | no | When `true`, also calls `email_mark_read` after a successful move. Defaults to `true`. |
-| `unreadOnly` | no | When `true`, only consider **unread** (`\Unseen`) mail — pass `unseen: true` to `email_search` and never move/touch a message that's already been marked as read. **Defaults to `true`.** Marked-as-read is the operator's signal that they have already dealt with the message; auto-acting on it would override that signal. Only override to `false` for explicit re-organization tasks the operator has asked for. |
+| `unreadOnly` | no | When `true`, never move, mark or queue a message that's already been marked as read. **Defaults to `true`.** Marked-as-read is the operator's signal that they have already dealt with the message; auto-acting on it would override that signal. Read mail is still searched and looked at (Step 3): mail the operator read on a phone between runs must not drop out of triage unseen. Only override to `false` for explicit re-organization tasks the operator has asked for. |
 | `bulkCleanup` | no | When `true`, ignore the stored cursor and walk the existing INBOX backlog from `bulkSince`. Designed for a one-shot backlog clearance, not the daily routine. Does NOT write the cursor at the end of the run, so the next normal run still picks up where it left off. Defaults to `false`. |
 | `bulkSince` | no | ISO date or `YYYY-MM-DD`. Only consulted when `bulkCleanup=true`. Defaults to 90 days ago. |
 | `looseMode` | no | When `true`, auto-move strong-signal unknown senders (List-Unsubscribe header, OR address matches `noreply@`/`no-reply@`/`notifications@`/`marketing@`/`news@`/`mailer@`/`bounces@`/`info@`) to `<triageLabel>` instead of leaving them in INBOX. Person-to-person mail (no signals) is still left alone. Defaults to `false`. |
@@ -161,11 +161,14 @@ Call `email-tools:email_search` with:
 - `mailbox`: the parameter
 - `folder`: leave default (will use the mailbox's `pollFolder`, normally INBOX)
 - `since`: ISO date computed in step 2
-- `unseen`: `true` when `unreadOnly=true` (the default). This is critical —
-  the operator marks mail as read to signal "I dealt with this." Walking
-  read mail and acting on it would override that signal. Skip the
-  `unseen` parameter only when `unreadOnly=false`.
+- `oldestFirst`: `true`
 - `limit`: 200
+- no `unseen`. Read and unread mail are both searched. The operator often
+  reads mail on a phone before the next run; filtering on unread would
+  skip that mail for good, because the cursor moves past it. Read mail is
+  handled differently in Step 4, not left out here. (A `bulkCleanup=true`
+  pass is the one exception: it passes `unseen: true` when
+  `unreadOnly=true`, since it walks an old backlog, not new mail.)
 
 **Read the results from `result.data.items`.** The response looks like this:
 
@@ -187,21 +190,28 @@ which states the count in words: if `content` says "2 message(s)" and your
 parsed array is empty, you have the wrong field name — stop and report it
 rather than concluding the inbox is empty.**
 
-If the result is exactly 200, repeat with the most recent date in the result
-set as the new `since`, until you get fewer than 200 (you've caught up). Cap
-total messages processed at 1000 per run (5000 when `bulkCleanup=true`) —
-anything more, surface a warning and let it run again later.
+If `truncated` is `true`, more mail matched than one page holds. Repeat the
+same search with `afterUid` set to the highest `uid` in the page you just
+got, until `truncated` is `false` (you've caught up). Do not page by date:
+the search returns whole pages in arrival order, and moving `since` forward
+skips whatever the first page left out. Cap total messages processed at
+1000 per run (5000 when `bulkCleanup=true`). If you hit the cap, surface a
+warning and **do not record the cursor** in Step 6, so the next run picks
+up the rest.
 
 ### 4. Classify and act per message
 
 For each message UID returned:
 
-a. Call `email-tools:email_fetch` to get headers + body. **If
-   `unreadOnly=true` and the fetched message no longer has `\Unseen`**
-   (the operator marked it as read between Step 3 and Step 4a — race),
-   skip the message entirely: do not move, do not mark, do not add to
-   review queue. The search already filtered for unseen, but this
-   double-check protects against the operator triaging in real time.
+a. Call `email-tools:email_fetch` to get headers + body. **Read mail,
+   when `unreadOnly=true`:** a message that is already read (`unseen` is
+   `false` in the search item, or the fetched message has `\Seen` because
+   the operator read it while this run was working) is looked at but
+   never changed. Do not move it, do not mark it, do not add it to the
+   review queue, and do not put it under "Needs the operator" (they have
+   seen it). It still goes through Mute and Keep-always (b) and routing
+   (d), because routing changes no mail and a notice read on a phone
+   still belongs with its destination. Count it in `readElsewhereCount`.
 
 b. **Match against Keep-always and Mute first.** Mute skips the message
    entirely. Keep-always prohibits noise moves and sender-rule suggestions,
@@ -338,7 +348,13 @@ operator's.
 ### 6. Record the cursor
 
 Call `email-tools:email_set_triage_cursor` with the `mailbox` parameter
-and no `lastRunAt` (it defaults to now).
+and no `lastRunAt`. It records the moment this run called
+`email_get_triage_cursor` in Step 2, not the moment the run ends, so mail
+that arrived while this run was working is searched by the next run. Do
+not pass `lastRunAt` yourself.
+
+Skip this when Step 3 hit the message cap (the next run must pick up the
+rest).
 
 **Skip this entirely when `bulkCleanup=true`** — per Step 2, a backlog
 pass must not disturb the regular cadence's cursor.
@@ -363,6 +379,7 @@ Email triage - <mailbox> - <UTC timestamp>
 - Mail routing: <routedCount> handed off, <routingWaitingTotal> need the operator, <routingFollowupsTotal> handoffs need follow-ups
 - Handoff follow-ups: <wakeFailures> wake problems, <auditUnknown> source audits unconfirmed
 - Skipped (kept in INBOX): <leftAloneCount>
+- Already read elsewhere (looked at, not changed): <readElsewhereCount>
 - Errors: <errorCount> (see below)
 
 Top candidates for a rule this run:
@@ -472,7 +489,7 @@ curl -s -X POST \
     --arg mailbox "support" \
     --arg since "2026-05-06T11:00:00Z" '{
       tool: "email-tools:email_search",
-      parameters: { mailbox: $mailbox, since: $since, limit: 200 },
+      parameters: { mailbox: $mailbox, since: $since, oldestFirst: true, limit: 200 },
       runContext: { agentId: $agent, runId: $run, companyId: $company }
     }')"
 ```
@@ -575,8 +592,11 @@ permission yourself. Sending approval remains a separate prerequisite.
 
 ## Pre-requisites for this skill to work
 
-- `email-tools` plugin v0.20.0+ installed and `ready`, for the review
-  queue tools. Older versions lack them (see Errors), and before v0.17.0
+- `email-tools` plugin v0.23.3+ installed and `ready`. Older versions
+  miss mail: before v0.23.2 a cursor search skipped evening mail, and
+  before v0.23.3 `email_search` has no `oldestFirst` / `afterUid` paging
+  and the cursor is stamped when the run ends. v0.20.0+ is the floor for
+  the review queue tools. Older versions lack them (see Errors), and before v0.17.0
   the cursor tools too; the skill still runs but falls back to a 24 hour
   window every time (see Step 2).
 - Target mailbox configured in plugin config with the calling company on

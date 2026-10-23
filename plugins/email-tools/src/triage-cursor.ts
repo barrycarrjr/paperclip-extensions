@@ -138,3 +138,75 @@ export function planCursorAdvance(
   }
   return { ok: true, lastRunAt: proposed };
 }
+
+/**
+ * A run start older than this belongs to a run that never recorded its
+ * cursor (it crashed or was cancelled), so it is dropped on the next write.
+ */
+export const SEARCH_START_TTL_HOURS = 24;
+
+/** What the cursor tools keep in the state row. */
+export interface StoredTriageCursor {
+  lastRunAt?: string;
+  /** When each unfinished run asked where to search from, keyed by run id. */
+  searchStarts?: Record<string, string>;
+}
+
+function readSearchStarts(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || !("searchStarts" in raw)) return {};
+  const starts = (raw as { searchStarts: unknown }).searchStarts;
+  if (!starts || typeof starts !== "object") return {};
+  const out: Record<string, string> = {};
+  for (const [runId, value] of Object.entries(starts)) {
+    const iso = parseStoredCursor(value);
+    if (iso) out[runId] = iso;
+  }
+  return out;
+}
+
+function withoutExpiredStarts(starts: Record<string, string>, now: Date): Record<string, string> {
+  const oldest = now.getTime() - SEARCH_START_TTL_HOURS * MS_PER_HOUR;
+  return Object.fromEntries(Object.entries(starts).filter(([, iso]) => Date.parse(iso) >= oldest));
+}
+
+function storedShape(lastRunAt: string | null, starts: Record<string, string>): StoredTriageCursor {
+  const out: StoredTriageCursor = {};
+  if (lastRunAt) out.lastRunAt = lastRunAt;
+  if (Object.keys(starts).length > 0) out.searchStarts = starts;
+  return out;
+}
+
+/**
+ * Remember when this run asked where to search from.
+ *
+ * The cursor must end up at the moment the run searched, not the moment it
+ * finished: mail that arrives while the run is still classifying was never in
+ * its search, and a cursor stamped at the end of a run longer than the
+ * overlap would step past that mail for good.
+ */
+export function recordSearchStart(raw: unknown, runId: string, now: Date): StoredTriageCursor {
+  const starts = withoutExpiredStarts(readSearchStarts(raw), now);
+  starts[runId] = now.toISOString();
+  return storedShape(parseStoredCursor(raw), starts);
+}
+
+/**
+ * The timestamp to record when a run finishes: what the caller passed, else
+ * when this run asked where to search from, else now (a run that never asked).
+ */
+export function cursorForFinishedRun(
+  raw: unknown,
+  runId: string,
+  now: Date,
+  explicit?: string,
+): string {
+  if (typeof explicit === "string" && explicit.trim()) return explicit;
+  return readSearchStarts(raw)[runId] ?? now.toISOString();
+}
+
+/** The state row after a run's cursor write lands: its run start is spent. */
+export function finishRun(raw: unknown, runId: string, lastRunAt: string, now: Date): StoredTriageCursor {
+  const starts = withoutExpiredStarts(readSearchStarts(raw), now);
+  delete starts[runId];
+  return storedShape(lastRunAt, starts);
+}
