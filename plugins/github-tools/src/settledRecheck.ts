@@ -6,6 +6,7 @@ import {
   configProblem,
   createWatchClient,
   handBackPatch,
+  updateAndWake,
 } from "./notificationWatch.js";
 
 export const SETTLED_RECHECK_JOB_KEY = "recheck-settled-github-tasks";
@@ -69,7 +70,7 @@ export async function runSettledRecheck(
     const key = handedBackKey(task.id);
     if ((await ctx.state.get(key)) === reason) continue;
     await ctx.issues.createComment(task.id, `Settled on GitHub: ${reason} Handing back to triage.`, companyId);
-    await ctx.issues.update(task.id, handBackPatch(task, cfg)!, companyId);
+    await updateAndWake(ctx, task.id, handBackPatch(task, cfg)!, companyId);
     await ctx.state.set(key, reason);
     summary.handedBack += 1;
   }

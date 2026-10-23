@@ -15,6 +15,7 @@ interface FakeIssue {
 
 function fakeContext(tasks: Array<Omit<FakeIssue, "comments" | "status" | "assigneeAgentId" | "assigneeUserId"> & Partial<FakeIssue>>) {
   const state = new Map<string, unknown>();
+  const wakeups: string[] = [];
   const issues = new Map<string, FakeIssue>(tasks.map((task) => [task.id, {
     status: "todo", assigneeAgentId: null, assigneeUserId: "user-1", comments: [], ...task,
   }]));
@@ -29,6 +30,10 @@ function fakeContext(tasks: Array<Omit<FakeIssue, "comments" | "status" | "assig
     },
     issues: {
       list: async (input: { status?: string }) => [...issues.values()].filter((issue) => issue.status === input.status),
+      requestWakeup: async (id: string) => {
+        wakeups.push(id);
+        return { queued: true };
+      },
       createComment: async (id: string, body: string) => {
         issues.get(id)!.comments.push(body);
         return { id: "comment" };
@@ -36,7 +41,7 @@ function fakeContext(tasks: Array<Omit<FakeIssue, "comments" | "status" | "assig
       update: async (id: string, patch: Partial<FakeIssue>) => Object.assign(issues.get(id)!, patch),
     },
   } as unknown as PluginContext;
-  return { ctx, issues };
+  return { ctx, issues, wakeups };
 }
 
 type Route = (url: URL) => Response | undefined;
@@ -79,7 +84,7 @@ test("parseTaskThread reads numbered threads and failed workflow runs", () => {
 });
 
 test("a merged pull request is handed back once, with the reason", async () => {
-  const { ctx, issues } = fakeContext([{ id: "t1", title: "GitHub: acme/app#7 Add feature" }]);
+  const { ctx, issues, wakeups } = fakeContext([{ id: "t1", title: "GitHub: acme/app#7 Add feature" }]);
   routes.push((url) => {
     if (url.pathname === "/repos/acme/app/issues/7") return json({ state: "closed", pull_request: {} });
     if (url.pathname === "/repos/acme/app/pulls/7") return json({ merged: true });
@@ -91,6 +96,7 @@ test("a merged pull request is handed back once, with the reason", async () => {
   assert.equal(task.assigneeAgentId, "agent-1");
   assert.equal(task.assigneeUserId, null);
   assert.match(task.comments[0], /^Settled on GitHub: acme\/app#7 was merged\./);
+  assert.deepEqual(wakeups, ["t1"]);
 
   Object.assign(task, { assigneeAgentId: null, assigneeUserId: "user-1" });
   const second = await runSettledRecheck(ctx, config);

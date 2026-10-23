@@ -132,6 +132,20 @@ export function handBackPatch(
   return { assigneeAgentId: cfg.assigneeAgentId, assigneeUserId: null, status: "todo" };
 }
 
+/**
+ * The host does not wake an agent when a plugin reassigns or reopens a task,
+ * so the wake-up is requested explicitly.
+ */
+export async function updateAndWake(
+  ctx: PluginContext,
+  issueId: string,
+  patch: Parameters<PluginContext["issues"]["update"]>[1],
+  companyId: string,
+): Promise<void> {
+  await ctx.issues.update(issueId, patch, companyId);
+  await ctx.issues.requestWakeup(issueId, companyId, { reason: "github_activity", contextSource: "plugin:github-tools" });
+}
+
 async function readCursor(ctx: PluginContext, cfg: NotificationWatchConfig, now: Date): Promise<WatchCursor> {
   const stored = (await ctx.state.get(cursorKey)) as WatchCursor | null;
   if (stored?.since) return stored;
@@ -281,9 +295,11 @@ async function handleThread(
     await ctx.issues.createComment(existing.id, task.body, companyId);
     const handBack = handBackPatch(existing, cfg);
     if (handBack) {
-      await ctx.issues.update(existing.id, handBack, companyId);
+      await updateAndWake(ctx, existing.id, handBack, companyId);
     } else if (REOPEN_STATUSES.has(existing.status)) {
-      await ctx.issues.update(existing.id, { status: "todo" }, companyId);
+      const reopen = { status: "todo" } as const;
+      if (existing.assigneeAgentId) await updateAndWake(ctx, existing.id, reopen, companyId);
+      else await ctx.issues.update(existing.id, reopen, companyId);
     }
     await ctx.state.set(threadKey(notification.id), {
       issueId: existing.id,

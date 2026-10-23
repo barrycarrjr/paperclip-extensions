@@ -234,6 +234,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     "issues.read",
     "issues.create",
     "issues.update",
+    "issues.wakeup",
     "issue.comments.create",
   ],
   entrypoints: {
