@@ -9,7 +9,12 @@ import { test } from "node:test";
 import { strict as assert } from "node:assert";
 import {
   MAX_REPLY_LENGTH,
+  approvalByline,
+  canOfferApproval,
   canShowPostButton,
+  canShowSkipButton,
+  hasAnyReply,
+  isSkipped,
   clearDraft,
   confirmReady,
   defaultMintKey,
@@ -498,4 +503,57 @@ test("the receipt says what became of the task rather than always saying it is o
   assert.match(taskStep({ ...base, issueId: null }).detail, /No task is linked/);
 
   for (const step of [closed, stillOpen, unknown]) assert.doesNotMatch(step.detail, LONG_DASHES);
+});
+
+// ── Don't reply, and a reply waiting for approval ──────────────────────────
+
+function reviewWith(extra: Partial<ReviewDetail["review"]>): Pick<ReviewDetail, "review"> {
+  return { review: { ...detail().review, ...extra } };
+}
+
+test("a skipped review says Not replying, and a reply wins over the skip", () => {
+  assert.equal(replyStatusLabel(null, null, "2026-10-01T00:00:00Z"), "Not replying");
+  assert.equal(replyStatusLabel("Thanks", "google", "2026-10-01T00:00:00Z"), "Replied in Google");
+  assert.equal(replyStatusLabel(null, null, null), "Not replied yet");
+});
+
+test("Don't reply is offered only for an unanswered review, from its own company", () => {
+  assert.equal(canShowSkipButton(detail()), true);
+  // From HQ, or another company viewing it: no.
+  assert.equal(canShowSkipButton(detail({ canPostFromHere: false })), false);
+  // A reply on Google, or recorded when Google could not be read: no.
+  assert.equal(canShowSkipButton(detail({ liveReply: { text: "Thanks", updateTime: "t" } })), false);
+  assert.equal(canShowSkipButton(detail({ liveChecked: false, ...reviewWith({ replyText: "Thanks" }) })), false);
+  // Already skipped: the undo is offered instead.
+  const skipped = detail(reviewWith({ skippedAt: "2026-10-01T00:00:00Z" }));
+  assert.equal(isSkipped(skipped), true);
+  assert.equal(canShowSkipButton(skipped), false);
+  // The posting switch is irrelevant: nothing goes to Google.
+  assert.equal(canShowSkipButton(detail({ posting: { enabled: false, accountFound: true, accountAllowed: true } })), true);
+});
+
+test("a skipped review that has since been answered on Google is not shown as skipped", () => {
+  const answered = detail({ ...reviewWith({ skippedAt: "2026-10-01T00:00:00Z" }), liveReply: { text: "Thanks", updateTime: "t" } });
+  assert.equal(hasAnyReply(answered), true);
+  assert.equal(isSkipped(answered), false);
+});
+
+test("a reply waiting for approval is offered only while the review still needs one, from its own company", () => {
+  assert.equal(canOfferApproval(detail()), true);
+  assert.equal(canOfferApproval(detail({ canPostFromHere: false })), false);
+  assert.equal(canOfferApproval(detail({ liveReply: { text: "Thanks", updateTime: "t" } })), false);
+  assert.equal(canOfferApproval(detail(reviewWith({ skippedAt: "2026-10-02T00:00:00Z" }))), false);
+});
+
+test("the approval byline names the agent when known and never carries long dashes", () => {
+  const byline = approvalByline("2026-10-01T09:00:00Z", "Review agent");
+  assert.match(byline, /^Drafted by Review agent on /);
+  assert.equal(approvalByline(null, null), "Drafted by an agent");
+  assert.doesNotMatch(byline, LONG_DASHES);
+});
+
+test("a location with nothing waiting but some reviews left unanswered on purpose is All handled, not All replied", () => {
+  assert.deepEqual(locationReplyBadge(0, 12, 2), { label: "All handled ✓", tone: "good" });
+  assert.deepEqual(locationReplyBadge(0, 12, 0), { label: "All replied ✓", tone: "good" });
+  assert.deepEqual(locationReplyBadge(1, 12, 2), { label: "1 unreplied", tone: "warn" });
 });

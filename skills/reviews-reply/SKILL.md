@@ -48,7 +48,12 @@ never toward an unreviewed public reply.
      with a one-line comment noting it was auto-handled under the 5-star policy.
    - **Hold / Never** → comment the proposed reply on the issue and raise an
      approval for the board; leave status `in_review`.
-4. If `gbp_reply_to_review` comes back as **queued for approval** rather than
+4. A review `gbp_list_reviews` reports as **not replying** was deliberately left
+   unanswered by a person (usually because a reply this late would do more
+   harm than none). Do not reply to it, draft a reply for it, or escalate
+   it. `gbp_reply_to_review` refuses it with `[EREVIEW_SKIPPED]`; treat that
+   as final, not as an error to work around.
+5. If `gbp_reply_to_review` comes back as **queued for approval** rather than
    posted, that's the board's trust gate — do **not** retry. End your turn; the
    draft is now in Approvals and will post when approved.
 

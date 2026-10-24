@@ -102,6 +102,8 @@ export interface ReviewListItem {
   replySource: string | null;
   reviewTime: string;
   issueId: string | null;
+  /** When a person chose not to reply, or null. */
+  skippedAt: string | null;
 }
 
 export function toReviewListItem(row: ReviewRow): ReviewListItem {
@@ -115,25 +117,38 @@ export function toReviewListItem(row: ReviewRow): ReviewListItem {
     replySource: row.reply_source ?? null,
     reviewTime: row.review_time,
     issueId: row.paperclip_issue_id ?? null,
+    skippedAt: toIsoOrNull(row.skipped_at),
   };
 }
 
-const REVIEW_COLUMNS =
-  "review_name, location_key, company_id, reviewer_name, star_rating, review_text, reply_text, reply_time, reply_source, review_time, paperclip_issue_id";
+export const REVIEW_COLUMNS =
+  "review_name, location_key, company_id, reviewer_name, star_rating, review_text, reply_text, reply_time, reply_source, review_time, paperclip_issue_id, skipped_at";
 
 /** Newest first, with the ones still waiting for a reply on top. */
 export const REVIEW_LIST_LIMIT = 200;
 
-/** Which reviews the list shows. Unreplied is the default, because that is the work. */
-export type ReviewFilter = "unreplied" | "replied" | "all";
+/**
+ * Which reviews the list shows. Unreplied is the default, because that is the
+ * work. "skipped" is the reviews a person chose not to answer: they are not
+ * work any more, so they leave "unreplied", but they stay findable.
+ */
+export type ReviewFilter = "unreplied" | "replied" | "skipped" | "all";
 
 export function parseReviewFilter(value: unknown): ReviewFilter {
-  return value === "replied" || value === "all" ? value : "unreplied";
+  return value === "replied" || value === "skipped" || value === "all" ? value : "unreplied";
 }
 
+/**
+ * A reply wins over a skip: a review someone answered in Google's console
+ * after it was skipped is replied, whatever the skip column still says.
+ */
+export const NEEDS_REPLY_SQL = "reply_text IS NULL AND skipped_at IS NULL";
+const SKIPPED_SQL = "reply_text IS NULL AND skipped_at IS NOT NULL";
+
 const FILTER_CLAUSE: Record<ReviewFilter, string> = {
-  unreplied: "AND reply_text IS NULL",
+  unreplied: `AND ${NEEDS_REPLY_SQL}`,
   replied: "AND reply_text IS NOT NULL",
+  skipped: `AND ${SKIPPED_SQL}`,
   all: "",
 };
 
@@ -147,7 +162,7 @@ export async function listReviewsForLocation(
   const rows = await db.query<ReviewRow>(
     `SELECT ${REVIEW_COLUMNS} FROM ${db.namespace}.reviews
      WHERE location_key = $1 AND company_id = $2 ${FILTER_CLAUSE[filter]}
-     ORDER BY (reply_text IS NULL) DESC, review_time DESC
+     ORDER BY (${NEEDS_REPLY_SQL}) DESC, review_time DESC
      LIMIT ${REVIEW_LIST_LIMIT}`,
     [location.key, location.targetCompanyId],
   );
@@ -190,7 +205,10 @@ function toIsoOrNull(value: unknown): string | null {
 // and the page reads that, so this query is gone rather than left to mislead.
 
 export interface LocationSummary {
+  /** Waiting for a reply: no reply and not skipped. */
   unreplied: number;
+  /** A person chose not to reply. */
+  skipped: number;
   avgRating: number | null;
   total: number;
 }
@@ -200,8 +218,9 @@ export async function summaryForLocation(
   db: ReviewQueryDb,
   location: LocationConfig,
 ): Promise<LocationSummary> {
-  const rows = await db.query<{ unreplied: unknown; avg_rating: unknown; total: unknown }>(
-    `SELECT COUNT(CASE WHEN reply_text IS NULL THEN 1 END) AS unreplied, AVG(star_rating) AS avg_rating, COUNT(*) AS total
+  const rows = await db.query<{ unreplied: unknown; skipped: unknown; avg_rating: unknown; total: unknown }>(
+    `SELECT COUNT(CASE WHEN ${NEEDS_REPLY_SQL} THEN 1 END) AS unreplied, COUNT(CASE WHEN ${SKIPPED_SQL} THEN 1 END) AS skipped,
+            AVG(star_rating) AS avg_rating, COUNT(*) AS total
      FROM ${db.namespace}.reviews WHERE location_key = $1 AND company_id = $2`,
     [location.key, location.targetCompanyId],
   );
@@ -209,6 +228,7 @@ export async function summaryForLocation(
   const avg = s?.avg_rating == null ? null : Number(s.avg_rating);
   return {
     unreplied: Number(s?.unreplied ?? 0),
+    skipped: Number(s?.skipped ?? 0),
     avgRating: avg !== null && Number.isFinite(avg) ? avg : null,
     total: Number(s?.total ?? 0),
   };

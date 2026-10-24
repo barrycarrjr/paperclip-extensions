@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import { strict as assert } from "node:assert";
-import { closeReviewIssue, ensureParentIssue, parentIssueStateKey, taskIsSettled } from "./reviewTasks.js";
+import { closeReviewIssue, ensureParentIssue, parentIssueStateKey, reopenReviewIssue, taskIsSettled } from "./reviewTasks.js";
 import type { LocationConfig } from "./types.js";
 
 const LOCATION: LocationConfig = {
@@ -109,4 +109,24 @@ test("a host error while closing is swallowed: the public reply is what matters"
     throw new Error("host down");
   };
   assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "posted"), "failed");
+});
+
+test("a skipped review's task is cancelled, not done, and only that is reopened by an undo", async () => {
+  const host = fakeHost({
+    issues: {
+      "issue-7": { id: "issue-7", status: "backlog" },
+      "issue-8": { id: "issue-8", status: "done" },
+    },
+  });
+  assert.equal(await closeReviewIssue(host.ctx, "company-a", "issue-7", "skipped"), "closed");
+  assert.deepEqual(host.updated, [{ id: "issue-7", patch: { status: "cancelled" } }]);
+
+  // Undo puts it back where the sync files review tasks.
+  assert.equal(await reopenReviewIssue(host.ctx, "company-a", "issue-7", "unskipped"), "reopened");
+  assert.deepEqual(host.updated[1], { id: "issue-7", patch: { status: "backlog" } });
+
+  // A task somebody finished is theirs: an undo does not drag it back.
+  assert.equal(await reopenReviewIssue(host.ctx, "company-a", "issue-8", "unskipped"), "not-cancelled");
+  assert.equal(await reopenReviewIssue(host.ctx, "company-a", null, "review-edited"), "none");
+  assert.equal(host.updated.length, 2);
 });

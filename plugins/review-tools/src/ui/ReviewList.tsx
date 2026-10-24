@@ -7,18 +7,27 @@
  * location's own company because the sync files issues in that company.
  */
 import { useEffect, useState, type CSSProperties } from "react";
+import { fetchPendingReplyApprovals, reviewsAwaitingApproval } from "./replyApprovals.js";
 import { usePluginAction, usePluginData } from "@paperclipai/plugin-sdk/ui";
 import { formatTime, replyStatusLabel, type EditorReview } from "./editorState.js";
 import { describeReplyError } from "./replyErrors.js";
 import { ErrorNote, Note, Stars, css, disabledStyle, mutedText, secondaryButton } from "./shared.js";
 
 /** What review-list returns. Mirrors the worker's handler. */
-type ReviewFilter = "unreplied" | "replied" | "all";
+type ReviewFilter = "unreplied" | "replied" | "skipped" | "all";
 
 const FILTER_LABELS: Record<ReviewFilter, string> = {
   unreplied: "Needs a reply",
   replied: "Replied",
+  skipped: "Not replying",
   all: "All reviews",
+};
+
+const EMPTY_NOTES: Record<ReviewFilter, string> = {
+  unreplied: "Nothing here needs a reply.",
+  replied: "No replied reviews are stored for this location yet.",
+  skipped: "No review here is set to not reply. Use Don't reply on a review to put it here.",
+  all: "No reviews are stored for this location yet.",
 };
 
 interface ReviewListData {
@@ -59,12 +68,31 @@ export function ReviewList({ companyId, locationKey, selectedReviewName, onOpenR
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncNote, setSyncNote] = useState<string | null>(null);
+  // Which reviews have a reply an agent drafted that is waiting for
+  // approval. Marked on the row so it can be found without opening each
+  // review. Best effort: if it cannot be read the rows simply carry no mark,
+  // and the review itself says so when opened.
+  const [awaitingApproval, setAwaitingApproval] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     if (refreshKey > 0) refresh();
     // refresh is stable for the life of the hook; only the key matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
+
+  useEffect(() => {
+    let live = true;
+    fetchPendingReplyApprovals(companyId)
+      .then((all) => {
+        if (live) setAwaitingApproval(reviewsAwaitingApproval(all));
+      })
+      .catch(() => {
+        if (live) setAwaitingApproval(new Set());
+      });
+    return () => {
+      live = false;
+    };
+  }, [companyId, refreshKey]);
 
   async function syncNow() {
     if (syncing) return;
@@ -132,18 +160,16 @@ export function ReviewList({ companyId, locationKey, selectedReviewName, onOpenR
 
       {data.reviews.length === 0 ? (
         <Note>
-          {filter === "unreplied"
-            ? "Every stored review for this location has a reply."
-            : filter === "replied"
-              ? "No replied reviews are stored for this location yet."
-              : "No reviews are stored for this location yet."}{" "}
-          {data.canPostFromHere ? "Press Sync now to pull in anything new." : ""}
+          {EMPTY_NOTES[filter]}{" "}
+          {data.canPostFromHere && filter !== "skipped" ? "Press Sync now to pull in anything new." : ""}
         </Note>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
           {data.reviews.map((review) => {
             const selected = review.reviewName === selectedReviewName;
-            const unreplied = !review.replyText;
+            // Waiting for a reply: none yet and nobody chose to leave it.
+            const unreplied = !review.replyText && !review.skippedAt;
+            const waiting = unreplied && awaitingApproval.has(review.reviewName);
             return (
               <li key={review.reviewName}>
                 <button
@@ -165,8 +191,9 @@ export function ReviewList({ companyId, locationKey, selectedReviewName, onOpenR
                     <p style={{ ...mutedText, margin: "6px 0 0" }}>No text, just the stars.</p>
                   )}
                   <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: unreplied ? "#b45309" : css.muted }}>
-                    {replyStatusLabel(review.replyText, review.replySource)}
-                    {review.replyTime && !unreplied ? ` on ${formatTime(review.replyTime)}` : ""}
+                    {replyStatusLabel(review.replyText, review.replySource, review.skippedAt)}
+                    {review.replyTime && review.replyText ? ` on ${formatTime(review.replyTime)}` : ""}
+                    {waiting && <span style={{ color: css.fg }}>{" "}· Reply waiting for your approval</span>}
                   </div>
                 </button>
               </li>

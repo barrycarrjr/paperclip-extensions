@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "review-tools";
-const PLUGIN_VERSION = "0.5.3";
+const PLUGIN_VERSION = "0.6.0";
 
 const SETUP_INSTRUCTIONS = `# Setup: Review Tools
 
@@ -227,7 +227,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     {
       name: "gbp_list_reviews",
       displayName: "List Reviews (Google GBP)",
-      description: "List reviews for a configured location (Google Business Profile). Returns reviewer name, star rating, review text, and reply status.",
+      description: "List reviews for a configured location (Google Business Profile). Returns reviewer name, star rating, review text, and reply status. Reviews a person chose not to reply to are left out of the unreplied list and must not be replied to.",
       parametersSchema: {
         type: "object",
         properties: {
@@ -253,7 +253,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
     {
       name: "gbp_reply_to_review",
       displayName: "Reply to Review (Google GBP)",
-      description: "Post a reply to a review (Google Business Profile). Requires reply posting to be enabled in plugin settings.",
+      description: "Post a reply to a review (Google Business Profile). Requires reply posting to be enabled in plugin settings. Refused for a review a person chose not to reply to. When the company asks before public posts, the reply waits as an approval, which a person can approve from the approvals list or from the review itself on the Reviews page.",
       parametersSchema: {
         type: "object",
         properties: {

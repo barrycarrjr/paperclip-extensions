@@ -23,6 +23,8 @@ interface LocationSummary {
   locationKey: string;
   locationName: string;
   unreplied: number;
+  /** Absent from an older worker. */
+  skipped?: number;
   avgRating: number | null;
   totalReviews: number;
 }
@@ -198,8 +200,8 @@ export function ReviewDashboardPage(_props: PluginPageProps) {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                     <h3 style={{ margin: 0, fontSize: 16 }}>{loc.locationName}</h3>
-                    <span style={badgeStyle(locationReplyBadge(loc.unreplied, loc.totalReviews).tone)}>
-                      {locationReplyBadge(loc.unreplied, loc.totalReviews).label}
+                    <span style={badgeStyle(locationReplyBadge(loc.unreplied, loc.totalReviews, loc.skipped).tone)}>
+                      {locationReplyBadge(loc.unreplied, loc.totalReviews, loc.skipped).label}
                     </span>
                   </div>
                   <div style={{ marginTop: 8, fontSize: 14, color: css.muted, display: "flex", gap: 16, flexWrap: "wrap" }}>

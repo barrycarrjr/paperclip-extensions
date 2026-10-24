@@ -33,6 +33,8 @@ export interface EditorReview {
   replySource: string | null;
   reviewTime: string;
   issueId: string | null;
+  /** When a person chose not to reply. Absent from an older worker. */
+  skippedAt?: string | null;
 }
 
 /** What review-detail returns. Mirrors the worker's handler, field for field. */
@@ -146,12 +148,56 @@ export function whyNoPostButton(detail: ReviewDetail): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Don't reply, and a reply waiting for approval
+// ---------------------------------------------------------------------------
+
+/** Whether the review has a reply, on Google now or as last recorded. */
+export function hasAnyReply(detail: Pick<ReviewDetail, "review" | "liveReply" | "liveChecked">): boolean {
+  if (detail.liveChecked) return detail.liveReply !== null;
+  return Boolean(detail.review.replyText);
+}
+
+/** A person chose not to reply, and nobody has replied since. */
+export function isSkipped(detail: Pick<ReviewDetail, "review" | "liveReply" | "liveChecked">): boolean {
+  return Boolean(detail.review.skippedAt) && !hasAnyReply(detail);
+}
+
+/**
+ * Whether to offer "Don't reply". Only for a review with no reply, from the
+ * location's own company (the task it cancels lives there). The posting
+ * switch does not matter: nothing goes to Google.
+ */
+export function canShowSkipButton(detail: Pick<ReviewDetail, "review" | "liveReply" | "liveChecked" | "canPostFromHere">): boolean {
+  return detail.canPostFromHere && !hasAnyReply(detail) && !isSkipped(detail);
+}
+
+/**
+ * Whether to show a reply that is waiting for approval. Not once the review
+ * has a reply (approving would be refused) or was skipped (the reply tool
+ * refuses that too), and only where this company decides it: from HQ's
+ * roll-up the approval belongs to another company.
+ */
+export function canOfferApproval(detail: Pick<ReviewDetail, "review" | "liveReply" | "liveChecked" | "canPostFromHere">): boolean {
+  return detail.canPostFromHere && !hasAnyReply(detail) && !isSkipped(detail);
+}
+
+/** "Drafted by an agent on <time>", leaving out whatever is not known. */
+export function approvalByline(createdAt: string | null, agentName: string | null): string {
+  const who = agentName?.trim() ? agentName.trim() : "an agent";
+  return createdAt ? `Drafted by ${who} on ${formatTime(createdAt)}` : `Drafted by ${who}`;
+}
+
+// ---------------------------------------------------------------------------
 // Reply status in the list
 // ---------------------------------------------------------------------------
 
-/** "Not replied yet", or "Replied" with where the reply came from in plain words. */
-export function replyStatusLabel(replyText: string | null, replySource: string | null): string {
-  if (replyText === null || replyText.length === 0) return "Not replied yet";
+/**
+ * "Not replied yet", "Not replying", or "Replied" with where the reply came
+ * from in plain words. A reply wins over a skip: a review answered in
+ * Google's console after it was skipped has been replied to.
+ */
+export function replyStatusLabel(replyText: string | null, replySource: string | null, skippedAt?: string | null): string {
+  if (replyText === null || replyText.length === 0) return skippedAt ? "Not replying" : "Not replied yet";
   switch (replySource) {
     case "human":
       return "Replied from Paperclip";
@@ -186,9 +232,15 @@ export type BadgeTone = "neutral" | "good" | "warn" | "bad";
  * to everything, it has nothing to reply to, so the green tick would be a
  * claim about work that never existed.
  */
-export function locationReplyBadge(unreplied: number, totalReviews: number): { label: string; tone: BadgeTone } {
+export function locationReplyBadge(
+  unreplied: number,
+  totalReviews: number,
+  skipped: number = 0,
+): { label: string; tone: BadgeTone } {
   if (totalReviews === 0) return { label: "No reviews yet", tone: "neutral" };
-  if (unreplied === 0) return { label: "All replied ✓", tone: "good" };
+  // Nothing is waiting, but not everything was answered: some were left
+  // unanswered on purpose, and "All replied" would claim otherwise.
+  if (unreplied === 0) return { label: skipped > 0 ? "All handled ✓" : "All replied ✓", tone: "good" };
   return { label: `${unreplied} unreplied`, tone: unreplied >= 3 ? "bad" : "warn" };
 }
 

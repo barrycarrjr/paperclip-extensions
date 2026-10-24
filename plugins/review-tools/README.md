@@ -6,6 +6,44 @@ Multi-platform customer review management and response suite for a portfolio. Su
 
 ## Recent changes
 
+- **v0.6.0**: "Don't reply" for reviews better left unanswered, and an agent's
+  reply that is waiting for approval shown, and approvable, on the review
+  itself.
+
+  Some reviews should not be answered. The usual one is an unhappy review
+  found months late: a reply then reads as "why did this take you so long",
+  which is worse than silence. The reply editor now has a **Don't reply**
+  button, in the danger colour and set apart from the reply buttons, which
+  asks "Are you sure?" first. A skipped review moves to a new **Not replying**
+  filter, stops counting as unreplied (cards, widget, weekly digest), and its
+  task is cancelled rather than marked done. Agents cannot undo the decision:
+  `gbp_list_reviews` leaves skipped reviews out of the unreplied list and says
+  how many it left out, and `gbp_reply_to_review` refuses them with
+  `[EREVIEW_SKIPPED]` before any Google call, which also covers a drafted
+  reply approved later from the approvals list. Skipping turns down any reply
+  still waiting for approval. **Reply after all** undoes it and reopens the
+  task. If the customer edits their review, the next sync undoes
+  it too, because the edited review is not the one somebody decided about. A
+  location whose only unanswered reviews were skipped on purpose reads
+  "All handled", not "All replied".
+
+  The sync now keeps a review's words and stars in step with Google. They
+  were written once, on first sight, so an edited review was shown with what
+  the customer no longer says.
+
+  When the company asks before public posts, an agent's `gbp_reply_to_review`
+  waits as an approval in Paperclip's approvals list, which the Reviews page
+  knew nothing about. The editor now shows a review's waiting reply above the
+  reply box with **Approve and post to Google**, **Edit first** and
+  **Reject**, and the list marks reviews that have one. The page reads and
+  decides these through Paperclip's own approvals routes with the person's
+  own session, so the permission checks and what Approve runs are exactly
+  those of the approvals list. Approve is only offered where the Post button
+  would be, and after approving the page reads Google again before it says
+  the reply is up. Posting an edited version turns the drafted one down, so
+  an older wording cannot post later. Migration `003_review_skips.sql` adds
+  the skip columns.
+
 - **v0.5.3**: A dropped request now says so, instead of showing a host
   message that reads like a broken plugin.
 
@@ -358,7 +396,7 @@ Multi-platform customer review management and response suite for a portfolio. Su
 | `gbp_list_reviews` | List reviews for a configured location. Defaults to unreplied only. | no |
 | `gbp_get_review` | Fetch a single review by its GBP resource name. | no |
 | `gbp_sync_location` | Pull all reviews for one location into the local table. | writes local DB |
-| `gbp_reply_to_review` | Post a reply to a review via the GBP API. | yes |
+| `gbp_reply_to_review` | Post a reply to a review via the GBP API. Refused for a review a person chose not to reply to. When the company asks before public posts, it waits as an approval, shown on the review in the Reviews page. | yes |
 
 `gbp_reply_to_review` requires the **"Allow posting replies to GBP"** master switch (`allowReplies`, off by default, so a fresh install suggests replies but never posts). The same switch covers people posting from the Reviews page. The agent tool never replaces a reply that is already on Google; only a person, from the Reviews page, can do that, and only after being shown it.
 
@@ -375,9 +413,9 @@ Multi-platform customer review management and response suite for a portfolio. Su
 - `ReviewSummaryWidget`: dashboard widget showing per-location unreplied / avg / total.
 - `GoogleSetupPage`: full page at route `reviews-setup`. Connects a Google account, says what the stored token can actually do, and lists real locations to choose from. Bridge handlers `google-connection` and `google-locations` (reads), and the actions `google_connect_start`, `google_connect_poll`, `google_connect_submit_callback` and `google_connect_cancel`. Both reads scope on the host's company stamp like every other handler here.
 - `ReviewReplyTab`: a **Reply** tab on a task, rendering the same editor. Uses `review-for-issue` to map the task to its review.
-- `ReviewDashboardPage`: full page at route `reviews`. The list takes a `filter` (`unreplied`, `replied`, `all`), and the editor's `review-generate-reply` action returns `{ text, source }` where source is `ai` (with `agentName`) or `template`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
+- `ReviewDashboardPage`: full page at route `reviews`. The list takes a `filter` (`unreplied`, `replied`, `skipped`, `all`; "unreplied" leaves out skipped reviews), and the editor's `review-generate-reply` action returns `{ text, source }` where source is `ai` (with `agentName`) or `template`. Location cards open the location's reviews (`?location=<key>`), and a review opens the reply editor beside the list (`&review=<name>`). From HQ the lists are readable across every company but nothing can be posted; open the location's own company to reply.
 
-The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `review-tools:draft:<companyId>:<reviewName>`).
+The page talks to the worker through five bridge handlers: `review-summary` (the cards), `review-list` (one location's rows, newest first with unreplied on top, plus the last sync time), `review-detail` (the stored row, a live read of the reply Google holds right now, the suggested reply and the "Posts as" line), `review-post-reply` (the guarded post; see `src/replyGuard.ts`), `review-skip` and `review-unskip` (Don't reply and Reply after all; see `src/reviewDecisions.ts`) and `review-sync-location` (Sync now). Every handler scopes on the company the host stamped into `params.hostScope` and refuses with `[ESCOPE]` when it is missing, so a companyId the browser sends is never trusted. Unsent drafts live only in the person's browser (`localStorage` key `review-tools:draft:<companyId>:<reviewName>`).
 
 ## Setup
 
@@ -432,6 +470,7 @@ The plugin wraps errors in a stable `[E…]` envelope so skills can pattern-matc
 | `[EROLLUP_READ_ONLY]` | A post was attempted from HQ's cross-company roll-up. | Open the location's own company to reply. |
 | `[EREVIEW_NOT_FOUND]` | The review is not in the local table yet. | Press Sync now on its location, then open it again. |
 | `[EREPLY_EXISTS]` | A reply is already on Google and the caller did not ask to replace it (an agent never can). | On the Reviews page, tick "Replace the reply that is already on Google". |
+| `[EREVIEW_SKIPPED]` | A person chose not to reply to this review, so an agent may not reply to it, including through an approval decided later. | Nothing, unless a person presses Reply after all on the Reviews page. |
 | `[EREPLY_CHANGED]` | The reply on Google changed, or was removed, since the person opened the review. | Open the review again to see the current reply. |
 | `[EDUPLICATE_IN_PROGRESS]` | Another attempt on the same review is still in flight (another tab, another worker, or an agent). | Wait a moment, then open the review again. |
 | `[EPOST_UNCONFIRMED]` | The connection dropped after the write was sent, so it is not known whether Google received it. | Try again; the retry checks Google first and will not post twice. |

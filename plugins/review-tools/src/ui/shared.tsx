@@ -46,6 +46,21 @@ export const secondaryButton: CSSProperties = {
   cursor: "pointer",
 };
 
+/** For a decision that is not easily taken back, such as not answering a customer. */
+export const dangerButton: CSSProperties = {
+  ...primaryButton,
+  background: css.danger,
+  color: "var(--destructive-foreground, #ffffff)",
+};
+
+/** The same, before it has been confirmed: the danger colour on a plain surface. */
+export const dangerOutlineButton: CSSProperties = {
+  ...secondaryButton,
+  color: css.danger,
+  border: "1px solid color-mix(in oklab, var(--destructive, #b91c1c) 60%, transparent)",
+  fontWeight: 600,
+};
+
 export const linkButton: CSSProperties = {
   appearance: "none",
   border: "none",

@@ -21,12 +21,16 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "r
 import { usePluginAction, usePluginData, usePluginToast } from "@paperclipai/plugin-sdk/ui";
 import {
   MAX_REPLY_LENGTH,
+  approvalByline,
+  canOfferApproval,
   canShowPostButton,
+  canShowSkipButton,
   clearDraft,
   confirmReady,
   draftStorageKey,
   formatTime,
   initialEditorState,
+  isSkipped,
   postToast,
   readDraft,
   receiptSteps,
@@ -40,13 +44,36 @@ import {
   type ReviewDetail,
 } from "./editorState.js";
 import { describeReplyError } from "./replyErrors.js";
-import { ErrorNote, Note, Stars, cardStyle, css, disabledStyle, linkButton, mutedText, primaryButton, secondaryButton } from "./shared.js";
+import {
+  REJECT_NOTES,
+  approvalsForReview,
+  decideApproval,
+  fetchPendingReplyApprovals,
+  type PendingReplyApproval,
+} from "./replyApprovals.js";
+import {
+  ErrorNote,
+  Note,
+  Stars,
+  cardStyle,
+  css,
+  dangerButton,
+  dangerOutlineButton,
+  disabledStyle,
+  linkButton,
+  mutedText,
+  primaryButton,
+  secondaryButton,
+} from "./shared.js";
 
 export interface ReviewEditorProps {
   companyId: string;
   companyPrefix: string | null;
   reviewName: string;
-  /** Called after a successful post so the list and the dashboard refresh. */
+  /**
+   * Called after a successful post, and after "Don't reply" or its undo, so
+   * the list and the dashboard refresh.
+   */
   onPosted: () => void;
   onClose: () => void;
   /**
@@ -94,6 +121,89 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
   const [writing, setWriting] = useState(false);
   const [writeNote, setWriteNote] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
+  const skipAction = usePluginAction("review-skip");
+  const unskipAction = usePluginAction("review-unskip");
+  // "Don't reply" asks first, inline like the post confirmation, so the
+  // review stays in view while the person decides.
+  const [skipStage, setSkipStage] = useState<"idle" | "confirming" | "working">("idle");
+  const [skipError, setSkipError] = useState<string | null>(null);
+
+  // Replies an agent drafted for this review that are waiting for approval.
+  // Read from Paperclip's own approvals, so approving here is the same act
+  // as approving from the approvals list.
+  const [approvals, setApprovals] = useState<PendingReplyApproval[]>([]);
+  const [approvalsError, setApprovalsError] = useState<string | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  // Set after Approve, until the review has been read again: the approvals
+  // route says the approval was approved, not whether the reply then posted,
+  // so the page checks Google before saying it did.
+  const [verifyingApproval, setVerifyingApproval] = useState<{ id: string; before: ReviewDetail } | null>(null);
+  const [approvalsKey, setApprovalsKey] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    fetchPendingReplyApprovals(companyId)
+      .then((all) => {
+        if (!live) return;
+        setApprovals(approvalsForReview(all, reviewName));
+        setApprovalsError(null);
+      })
+      .catch((err) => {
+        if (!live) return;
+        setApprovals([]);
+        setApprovalsError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      live = false;
+    };
+  }, [companyId, reviewName, approvalsKey]);
+
+  /**
+   * Turn down every waiting approval for this review, because the person has
+   * just settled it another way. Best effort: the reply tool would refuse a
+   * late approval anyway (the review has a reply, or was skipped), so a
+   * failure here leaves a card that cannot do harm, not a second post.
+   */
+  async function rejectWaitingApprovals(note: string) {
+    const waiting = approvals;
+    if (waiting.length === 0) return;
+    await Promise.all(waiting.map((a) => decideApproval(a.approvalId, "reject", note).catch(() => null)));
+    setApprovalsKey((k) => k + 1);
+  }
+
+  async function approve(approval: PendingReplyApproval) {
+    if (approvalBusy) return;
+    setApprovalBusy(approval.approvalId);
+    setApprovalError(null);
+    try {
+      await decideApproval(approval.approvalId, "approve");
+      if (data) setVerifyingApproval({ id: approval.approvalId, before: data });
+      refresh();
+      onPosted();
+    } catch (err) {
+      setApprovalError(describeReplyError(err));
+    } finally {
+      setApprovalBusy(null);
+      setApprovalsKey((k) => k + 1);
+    }
+  }
+
+  async function reject(approval: PendingReplyApproval) {
+    if (approvalBusy) return;
+    setApprovalBusy(approval.approvalId);
+    setApprovalError(null);
+    try {
+      await decideApproval(approval.approvalId, "reject", REJECT_NOTES.rejected);
+      toast({ title: "Reply rejected", body: "Nothing was posted. The review still needs a reply.", tone: "success" });
+      onPosted();
+    } catch (err) {
+      setApprovalError(describeReplyError(err));
+    } finally {
+      setApprovalBusy(null);
+      setApprovalsKey((k) => k + 1);
+    }
+  }
 
   const storage = useMemo(() => browserStorage(), []);
   const draftKey = draftStorageKey(companyId, reviewName);
@@ -137,6 +247,7 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
       const receipt = toPostReceipt(raw, text);
       clearDraft(storage, draftKey);
       dispatch({ type: "postSucceeded", receipt });
+      void rejectWaitingApprovals(REJECT_NOTES.replaced);
       // The panel and the toast must agree. On a retry the worker finds the
       // attempt already landed and sends nothing, so announcing a fresh post
       // beside a panel saying nothing was sent would be one of them lying.
@@ -145,6 +256,46 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
       onPosted();
     } catch (err) {
       dispatch({ type: "postFailed", error: describeReplyError(err) });
+    }
+  }
+
+  async function skip() {
+    if (skipStage === "working") return;
+    setSkipStage("working");
+    setSkipError(null);
+    try {
+      const result = (await skipAction({ companyId, reviewName })) as { issueId?: string | null; issueClosed?: boolean } | null;
+      setSkipStage("idle");
+      void rejectWaitingApprovals(REJECT_NOTES.skipped);
+      toast({
+        title: "Not replying",
+        body:
+          result?.issueId && result.issueClosed === false
+            ? "Moved to Not replying. Its task could not be closed automatically; close it yourself."
+            : "Moved to Not replying. Undo it here with Reply after all.",
+        tone: "success",
+      });
+      refresh();
+      onPosted();
+    } catch (err) {
+      setSkipStage("confirming");
+      setSkipError(describeReplyError(err));
+    }
+  }
+
+  async function unskip() {
+    if (skipStage === "working") return;
+    setSkipStage("working");
+    setSkipError(null);
+    try {
+      await unskipAction({ companyId, reviewName });
+      setSkipStage("idle");
+      toast({ title: "Needs a reply again", body: "The review is back in Needs a reply.", tone: "success" });
+      refresh();
+      onPosted();
+    } catch (err) {
+      setSkipStage("idle");
+      setSkipError(describeReplyError(err));
     }
   }
 
@@ -158,6 +309,17 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
   const showPost = canShowPostButton(data);
   const noPostReason = whyNoPostButton(data);
   const inPanel = state.stage === "confirming" || state.stage === "posting" || state.stage === "failed";
+  const skipped = isSkipped(data);
+  const showSkip = canShowSkipButton(data);
+  const offerApprovals = canOfferApproval(data);
+  // Judged only on a fresh read of the review, never on the one from before
+  // the approval, which would always say "no reply yet".
+  const approvalOutcome =
+    verifyingApproval && verifyingApproval.before !== data && !loading
+      ? data.liveChecked && data.liveReply
+        ? "posted"
+        : "not-posted"
+      : null;
 
   return (
     <div style={{ ...cardStyle, display: "grid", gap: 14 }}>
@@ -195,11 +357,53 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
 
       <ExistingReply detail={data} />
 
+      {approvalOutcome === "posted" && (
+        <Note>Approved. The reply is now on Google, and the review's task is closed.</Note>
+      )}
+      {approvalOutcome === "not-posted" && verifyingApproval && (
+        <ErrorNote>
+          Approved, but no reply is on Google yet, so Paperclip did not post it. The approval says why.{" "}
+          {companyPrefix && (
+            <a href={`/${companyPrefix}/approvals/${verifyingApproval.id}`} style={{ color: "inherit" }}>
+              Open the approval
+            </a>
+          )}
+        </ErrorNote>
+      )}
+
       {state.stage === "posted" && state.receipt ? (
         <Receipt receipt={state.receipt} companyPrefix={companyPrefix} onClose={onClose} showClose={showClose} />
+      ) : skipped ? (
+        <SkippedPanel
+          skippedAt={review.skippedAt ?? null}
+          canUndo={data.canPostFromHere}
+          working={skipStage === "working"}
+          error={skipError}
+          onUndo={unskip}
+        />
       ) : (
         <>
           <div style={{ fontSize: 13, fontWeight: 600 }}>{data.postsAs}</div>
+
+          {!inPanel && offerApprovals && approvals.length > 0 && (
+            <ApprovalPanel
+              approvals={approvals}
+              canApprove={showPost}
+              cannotApproveReason={noPostReason}
+              busyId={approvalBusy}
+              error={approvalError}
+              companyPrefix={companyPrefix}
+              textInBox={state.text.trim()}
+              onApprove={approve}
+              onEdit={(a) => setText(a.replyText)}
+              onReject={reject}
+            />
+          )}
+          {!inPanel && offerApprovals && approvalsError && (
+            <p style={{ ...mutedText, margin: 0 }}>
+              Could not check for a reply waiting for approval ({approvalsError}). The approvals list still has any there are.
+            </p>
+          )}
 
           {!inPanel && (
             <div style={{ display: "grid", gap: 8 }}>
@@ -265,6 +469,22 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
             </div>
           )}
 
+          {!inPanel && showSkip && (
+            <SkipControl
+              stage={skipStage}
+              error={skipError}
+              onAsk={() => {
+                setSkipError(null);
+                setSkipStage("confirming");
+              }}
+              onCancel={() => {
+                setSkipError(null);
+                setSkipStage("idle");
+              }}
+              onConfirm={skip}
+            />
+          )}
+
           {inPanel && (
             <ConfirmPanel
               state={state}
@@ -277,6 +497,186 @@ export function ReviewEditor({ companyId, companyPrefix, reviewName, onPosted, o
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * A reply an agent drafted, waiting for approval, shown on the review it is
+ * for. Approve does exactly what the approvals list's Approve does: the
+ * drafted reply is posted, through the same guard as every other post.
+ * Edit first puts the words in the box below, and posting from there turns
+ * the approval down so it cannot post a second, older version later.
+ */
+function ApprovalPanel({
+  approvals,
+  canApprove,
+  cannotApproveReason,
+  busyId,
+  error,
+  companyPrefix,
+  textInBox,
+  onApprove,
+  onEdit,
+  onReject,
+}: {
+  approvals: PendingReplyApproval[];
+  canApprove: boolean;
+  cannotApproveReason: string | null;
+  busyId: string | null;
+  error: string | null;
+  companyPrefix: string | null;
+  textInBox: string;
+  onApprove: (approval: PendingReplyApproval) => void;
+  onEdit: (approval: PendingReplyApproval) => void;
+  onReject: (approval: PendingReplyApproval) => void;
+}) {
+  return (
+    <div style={approvalStyle}>
+      <div style={{ fontSize: 14, fontWeight: 600 }}>
+        {approvals.length === 1 ? "A reply is waiting for your approval" : `${approvals.length} replies are waiting for your approval`}
+      </div>
+      {approvals.map((approval) => {
+        const busy = busyId === approval.approvalId;
+        const anyBusy = busyId !== null;
+        const inBox = textInBox === approval.replyText;
+        return (
+          <div key={approval.approvalId} style={{ display: "grid", gap: 8 }}>
+            <div style={mutedText}>
+              {approvalByline(approval.createdAt, null)}
+              {companyPrefix && (
+                <>
+                  {" "}
+                  <a href={`/${companyPrefix}/approvals/${approval.approvalId}`} style={{ color: "inherit" }}>
+                    Open the approval
+                  </a>
+                </>
+              )}
+            </div>
+            <p style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 13 }}>{approval.replyText}</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {canApprove && (
+                <button
+                  type="button"
+                  onClick={() => onApprove(approval)}
+                  disabled={anyBusy}
+                  style={disabledStyle(primaryButton, anyBusy)}
+                  title="Posts this reply to Google now, as written. Anyone can read it there."
+                >
+                  {busy ? "Working..." : "Approve and post to Google"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onEdit(approval)}
+                disabled={anyBusy || inBox}
+                style={disabledStyle(secondaryButton, anyBusy || inBox)}
+                title="Puts this reply in the box below to change before posting."
+              >
+                {inBox ? "In the reply box" : "Edit first"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onReject(approval)}
+                disabled={anyBusy}
+                style={disabledStyle(secondaryButton, anyBusy)}
+                title="Turns this reply down. Nothing is posted, and the review still needs a reply."
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      {!canApprove && cannotApproveReason && <p style={{ ...mutedText, margin: 0 }}>{cannotApproveReason}</p>}
+      {error && <ErrorNote>{error}</ErrorNote>}
+    </div>
+  );
+}
+
+/**
+ * "Don't reply", set apart from the reply buttons and in the danger colour,
+ * because it is a decision not to answer a customer rather than a way of
+ * answering one. Pressing it asks first.
+ */
+function SkipControl({
+  stage,
+  error,
+  onAsk,
+  onCancel,
+  onConfirm,
+}: {
+  stage: "idle" | "confirming" | "working";
+  error: string | null;
+  onAsk: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (stage === "idle") {
+    return (
+      <div style={skipRow}>
+        <span style={mutedText}>Better left unanswered, for example because a reply this late would do more harm than good?</span>
+        <button type="button" onClick={onAsk} style={dangerOutlineButton}>
+          Don't reply
+        </button>
+      </div>
+    );
+  }
+  const working = stage === "working";
+  return (
+    <div style={skipPanelStyle}>
+      <div style={{ fontSize: 15, fontWeight: 600 }}>Are you sure you don't want to reply to this review?</div>
+      <p style={{ margin: 0, fontSize: 13 }}>
+        It moves to Not replying and its task is closed. Agents will not reply to it, and any reply waiting for approval
+        is turned down. Nothing is sent to Google, and you can undo this with Reply after all. If the customer edits
+        their review, it comes back to Needs a reply by itself.
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" onClick={onConfirm} disabled={working} style={disabledStyle(dangerButton, working)}>
+          {working ? "Saving..." : "Yes, don't reply"}
+        </button>
+        <button type="button" onClick={onCancel} disabled={working} style={disabledStyle(secondaryButton, working)}>
+          Cancel
+        </button>
+      </div>
+      {error && <ErrorNote>{error}</ErrorNote>}
+    </div>
+  );
+}
+
+/** Where the reply box would be, for a review somebody chose not to answer. */
+function SkippedPanel({
+  skippedAt,
+  canUndo,
+  working,
+  error,
+  onUndo,
+}: {
+  skippedAt: string | null;
+  canUndo: boolean;
+  working: boolean;
+  error: string | null;
+  onUndo: () => void;
+}) {
+  return (
+    <div style={{ ...quoteStyle, display: "grid", gap: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>
+        Not replying{skippedAt ? `, decided ${formatTime(skippedAt)}` : ""}.
+      </div>
+      <p style={{ margin: 0, fontSize: 13 }}>
+        Someone chose not to reply to this review. It is not counted as needing a reply, its task is closed, and agents
+        will not reply to it.
+      </p>
+      {canUndo ? (
+        <div>
+          <button type="button" onClick={onUndo} disabled={working} style={disabledStyle(secondaryButton, working)}>
+            {working ? "Saving..." : "Reply after all"}
+          </button>
+        </div>
+      ) : (
+        <p style={{ ...mutedText, margin: 0 }}>Open this location's own company to change this.</p>
+      )}
+      {error && <ErrorNote>{error}</ErrorNote>}
     </div>
   );
 }
@@ -466,6 +866,34 @@ const quoteStyle: CSSProperties = {
   borderLeft: "3px solid var(--border, #e5e7eb)",
   background: css.background,
   borderRadius: 4,
+};
+
+const approvalStyle: CSSProperties = {
+  display: "grid",
+  gap: 10,
+  padding: "12px 14px",
+  borderLeft: "3px solid var(--primary, #111827)",
+  background: "color-mix(in oklab, var(--primary, #111827) 8%, var(--background, #ffffff))",
+  borderRadius: 4,
+};
+
+const skipRow: CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 12,
+  flexWrap: "wrap",
+  paddingTop: 12,
+  borderTop: css.border,
+};
+
+const skipPanelStyle: CSSProperties = {
+  display: "grid",
+  gap: 12,
+  padding: 16,
+  border: "1px solid color-mix(in oklab, var(--destructive, #b91c1c) 45%, transparent)",
+  borderRadius: 8,
+  background: "color-mix(in oklab, var(--destructive, #b91c1c) 6%, var(--background, #ffffff))",
 };
 
 const panelStyle: CSSProperties = {

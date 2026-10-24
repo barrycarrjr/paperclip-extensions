@@ -277,7 +277,7 @@ test("review-list refuses another company's location with one message", async ()
 
 test("review-list returns the location, the account label, the sync time and the reviews", async () => {
   const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
-    rows: [{ match: "ORDER BY (reply_text IS NULL)", rows: [STORED_ROW] }],
+    rows: [{ match: "ORDER BY (reply_text IS NULL AND skipped_at IS NULL)", rows: [STORED_ROW] }],
   });
   // The sync time is the one the sync recorded, not the newest row change.
   await harness.ctx.state.set({ scopeKind: "instance", stateKey: `last-sync:${MAIN_ST.key}` }, "2026-09-06T06:00:00.000Z");
@@ -710,7 +710,7 @@ test("a location moved to another company has its rows re-filed by one sync, so 
   // And that pair is exactly what every read is constrained on, so the new
   // company sees the review from here on.
   await harness.getData("review-list", scoped(COMPANY_B, { locationKey: moved.key }));
-  const listRead = harness.dbQueries.find((q) => q.sql.includes("ORDER BY (reply_text IS NULL)"));
+  const listRead = harness.dbQueries.find((q) => q.sql.includes("ORDER BY (reply_text IS NULL AND skipped_at IS NULL)"));
   assert.deepEqual(listRead?.params, [moved.key, COMPANY_B]);
 });
 
@@ -1045,4 +1045,155 @@ test("a task that is not a review, and one that only arrived by email, each say 
   assert.equal(emailOnly.reviewName, null);
   assert.match(String(emailOnly.reason), /came in by email/);
   assert.match(String(emailOnly.reason), /Sync now/);
+});
+
+// ── Don't reply, and reply after all ───────────────────────────────────────
+
+/** The read every page handler uses to find one review under its location. */
+const FIND_REVIEW = "WHERE review_name = $1 AND location_key = $2 AND company_id = $3";
+
+function seedReviewTask(harness: TestHarness, status: string) {
+  harness.seed({
+    issues: [{ id: "issue-1", companyId: COMPANY_A, title: "Review", status }] as unknown as Parameters<TestHarness["seed"]>[0]["issues"],
+  });
+}
+
+async function taskStatus(harness: TestHarness) {
+  return (await harness.ctx.issues.get("issue-1", COMPANY_A))?.status;
+}
+
+test("review-skip records the decision, cancels the review's task, and never calls Google", async () => {
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: FIND_REVIEW, rows: [STORED_ROW] }],
+  });
+  seedReviewTask(harness, "backlog");
+
+  const result = (await harness.performAction("review-skip", scoped(COMPANY_A, { reviewName: REVIEW_NAME }))) as {
+    skipped: boolean;
+    issueClosed: boolean;
+  };
+  assert.equal(result.skipped, true);
+  assert.equal(result.issueClosed, true);
+  assert.equal(await taskStatus(harness), "cancelled", "a review nobody answered is not counted as done work");
+
+  const write = harness.dbExecutes.find((e) => e.sql.includes("SET skipped_at = now()"));
+  assert.ok(write, "the skip was written");
+  assert.deepEqual(write.params, [REVIEW_NAME, MAIN_ST.key, COMPANY_A, USER]);
+  assert.equal(fetchLog.length, 0, "a skip is a decision in Paperclip, not a call to Google");
+});
+
+test("review-skip is refused from HQ, from another company, and for a review that already has a reply", async () => {
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: FIND_REVIEW, rows: [STORED_ROW] }],
+  });
+  seedHq(harness);
+  await rejectsWith(harness.performAction("review-skip", scoped(HQ, { reviewName: REVIEW_NAME })), "EROLLUP_READ_ONLY");
+  await rejectsWith(harness.performAction("review-skip", scoped(COMPANY_B, { reviewName: REVIEW_NAME })), "ELOCATION_NOT_FOUND");
+  await rejectsWith(harness.performAction("review-skip", scoped(COMPANY_A, { reviewName: "not-a-review" })), "EINVALID_INPUT");
+
+  const replied = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: FIND_REVIEW, rows: [{ ...STORED_ROW, reply_text: "Thanks" }] }],
+  });
+  await rejectsWith(replied.performAction("review-skip", scoped(COMPANY_A, { reviewName: REVIEW_NAME })), "EREPLY_EXISTS");
+  assert.equal(replied.dbExecutes.filter((e) => e.sql.includes("skipped_at")).length, 0);
+  assert.equal(harness.dbExecutes.filter((e) => e.sql.includes("skipped_at")).length, 0);
+});
+
+test("review-unskip clears the decision and puts the cancelled task back", async () => {
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: FIND_REVIEW, rows: [{ ...STORED_ROW, skipped_at: "2026-10-01T00:00:00Z" }] }],
+  });
+  seedReviewTask(harness, "cancelled");
+  const result = (await harness.performAction("review-unskip", scoped(COMPANY_A, { reviewName: REVIEW_NAME }))) as {
+    issueReopened: boolean;
+  };
+  assert.equal(result.issueReopened, true);
+  assert.equal(await taskStatus(harness), "backlog");
+  const write = harness.dbExecutes.find((e) => e.sql.includes("SET skipped_at = NULL"));
+  assert.ok(write);
+  assert.deepEqual(write.params, [REVIEW_NAME, MAIN_ST.key, COMPANY_A]);
+});
+
+// ── agents and a skipped review ────────────────────────────────────────────
+
+const DECISION_READ = "SELECT reply_text, skipped_at FROM";
+
+test("gbp_reply_to_review refuses a review a person chose not to answer, before any Google call", async () => {
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: DECISION_READ, rows: [{ reply_text: null, skipped_at: "2026-10-01T00:00:00Z" }] }],
+  });
+  answerGoogle(googleHolding(LIVE_REVIEW));
+  const result = await harness.executeTool<{ content: string; error?: string }>(
+    "gbp_reply_to_review",
+    { reviewName: REVIEW_NAME, locationKey: MAIN_ST.key, replyText: "Thanks" },
+    AGENT_A,
+  );
+  assert.ok(result.error);
+  assert.match(result.error, /^\[EREVIEW_SKIPPED\]/);
+  assert.doesNotMatch(result.error, LONG_DASHES);
+  assert.equal(fetchLog.length, 0);
+  assert.deepEqual(harness.dbQueries.find((q) => q.sql.includes(DECISION_READ))?.params, [REVIEW_NAME, COMPANY_A]);
+});
+
+test("gbp_list_reviews leaves a skipped review out of the unreplied list and tells the agent why", async () => {
+  const other: GbpReview = { ...LIVE_REVIEW, name: "accounts/111/locations/222/reviews/other", reviewId: "other", reviewer: { displayName: "Sam Shopper", isAnonymous: false } };
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [
+      {
+        match: "reply_text IS NULL AND skipped_at IS NOT NULL",
+        rows: [{ review_name: REVIEW_NAME }],
+      },
+    ],
+  });
+  answerGoogle((method, url) => {
+    if (method === "GET" && url.includes("/locations/222/reviews")) return json({ reviews: [LIVE_REVIEW, other] });
+    throw new Error(`unexpected Google call ${method} ${url}`);
+  });
+  const result = await harness.executeTool<{ content: string; error?: string }>("gbp_list_reviews", { locationKey: MAIN_ST.key }, AGENT_A);
+  assert.equal(result.error, undefined);
+  assert.doesNotMatch(result.content, /Pat Customer/);
+  assert.match(result.content, /Sam Shopper.*❌ unreplied/s);
+  assert.match(result.content, /1 more unreplied review\(s\) are left out because a person chose not to reply/);
+
+  const all = await harness.executeTool<{ content: string }>("gbp_list_reviews", { locationKey: MAIN_ST.key, includeReplied: true }, AGENT_A);
+  assert.match(all.content, /Pat Customer.*not replying/s);
+});
+
+// ── the sync and an edited review ──────────────────────────────────────────
+
+const SYNC_READ = "SELECT review_name, reply_text, reply_source, paperclip_issue_id, review_text";
+
+async function syncWithStored(stored: Record<string, unknown>, live: GbpReview) {
+  const harness = await makeHarness(CONFIG as unknown as Record<string, unknown>, {
+    rows: [{ match: SYNC_READ, rows: [{ review_name: REVIEW_NAME, reply_text: null, reply_source: null, paperclip_issue_id: "issue-1", ...stored }] }],
+  });
+  seedReviewTask(harness, "cancelled");
+  answerGoogle((method, url) => {
+    if (method === "GET" && url.includes("/locations/222/reviews")) return json({ reviews: [live] });
+    throw new Error(`unexpected Google call ${method} ${url}`);
+  });
+  await harness.performAction("review-sync-location", scoped(COMPANY_A, { locationKey: MAIN_ST.key }));
+  const update = harness.dbExecutes.find((e) => e.sql.includes("UPDATE") && e.sql.includes("review_text = $7"));
+  assert.ok(update, "the existing row was updated");
+  return { harness, update };
+}
+
+test("a skipped review the customer then edited needs a reply again, and its task comes back", async () => {
+  const { harness, update } = await syncWithStored(
+    { review_text: "Slow service", star_rating: 2, skipped_at: "2026-10-01T00:00:00Z" },
+    { ...LIVE_REVIEW, comment: "Slow service, but the owner called me and fixed it", starRating: "FOUR" },
+  );
+  assert.equal(update.params?.[6], "Slow service, but the owner called me and fixed it", "the stored words follow Google");
+  assert.equal(update.params?.[7], 4);
+  assert.equal(update.params?.[8], true, "the skip is cleared");
+  assert.equal(await taskStatus(harness), "backlog");
+});
+
+test("a skipped review that did not change stays skipped, and its task stays closed", async () => {
+  const { harness, update } = await syncWithStored(
+    { review_text: "Slow service", star_rating: 2, skipped_at: "2026-10-01T00:00:00Z" },
+    LIVE_REVIEW,
+  );
+  assert.equal(update.params?.[8], false);
+  assert.equal(await taskStatus(harness), "cancelled");
 });

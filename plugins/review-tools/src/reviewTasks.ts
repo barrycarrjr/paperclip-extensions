@@ -82,26 +82,63 @@ export function taskIsSettled(outcome: CloseOutcome): boolean {
 }
 
 /**
- * Close the subtask for a review that now has a reply. Quiet about a task
- * that is already closed or gone: the reply is what matters, and a missing
- * task is not a reason to fail a post that has already been made public.
+ * Close the subtask for a review that now has a reply, or that a person chose
+ * not to answer. Quiet about a task that is already closed or gone: the reply
+ * is what matters, and a missing task is not a reason to fail a post that has
+ * already been made public.
+ *
+ * A skipped review's task is cancelled rather than done, so the board does
+ * not count a review nobody answered as finished work.
  */
 export async function closeReviewIssue(
   ctx: Ctx,
   companyId: string,
   issueId: string | null | undefined,
-  reason: "posted" | "replied-on-google",
+  reason: "posted" | "replied-on-google" | "skipped",
 ): Promise<CloseOutcome> {
   if (!issueId) return "none";
   try {
     const issue = await ctx.issues.get(issueId, companyId);
     if (!issue) return "none";
     if (DONE_STATUSES.has(issue.status)) return "already-closed";
-    await ctx.issues.update(issueId, { status: "done" }, companyId);
+    await ctx.issues.update(issueId, { status: reason === "skipped" ? "cancelled" : "done" }, companyId);
     ctx.logger.info("review-tools: closed a review subtask", { issueId, reason });
     return "closed";
   } catch (err) {
     ctx.logger.warn("review-tools: could not close the review subtask", {
+      issueId,
+      reason,
+      error: (err as Error).message,
+    });
+    return "failed";
+  }
+}
+
+/** What happened to a skipped review's task when the skip was undone. */
+export type ReopenOutcome = "reopened" | "not-cancelled" | "none" | "failed";
+
+/**
+ * Put a skipped review's task back on the list. Only a cancelled task is
+ * reopened: that is what skipping left behind. A task somebody finished or
+ * reopened by hand in the meantime is theirs and is left alone. It goes back
+ * to backlog, the status the sync files review tasks under.
+ */
+export async function reopenReviewIssue(
+  ctx: Ctx,
+  companyId: string,
+  issueId: string | null | undefined,
+  reason: "unskipped" | "review-edited",
+): Promise<ReopenOutcome> {
+  if (!issueId) return "none";
+  try {
+    const issue = await ctx.issues.get(issueId, companyId);
+    if (!issue) return "none";
+    if (issue.status !== "cancelled") return "not-cancelled";
+    await ctx.issues.update(issueId, { status: "backlog" }, companyId);
+    ctx.logger.info("review-tools: reopened a review subtask", { issueId, reason });
+    return "reopened";
+  } catch (err) {
+    ctx.logger.warn("review-tools: could not reopen the review subtask", {
       issueId,
       reason,
       error: (err as Error).message,

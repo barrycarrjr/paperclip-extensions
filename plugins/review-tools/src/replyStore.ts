@@ -68,6 +68,8 @@ export interface ReviewRow {
   reply_source: string | null;
   review_time: string;
   paperclip_issue_id: string | null;
+  /** Only selected by the page reads; see reviewDecisions.ts. */
+  skipped_at?: string | Date | null;
 }
 
 export interface ReplyStore {

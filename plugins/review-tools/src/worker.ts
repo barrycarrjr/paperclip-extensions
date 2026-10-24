@@ -41,7 +41,15 @@ function refuse(code: string, sentence: string): never {
 }
 import { findAccount, getOAuthClient, wrapGbpError } from "./gbpAuth.js";
 import { registerConnectFlow, SCOPE_GMAIL } from "./oauthConnect.js";
-import { closeReviewIssue, ensureParentIssue, taskIsSettled } from "./reviewTasks.js";
+import { closeReviewIssue, ensureParentIssue, reopenReviewIssue, taskIsSettled } from "./reviewTasks.js";
+import {
+  findDecisionState,
+  isSkippedWithoutReply,
+  readSkippedForLocation,
+  reviewWasEdited,
+  skipReview,
+  unskipReview,
+} from "./reviewDecisions.js";
 import {
   googleListingUrl,
   locationLinksStateKey,
@@ -380,8 +388,11 @@ async function syncLocationReviews(
       reply_text: string | null;
       reply_source: string | null;
       paperclip_issue_id: string | null;
+      review_text: string | null;
+      star_rating: number | string | null;
+      skipped_at: unknown;
     }>(
-      `SELECT review_name, reply_text, reply_source, paperclip_issue_id FROM ${ns}.reviews WHERE review_name = $1`,
+      `SELECT review_name, reply_text, reply_source, paperclip_issue_id, review_text, star_rating, skipped_at FROM ${ns}.reviews WHERE review_name = $1`,
       [review.name],
     );
 
@@ -403,8 +414,24 @@ async function syncLocationReviews(
       // its rows filed under the old one, and every read is constrained on
       // the location's current company, so without this the rows are
       // invisible everywhere and one sync cannot bring them back.
+      // The review's own words and stars follow Google too. They used to be
+      // written once, on first sight, so a customer who edited their review
+      // was shown here with what they no longer say.
+      const liveStars = starRatingToNumber(review.starRating);
+      const edited = reviewWasEdited(
+        { reviewText: stored.review_text, starRating: stored.star_rating },
+        { reviewText: review.comment ?? null, starRating: liveStars },
+      );
+      // An edited review that still has no reply is a different review from
+      // the one somebody decided about, so a "don't reply" made about the
+      // old words is undone.
+      const resetDecisions = edited && !review.reviewReply;
       await ctx.db.execute(
-        `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, reply_source = $3, location_key = $4, company_id = $5, updated_at = now() WHERE review_name = $6`,
+        `UPDATE ${ns}.reviews SET reply_text = $1, reply_time = $2, reply_source = $3, location_key = $4, company_id = $5,
+           review_text = $7, star_rating = CASE WHEN $8::integer BETWEEN 1 AND 5 THEN $8::integer ELSE star_rating END,
+           skipped_at = CASE WHEN $9::boolean THEN NULL ELSE skipped_at END,
+           skipped_by_user_id = CASE WHEN $9::boolean THEN NULL ELSE skipped_by_user_id END,
+           updated_at = now() WHERE review_name = $6`,
         [
           review.reviewReply?.comment ?? null,
           review.reviewReply?.updateTime ?? null,
@@ -412,8 +439,17 @@ async function syncLocationReviews(
           location.key,
           location.targetCompanyId,
           review.name,
+          review.comment ?? null,
+          liveStars,
+          resetDecisions,
         ],
       );
+      if (resetDecisions && stored.skipped_at != null) {
+        ctx.logger.info("review-tools: a skipped review was edited by its author, so it needs a reply again", {
+          reviewName: review.name,
+        });
+        await reopenReviewIssue(ctx, location.targetCompanyId, stored.paperclip_issue_id, "review-edited");
+      }
       // A reply written in Google's own console, or posted here and not
       // recorded at the time, is still a reply: its subtask is finished.
       if (!stored.reply_text && review.reviewReply?.comment && stored.paperclip_issue_id) {
@@ -526,6 +562,11 @@ async function requirePageScope(
 }
 
 const LOCATION_NOT_VISIBLE = "That location is not one this company can see.";
+
+/** What an agent is told about a review a person chose not to answer. */
+const SKIPPED_FOR_AGENT =
+  "[EREVIEW_SKIPPED] A person chose not to reply to this review. Do not reply to it, draft a reply for it, or escalate it again.";
+
 
 // ─── plugin definition ───────────────────────────────────────────────────────
 
@@ -705,16 +746,18 @@ const plugin = definePlugin({
           review_text: string;
           reply_text: string | null;
           review_time: string;
+          skipped_at: unknown;
         }>(
           // Constrained on the location's own company as well, the same
           // line of defence the page reads use.
-          `SELECT reviewer_name, star_rating, review_text, reply_text, review_time FROM ${ns}.reviews WHERE location_key = $1 AND company_id = $2 AND review_time > $3 ORDER BY review_time DESC`,
+          `SELECT reviewer_name, star_rating, review_text, reply_text, review_time, skipped_at FROM ${ns}.reviews WHERE location_key = $1 AND company_id = $2 AND review_time > $3 ORDER BY review_time DESC`,
           [location.key, location.targetCompanyId, sevenDaysAgo],
         );
 
         if (newReviews.length === 0) continue;
 
-        const unreplied = newReviews.filter((r) => !r.reply_text);
+        // A review a person chose not to answer is not waiting on anyone.
+        const unreplied = newReviews.filter((r) => !r.reply_text && r.skipped_at == null);
         const avgRating = newReviews.reduce((s, r) => s + Number(r.star_rating), 0) / newReviews.length;
 
         const lines: string[] = [
@@ -784,22 +827,46 @@ const plugin = definePlugin({
             isCallerPortfolioRoot ? { skipCompanyCheck: true } : undefined,
           );
           const response = await listReviews(oauth2, location.googleAccountId, location.locationId);
-          const reviews = (response.reviews ?? []).filter((r) => includeReplied || !r.reviewReply);
+          // What people and agents decided here, which Google knows nothing
+          // about. Read best effort: if it fails, the reply tool still
+          // refuses a skipped review on its own.
+          const skippedNames = await readSkippedForLocation(ctx.db, location).catch((err: Error) => {
+            ctx.logger.warn("review-tools: could not read skipped reviews for the list tool", {
+              locationKey,
+              error: err.message,
+            });
+            return new Set<string>();
+          });
+          const isSkippedHere = (r: GbpReview) => !r.reviewReply && skippedNames.has(r.name);
+          // A review a person chose not to answer is not outstanding work, so
+          // it leaves the unreplied list. It is still shown, and labelled,
+          // when replied reviews are asked for too.
+          const all = response.reviews ?? [];
+          const reviews = all.filter((r) => includeReplied || (!r.reviewReply && !isSkippedHere(r)));
+          const skippedLeftOut = includeReplied ? 0 : all.filter(isSkippedHere).length;
+          const skippedNote =
+            skippedLeftOut > 0
+              ? `\n\n${skippedLeftOut} more unreplied review(s) are left out because a person chose not to reply to them. Do not reply to those.`
+              : "";
 
           if (reviews.length === 0) {
-            return { content: `No ${includeReplied ? "" : "unreplied "}reviews found for ${location.displayName}.` };
+            return { content: `No ${includeReplied ? "" : "unreplied "}reviews found for ${location.displayName}.${skippedNote}` };
           }
 
           const lines = reviews.map((r) => {
             const stars = starRatingToEmoji(r.starRating);
             const reviewer = r.reviewer.isAnonymous ? "Anonymous" : r.reviewer.displayName;
             const text = r.comment ? `"${r.comment.slice(0, 120)}${r.comment.length > 120 ? "..." : ""}"` : "(no text)";
-            const replied = r.reviewReply ? " ✅ replied" : " ❌ unreplied";
-            return `- **${reviewer}** ${stars}${replied}\n  ${text}\n  _review name: ${r.name}_`;
+            const status = r.reviewReply
+              ? " ✅ replied"
+              : isSkippedHere(r)
+                ? " ⏭ not replying (a person decided; do not reply)"
+                : " ❌ unreplied";
+            return `- **${reviewer}** ${stars}${status}\n  ${text}\n  _review name: ${r.name}_`;
           });
 
           return {
-            content: `**${location.displayName}: ${reviews.length} review(s)**\n\n${lines.join("\n\n")}`,
+            content: `**${location.displayName}: ${reviews.length} review(s)**\n\n${lines.join("\n\n")}${skippedNote}`,
             data: { reviews, locationKey, totalCount: response.totalReviewCount },
           };
         } catch (err) {
@@ -867,6 +934,21 @@ const plugin = definePlugin({
         void locationKey;
         const parsed = parseReviewName(reviewName);
         const idempotencyKey = `run:${runCtx.runId || randomUUID()}:${parsed?.reviewId ?? String(reviewName)}`;
+
+        // A person chose not to answer this review. An agent posting anyway
+        // would undo that decision in public, where it cannot be taken back.
+        // Read before the guard so the refusal costs no Google call. A failed
+        // read refuses too: this is the one check standing between the
+        // decision and a public post.
+        if (parsed) {
+          let decision: Awaited<ReturnType<typeof findDecisionState>>;
+          try {
+            decision = await findDecisionState(ctx.db, canonicalReviewName(parsed), runCtx.companyId);
+          } catch (err) {
+            return fail(`[EDB] Could not check whether a person chose not to reply to this review, so nothing was posted. ${(err as Error).message}`);
+          }
+          if (isSkippedWithoutReply(decision)) return fail(SKIPPED_FOR_AGENT);
+        }
 
         try {
           const receipt = await postReplyGuarded(
@@ -970,7 +1052,7 @@ const plugin = definePlugin({
         isPortfolioRoot,
         locations: config.locations ?? [],
       });
-      const summaries: Array<{ locationKey: string; locationName: string; unreplied: number; avgRating: number | null; totalReviews: number }> = [];
+      const summaries: Array<{ locationKey: string; locationName: string; unreplied: number; skipped: number; avgRating: number | null; totalReviews: number }> = [];
 
       for (const location of scoped.locations) {
         // Read with the location's OWN company id, so a row filed under the
@@ -981,6 +1063,7 @@ const plugin = definePlugin({
           locationKey: location.key,
           locationName: location.displayName,
           unreplied: s.unreplied,
+          skipped: s.skipped,
           avgRating: s.avgRating,
           totalReviews: s.total,
         });
@@ -1179,6 +1262,46 @@ const plugin = definePlugin({
       // open, close it yourself" even after the task had just been closed.
       const outcome = await closeReviewIssue(ctx, scope.companyId, receipt.issueId, "posted");
       return { ...receipt, issueClosed: taskIsSettled(outcome) };
+    });
+
+    // -- Actions: don't reply, and reply after all ------------------------------
+    //
+    // Nothing here touches Google: a skip is a decision recorded in Paperclip.
+    // Both are allowed only from the location's own company, like posting,
+    // because the task they close or reopen lives there.
+    async function resolveDecisionTarget(params: Record<string, unknown>) {
+      const { scope, isPortfolioRoot } = await requirePageScope(ctx, params);
+      if (isPortfolioRoot) refuse("EROLLUP_READ_ONLY", "Open this location's own company to change this review.");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const parsed = parseReviewName(params.reviewName);
+      if (!parsed) refuse("EINVALID_INPUT", "That is not a Google review this plugin can show.");
+      const resolved = resolveScopedLocationForReview(config, scope, isPortfolioRoot, parsed);
+      if (!resolved || !resolved.canPostFromHere) refuse("ELOCATION_NOT_FOUND", LOCATION_NOT_VISIBLE);
+      const review = await findReviewForLocation(ctx.db, canonicalReviewName(parsed), resolved.location);
+      if (!review) {
+        refuse("EREVIEW_NOT_FOUND", "That review is not in Paperclip yet. Press Sync now on its location, then open it again.");
+      }
+      return { scope, location: resolved.location, review };
+    }
+
+    ctx.actions.register("review-skip", async (params) => {
+      const { scope, location, review } = await resolveDecisionTarget(params);
+      if (review.replyText) refuse("EREPLY_EXISTS", "This review already has a reply, so there is nothing to skip.");
+      // Already skipped (a second tab, a double click) is the same outcome,
+      // so it is reported as done rather than as an error.
+      const changed = await skipReview(ctx.db, review.reviewName, location, scope.userId ?? null);
+      const outcome = await closeReviewIssue(ctx, location.targetCompanyId, review.issueId, "skipped");
+      ctx.logger.info("review-tools: a review was set to not reply", { reviewName: review.reviewName, changed });
+      return { skipped: true, alreadySkipped: !changed, issueId: review.issueId, issueClosed: taskIsSettled(outcome) };
+    });
+
+    ctx.actions.register("review-unskip", async (params) => {
+      const { location, review } = await resolveDecisionTarget(params);
+      const changed = await unskipReview(ctx.db, review.reviewName, location);
+      const outcome = changed
+        ? await reopenReviewIssue(ctx, location.targetCompanyId, review.issueId, "unskipped")
+        : "none";
+      return { skipped: false, issueReopened: outcome === "reopened" };
     });
 
     // ── Action: pull one location's reviews in now ───────────────────────────

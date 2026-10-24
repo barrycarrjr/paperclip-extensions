@@ -12,6 +12,7 @@ import {
   findPendingAttempt,
   findReviewForLocation,
   listReviewsForLocation,
+  parseReviewFilter,
   resolveScopedLocation,
   resolveScopedLocationForReview,
   summaryForLocation,
@@ -139,7 +140,8 @@ test("the list reads the location key and the location's OWN company id, not the
   assert.deepEqual(call.params, [BETA_HQ.key, COMPANY_B]);
   const sql = normalise(call.sql);
   assert.match(sql, /WHERE location_key = \$1 AND company_id = \$2/);
-  assert.match(sql, /ORDER BY \(reply_text IS NULL\) DESC, review_time DESC/);
+  // The ones still waiting for a reply come first; a skipped review is not waiting.
+  assert.match(sql, /ORDER BY \(reply_text IS NULL AND skipped_at IS NULL\) DESC, review_time DESC/);
   assert.match(sql, /LIMIT 200$/);
   assert.match(sql, /FROM plugin_test\.reviews/);
 });
@@ -172,8 +174,44 @@ test("the list maps rows to the page's shape", async () => {
       replySource: null,
       reviewTime: row.review_time,
       issueId: "issue-1",
+      skippedAt: null,
     },
   ]);
+});
+
+test("each filter asks for its own rows, and a skipped review is neither waiting nor replied", async () => {
+  const db = new RecordingDb();
+  const clauses: Record<string, RegExp> = {
+    unreplied: /AND reply_text IS NULL AND skipped_at IS NULL ORDER/,
+    replied: /AND reply_text IS NOT NULL ORDER/,
+    skipped: /AND reply_text IS NULL AND skipped_at IS NOT NULL ORDER/,
+    all: /company_id = \$2 ORDER/,
+  };
+  for (const [filter, clause] of Object.entries(clauses)) {
+    db.calls.length = 0;
+    await listReviewsForLocation(db, MAIN_ST, parseReviewFilter(filter));
+    assert.match(normalise(db.calls[0]!.sql), clause, filter);
+  }
+  assert.equal(parseReviewFilter("skipped"), "skipped");
+  assert.equal(parseReviewFilter("nonsense"), "unreplied");
+});
+
+test("a skip reaches the page's shape as an ISO time", () => {
+  const item = toReviewListItem({
+    review_name: "accounts/111/locations/222/reviews/abc",
+    location_key: MAIN_ST.key,
+    company_id: COMPANY_A,
+    reviewer_name: "Pat",
+    star_rating: 2,
+    review_text: "Slow",
+    reply_text: null,
+    reply_time: null,
+    reply_source: null,
+    review_time: "2026-09-01T10:00:00Z",
+    paperclip_issue_id: null,
+    skipped_at: new Date("2026-10-01T12:00:00Z"),
+  });
+  assert.equal(item.skippedAt, "2026-10-01T12:00:00.000Z");
 });
 
 test("toReviewListItem turns a text rating into a number and fills absent columns with null", () => {
@@ -208,14 +246,16 @@ test("one review is read by name AND location AND the location's company", async
 test("the summary is constrained on the location's own company and returns numbers", async () => {
   const db = new RecordingDb();
   // Postgres hands COUNT back as text; the page adds these up.
-  db.rows = [{ unreplied: "2", avg_rating: "4.5000", total: "7" }];
+  db.rows = [{ unreplied: "2", skipped: "1", avg_rating: "4.5000", total: "7" }];
   const summary = await summaryForLocation(db, BETA_HQ);
-  assert.deepEqual(summary, { unreplied: 2, avgRating: 4.5, total: 7 });
+  assert.deepEqual(summary, { unreplied: 2, skipped: 1, avgRating: 4.5, total: 7 });
+  // A skipped review is not counted as waiting for a reply.
+  assert.match(normalise(db.calls[0]!.sql), /COUNT\(CASE WHEN reply_text IS NULL AND skipped_at IS NULL THEN 1 END\) AS unreplied/);
   assert.deepEqual(db.calls[0]!.params, [BETA_HQ.key, COMPANY_B]);
   assert.match(normalise(db.calls[0]!.sql), /WHERE location_key = \$1 AND company_id = \$2/);
 
   db.rows = [];
-  assert.deepEqual(await summaryForLocation(db, MAIN_ST), { unreplied: 0, avgRating: null, total: 0 });
+  assert.deepEqual(await summaryForLocation(db, MAIN_ST), { unreplied: 0, skipped: 0, avgRating: null, total: 0 });
 });
 
 test("the pending attempt is a posting row inside the stale window, or null", async () => {
