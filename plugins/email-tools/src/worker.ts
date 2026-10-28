@@ -46,6 +46,17 @@ import {
 } from "./imap.js";
 import { mergeSearchResults, planFolderScope, type SearchHit } from "./search-scope.js";
 import {
+  SNOOZE_FOLDER,
+  deleteSnooze,
+  dueSnoozes,
+  getSnooze,
+  listSnoozes,
+  recordSnooze,
+  recordWakeFailure,
+  resolveWakeAt,
+  type SnoozeRow,
+} from "./snooze.js";
+import {
   nonBlank,
   resolveOwnAddress,
   resolveSmtpFrom,
@@ -1481,6 +1492,156 @@ const plugin = definePlugin({
     ctx.jobs.register("poll-mailboxes", async () => {
       const config = (await ctx.config.get()) as InstanceConfig;
       await runPoll(ctx, config);
+      // Wake snoozed mail after the poll, so a message returned this minute is
+      // seen as ordinary new mail by the next poll rather than racing this one.
+      await wakeDueSnoozes(config);
+    });
+
+    // Return one snoozed message to its folder, unread. Finds it by the UID
+    // recorded at snooze time, checked against the Message-ID, and falls back
+    // to a Message-ID search of the snooze folder if the server renumbered it.
+    // A message that is no longer in the snooze folder (the operator moved or
+    // deleted it in another mail program) is treated as already handled.
+    async function wakeSnooze(row: SnoozeRow, cfg: ConfigMailbox): Promise<"woken" | "gone"> {
+      const rt = await buildMailboxRuntime(ctx, cfg, row.mailbox_key);
+      return actionPool.run(rt, async (conn) => {
+        let uid: number | null = null;
+        const candidates = await fetchHeaders(conn, row.snooze_folder, [row.snooze_uid]).catch(() => []);
+        const direct = candidates[0];
+        if (direct && (!row.message_id || direct.messageId === row.message_id)) {
+          uid = direct.uid;
+        } else if (row.message_id) {
+          const all = await searchMessages(conn, { folder: row.snooze_folder }).catch(() => [] as number[]);
+          const headers = await fetchHeaders(conn, row.snooze_folder, all);
+          uid = headers.find((h) => h.messageId === row.message_id)?.uid ?? null;
+        }
+        if (uid === null) return "gone" as const;
+        const moved = await moveMessages(conn, row.snooze_folder, [uid], row.folder);
+        // Mark unread in the destination so it reads as new mail again.
+        const newUid = moved.uidMap.get(uid);
+        if (newUid !== undefined) await setSeenFlag(conn, row.folder, [newUid], false);
+        return "woken" as const;
+      });
+    }
+
+    async function wakeDueSnoozes(config: InstanceConfig): Promise<void> {
+      let due: SnoozeRow[];
+      try {
+        due = await dueSnoozes(ctx.db);
+      } catch (err) {
+        ctx.logger.warn("email-tools: could not read due snoozes", { error: (err as Error).message });
+        return;
+      }
+      for (const row of due) {
+        const cfg = findConfigMailbox(config, row.mailbox_key);
+        try {
+          if (!cfg) throw new Error(`Mailbox "${row.mailbox_key}" is no longer configured`);
+          await wakeSnooze(row, cfg);
+          await deleteSnooze(ctx.db, row.id);
+        } catch (err) {
+          const msg = (err as Error).message ?? String(err);
+          ctx.logger.warn("email-tools: could not wake a snoozed message", {
+            mailbox: row.mailbox_key,
+            error: msg,
+          });
+          await recordWakeFailure(ctx.db, row.id, msg).catch(() => undefined);
+        }
+      }
+    }
+
+    // Hide a message until a chosen time. Moves it to the snooze folder and
+    // records when to bring it back (see snooze.ts).
+    ctx.actions.register("email.snooze-message", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      const uid = typeof params.uid === "number" ? params.uid : null;
+      if (!companyId || !mailboxKey || uid === null) {
+        throw new Error("companyId, mailbox, and uid are required");
+      }
+      const wakeAt = resolveWakeAt({ until: params.until, minutes: params.minutes });
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.snooze-message",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      if (cfg.disallowMove) {
+        throw new Error(`[EMOVE_DISALLOWED] Moving messages is disabled for mailbox "${mailboxKey}"`);
+      }
+      const rt = await buildMailboxRuntime(ctx, cfg, mailboxKey);
+      const folder = typeof params.folder === "string" ? params.folder : (cfg.pollFolder ?? "INBOX");
+      return actionPool.run(rt, async (conn) => {
+        const [header] = await fetchHeaders(conn, folder, [uid]);
+        // Read first, as the other move actions do, so a triage run does not
+        // pick the message up in the instant before it leaves the folder.
+        await setSeenFlag(conn, folder, [uid], true);
+        const moved = await moveMessages(conn, folder, [uid], SNOOZE_FOLDER);
+        const snoozeUid = moved.uidMap.get(uid);
+        if (snoozeUid === undefined) throw new Error("[EMOVE_FAILED] snooze move returned no UID");
+        try {
+          await recordSnooze(ctx.db, {
+            companyId,
+            mailbox: mailboxKey,
+            folder,
+            snoozeUid,
+            messageId: header?.messageId ?? null,
+            subject: header?.subject ?? null,
+            sender: header?.from ?? null,
+            wakeAt,
+          });
+        } catch (err) {
+          // Without the record nothing would bring the message back, so put
+          // it back now rather than strand it in the snooze folder.
+          await moveMessages(conn, SNOOZE_FOLDER, [snoozeUid], folder).catch(() => undefined);
+          throw err;
+        }
+        return { ok: true, wakeAt: wakeAt.toISOString() };
+      });
+    });
+
+    // Bring a snoozed message back now.
+    ctx.actions.register("email.unsnooze-message", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const id = typeof params.id === "string" ? params.id : null;
+      if (!companyId || !id) throw new Error("companyId and id are required");
+      const row = await getSnooze(ctx.db, companyId, id);
+      if (!row) throw new Error("That snooze no longer exists");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, row.mailbox_key);
+      if (!cfg) throw new Error(`Mailbox "${row.mailbox_key}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.unsnooze-message",
+        resourceLabel: `Mailbox "${row.mailbox_key}"`,
+        resourceKey: row.mailbox_key,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      await wakeSnooze(row, cfg);
+      await deleteSnooze(ctx.db, row.id);
+      return { ok: true };
+    });
+
+    // The snoozed messages for a mailbox, soonest first, so the Email view can
+    // show what is hidden and when it returns.
+    ctx.data.register("email.list-snoozes", async (params) => {
+      const companyId = typeof params.companyId === "string" ? params.companyId : null;
+      const mailboxKey = typeof params.mailbox === "string" ? params.mailbox : null;
+      if (!companyId || !mailboxKey) throw new Error("companyId and mailbox are required");
+      const config = (await ctx.config.get()) as InstanceConfig;
+      const cfg = findConfigMailbox(config, mailboxKey);
+      if (!cfg) throw new Error(`Mailbox "${mailboxKey}" not configured`);
+      assertCompanyAccess(ctx, {
+        tool: "email.list-snoozes",
+        resourceLabel: `Mailbox "${mailboxKey}"`,
+        resourceKey: mailboxKey,
+        allowedCompanies: cfg.allowedCompanies,
+        companyId,
+      });
+      return { snoozes: await listSnoozes(ctx.db, companyId, mailboxKey) };
     });
 
     ctx.actions.register("test-mailbox", async (params) => {
