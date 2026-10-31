@@ -56,6 +56,7 @@ Read the changes since the last review with `amazon_list_listing_changes`
 - An issue with severity WARNING appeared or cleared.
 - An issue cleared, or status gained BUYABLE or DISCOVERABLE.
 - A `buyBoxPrice` change while we still hold the Buy Box.
+- `buyBoxHolder` changed to `us` from `other` or `none`, with no seller gained in `otherSellers`.
 
 **Urgent** (alert now). Any of:
 - `status` lost BUYABLE or DISCOVERABLE (suppressed, not buyable, not searchable).

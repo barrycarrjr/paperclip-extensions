@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { watchFixture, ASIN } from "./watchFixtures.js";
 import { COMPANY, OTHER, MARKET, account, CREDS } from "./fixtures.js";
 import { assertRequest } from "./requestGuard.js";
-import { contentSnapshot, diffSnapshots, statusSnapshot } from "./listings.js";
+import { contentSnapshot, diffSnapshots, statusSnapshot, trimItemOffers } from "./listings.js";
 
 test("legacy: allows the new reads",()=>{
   for(const [op,path] of [["searchListingsItems","/listings/2021-08-01/items/SELLEREXAMPLE"],["getCatalogItem",`/catalog/2022-04-01/items/${ASIN}`],["getItemOffers",`/products/pricing/v0/items/${ASIN}/offers`],["searchContentPublishRecords","/aplus/2020-11-01/contentPublishRecords"],["getContentDocument","/aplus/2020-11-01/contentDocuments/K-1"]])assert.doesNotThrow(()=>assertRequest(op,"GET",path));
@@ -35,6 +35,19 @@ test("legacy: rejects malformed ASIN before calling Amazon",async t=>{
 });
 test("legacy: refuses another company including change history",async t=>{
   const f=await watchFixture();t.after(f.close);await f.check();await assert.rejects(f.service.run("list_listings",{},OTHER),/ECOMPANY/);await assert.rejects(f.watch.listChanges({since:"2026-01-01T00:00:00Z"},OTHER,f.deps.now()+50000),/ECOMPANY/);
+});
+test("own seller ID counts as ours when Amazon does not mark the offer",async t=>{
+  const f=await watchFixture();t.after(f.close);f.set({ownUnmarked:true});
+  const out=await f.service.run("get_item_offers",{asin:ASIN},COMPANY) as any;
+  const trimmed=trimItemOffers(out.offers) as any;
+  assert.equal(trimmed.buyBox.holder,"us");assert.equal(trimmed.offers[0].isOurs,true);assert.equal(JSON.stringify(out).includes(CREDS.sellerId),false);
+  await f.check();f.set({ownUnmarked:false});await f.check();assert.deepEqual((await f.changes()).filter(c=>c.field==="buyBoxHolder"),[]);
+});
+test("another seller still counts as other and is named",async t=>{
+  const f=await watchFixture();t.after(f.close);f.set({ours:false});
+  const out=await f.service.run("get_item_offers",{asin:ASIN},COMPANY) as any;
+  const trimmed=trimItemOffers(out.offers) as any;
+  assert.equal(trimmed.buyBox.holder,"other");assert.equal(trimmed.buyBox.sellerId,"EXAMPLEOTHER");
 });
 test("legacy: saves baseline then only actual field changes",async t=>{
   const f=await watchFixture();t.after(f.close);assert.equal((await f.check()).changes,0);f.set({status:[],price:11,ours:false});const second=await f.check();const rows=await f.changes();
