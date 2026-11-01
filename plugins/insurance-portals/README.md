@@ -8,6 +8,11 @@ Carriers: **Foremost**, **Liberty Mutual**, **Selective**.
 
 ## Recent changes
 
+- **v0.6.32**: A long Liberty Mutual run no longer loses policies to buttons that do nothing. On a real run, eleven "View / print" buttons on the first policy produced no PDF and took half of the 15-minute limit, so several policies were never opened and the run still looked complete.
+  - After 3 buttons in a row on a page produce nothing, the rest on that page are listed as missing instead of clicked, and a later visit to the page can still try them.
+  - A background run may now take up to 30 minutes.
+  - A run the clock cuts short is marked `stoppedEarly` in the run record and raises an `ALERT:` line.
+
 - **v0.6.31**: Remove private sample details and include the reviewed cross-platform path and file-permission regression checks.
 
 - **v0.6.30** - Replace a sample street address in a code comment and set the author to "Paperclip contributors". No functional changes.
@@ -207,7 +212,7 @@ Operator actions `start-fetch` / `fetch-status` run the same fetch without an ag
 ## Limits
 
 - Portals change. Sign-in steps were checked against each carrier's current login page. Finding documents after sign-in uses link-text rules and may need tuning per carrier once run against a real account; **Debug screenshots** exist for that.
-- A run started by an agent must finish inside the host's 5-minute tool limit, including the wait for the code email. A run started from the operator action (`start-fetch`) may take up to 15 minutes. Either way, a run cut short carries on next time: documents already saved are skipped.
+- A run started by an agent must finish inside the host's 5-minute tool limit, including the wait for the code email. A run started from the operator action (`start-fetch`) may take up to 30 minutes. A run cut short raises an `ALERT:` line. Documents already saved are skipped on the next run.
 - One run at a time per Paperclip instance.
 
 ## Tests

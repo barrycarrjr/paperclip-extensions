@@ -1,7 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 
 const PLUGIN_ID = "insurance-portals";
-const PLUGIN_VERSION = "0.6.31";
+const PLUGIN_VERSION = "0.6.32";
 
 const SETUP_INSTRUCTIONS = `# Setup — Insurance Portals
 
@@ -307,7 +307,7 @@ const manifest: PaperclipPluginManifestV1 & { setupInstructions?: string } = {
       name: "insurance_start_fetch",
       displayName: "Start an insurance document fetch",
       description:
-        "Start fetching one carrier's policy and declarations PDFs in the background (read-only; same as insurance_fetch_documents) and return a job id at once. A full run takes 5 to 15 minutes; follow it with insurance_fetch_status. Runs for different carriers wait their turn. If a fetch for this carrier is already running for this company, its job id is returned and no second run starts (no second sign-in or login code), so it is safe to call again.",
+        "Start fetching one carrier's policy and declarations PDFs in the background (read-only; same as insurance_fetch_documents) and return a job id at once. A full run takes 5 to 30 minutes; follow it with insurance_fetch_status. Runs for different carriers wait their turn. If a fetch for this carrier is already running for this company, its job id is returned and no second run starts (no second sign-in or login code), so it is safe to call again.",
       executionTimeoutMs: 30_000,
       writes: true,
       parametersSchema: {

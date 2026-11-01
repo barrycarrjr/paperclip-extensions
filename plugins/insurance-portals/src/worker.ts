@@ -107,7 +107,7 @@ const TOOL_BUDGET_MS = 290_000;
  * A run started by the operator in the background is not held to the
  * 5-minute tool limit; an account with many policies needs longer.
  */
-const OPERATOR_BUDGET_MS = 900_000;
+const OPERATOR_BUDGET_MS = 1_800_000;
 /** How long to wait for a code email once the portal has asked for it. */
 const CODE_WAIT_MS = 120_000;
 
@@ -422,6 +422,7 @@ export async function fetchDocuments(
   const health = await noteRun(ctx, companyId, carrierKey, carrier.name, {
     at: new Date().toISOString(),
     outcome: "ok",
+    stoppedEarly: result.stoppedEarly,
     got,
     missed: result.missed,
   });
@@ -548,7 +549,7 @@ const plugin = definePlugin({
         return {
           content: reused
             ? `A ${job.carrier} fetch was already running for this company (job ${job.id}, started ${job.startedAt}). No second run was started. Check it with insurance_fetch_status.`
-            : `Started the ${job.carrier} fetch in the background (job ${job.id}). Check it with insurance_fetch_status; a run takes 5 to 15 minutes.`,
+            : `Started the ${job.carrier} fetch in the background (job ${job.id}). Check it with insurance_fetch_status; a run takes 5 to 30 minutes.`,
           data: { jobId: job.id, status: job.status, reused, carrier: job.carrier, startedAt: job.startedAt },
         };
       },

@@ -36,6 +36,15 @@ test("nothing found twice in a row raises an alert; a run that found only alread
   assert.equal(d.report.alert, null);
 });
 
+test("a run that ran out of time raises an alert and is marked in the record", () => {
+  const a = recordRun(EMPTY_HISTORY, { at: "2026-11-01", outcome: "ok", stoppedEarly: true, got: [ren], missed: [] }, "Fake");
+  assert.match(describeHealth(a.report)[0], /^ALERT: Fake: the run ran out of time/);
+  assert.equal(a.history.runs[0].stoppedEarly, true);
+  const b = recordRun(EMPTY_HISTORY, { at: "2026-11-01", outcome: "ok", got: [ren], missed: [] }, "Fake");
+  assert.equal(b.report.alert, null);
+  assert.equal("stoppedEarly" in b.history.runs[0], false);
+});
+
 test("a failed sign-in is said plainly, and more strongly the second time", () => {
   const a = recordRun(EMPTY_HISTORY, { at: "2026-11-01", outcome: "signin_failed", got: [], missed: [] }, "Fake");
   assert.match(a.report.alert ?? "", /^Fake: sign-in failed\. If the next run fails too/);
