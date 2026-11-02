@@ -412,12 +412,13 @@ export class AmazonService {
         const asin = text(p.asin,10,/^[A-Z0-9]{10}$/);
         const j = await api("getItemOffers",`/products/pricing/v0/items/${asin}/offers`,{MarketplaceId:market(),ItemCondition:"New"});
         if (j.payload?.ASIN !== asin || !Array.isArray(j.payload?.Offers) || !object(j.payload?.Summary).TotalOfferCount && object(j.payload?.Summary).TotalOfferCount !== 0) fail("ERESPONSE");
-        // MyOffer is the useful ownership evidence. Omit our configured seller
-        // ID before projection so expected credential scrubbing does not make
-        // every normal status snapshot appear incomplete.
+        // Amazon can leave MyOffer unset on the seller's own offer, so a match on
+        // the configured seller ID also proves ownership. Omit that ID before
+        // projection so expected credential scrubbing does not make every normal
+        // status snapshot appear incomplete.
         const payload={...j.payload,Offers:j.payload.Offers.map((offer:unknown)=>{
           const row=object(offer);if(row.MyOffer!==true&&row.SellerId!==creds.sellerId)return row;
-          const {SellerId:_ownSeller,...rest}=row;return rest;
+          const {SellerId:_ownSeller,...rest}=row;return {...rest,MyOffer:true};
         })};
         result = {offers:single(payload,shapes.offers)}; break;
       }

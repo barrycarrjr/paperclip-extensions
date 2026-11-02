@@ -6,6 +6,8 @@ Generic, company-scoped Amazon Selling Partner API (SP-API) reads for a seller's
 
 ## Recent changes
 
+- **v0.3.2**: Fix Listing Watch reporting the seller's own offer as another seller on the Buy Box. An offer matching the configured seller ID now counts as ours even when Amazon does not mark it. The first check after upgrading records one `buyBoxHolder` change from `other` to `us` on affected listings.
+
 - **v0.3.1**: Combine protected seller reads, approved report requests and bounded Listing Watch. Follow the upgrade preflight before replacing an existing 0.2.0 installation.
 
 - **v0.3.0** - Consolidates Listing Watch with the company-scoped transport, credential checks, projected outputs, opaque cursors and governed report operation. Adds listing search, offers, company-owned change history and both scheduled checks. Preserves the exact 0.2.0 migration and stored rows. Legacy configuration remains accepted; unowned historical rows stay private and a new baseline starts. The deployed 0.2.0 upgrade has the same nine capabilities and activates immediately; correct configuration before upgrading.
