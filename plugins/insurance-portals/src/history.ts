@@ -7,7 +7,8 @@
  *     The next run reports which ones came through and which are still
  *     missing, with how many runs in a row missed them.
  *   - "Something broke": a sign-in that fails, or two runs in a row that
- *     find nothing, is said plainly so a portal redesign is noticed.
+ *     find nothing, is said plainly so a portal redesign is noticed. So is a
+ *     run the clock cut short, which would otherwise look complete.
  */
 
 export interface DocKey {
@@ -28,6 +29,8 @@ export interface RunRecord {
   outcome: "ok" | "signin_failed" | "error";
   /** Documents found: newly saved plus already saved. */
   found: number;
+  /** The clock cut the run short, so it may not have read everything. */
+  stoppedEarly?: boolean;
 }
 
 export interface CarrierHistory {
@@ -71,11 +74,11 @@ export function asHistory(value: unknown): CarrierHistory {
  */
 export function recordRun(
   prev: CarrierHistory,
-  run: { at: string; outcome: RunRecord["outcome"]; got: DocKey[]; missed: DocKey[] },
+  run: { at: string; outcome: RunRecord["outcome"]; stoppedEarly?: boolean; got: DocKey[]; missed: DocKey[] },
   carrierName: string,
 ): { history: CarrierHistory; report: HealthReport } {
   const found = run.got.length;
-  const runs = [...prev.runs, { at: run.at, outcome: run.outcome, found }].slice(-KEEP_RUNS);
+  const runs = [...prev.runs, { at: run.at, outcome: run.outcome, found, ...(run.stoppedEarly ? { stoppedEarly: true } : {}) }].slice(-KEEP_RUNS);
 
   const recovered: DocKey[] = [];
   const missing: MissingDoc[] = [];
@@ -108,6 +111,8 @@ export function recordRun(
         : `${carrierName}: the run stopped with an error.`;
   } else if (found === 0 && last?.outcome === "ok" && last.found === 0) {
     alert = `${carrierName}: signed in but found no documents on two runs in a row. The site's layout may have changed.`;
+  } else if (run.stoppedEarly) {
+    alert = `${carrierName}: the run ran out of time, so some policies or documents may not have been read. Found ${found}.`;
   }
 
   return {

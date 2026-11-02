@@ -97,6 +97,14 @@ export interface CapturedPdf {
 
 type DocMeta = Omit<CapturedPdf, "bytes" | "sha256">;
 
+/**
+ * Buttons in a row on one page that may produce no PDF before the rest are
+ * left for now. Each can wait 35 seconds; on the real Liberty Mutual account,
+ * eleven on the first policy took half of a 15-minute run. A page read again
+ * gets one more try: if that button works, the rest are tried too.
+ */
+const MAX_DEAD_BUTTONS_IN_A_ROW = 3;
+
 export interface RunResult {
   documents: CapturedPdf[];
   pagesVisited: number;
@@ -109,6 +117,8 @@ export interface RunResult {
   skipped: Array<{ policy: string; title: string; posted: string | null; label: string; existingName: string }>;
   /** Documents listed on a page whose PDF never arrived (the page stayed put). */
   missed: Array<{ policy: string; title: string; posted: string | null }>;
+  /** The clock cut the run short, so some policies or documents may never have been read. */
+  stoppedEarly: boolean;
   notes: string[];
 }
 
@@ -1147,6 +1157,7 @@ async function runCarrierInner(
   collecting = true;
 
   const documents: CapturedPdf[] = [];
+  const deadButtonsInARow = new Map<string, number>();
   const skipped: RunResult["skipped"] = [];
   const missed: RunResult["missed"] = [];
   const identifiers = new Set<string>();
@@ -1281,6 +1292,8 @@ async function runCarrierInner(
     const docs = found.filter((l) => !l.footer && (isDocumentLink(l.text, l.href, l.pdfHint) || datedOnList(l) || namedCard(l)));
     const sameWords = (d: LinkInfo) => docs.filter((o) => o.text === d.text).length;
     const seenHere = new Map<string, number>();
+    const deadKey = `${ctx}|${keyOf(await page.url())}`;
+    let deadInARow = Math.min(deadButtonsInARow.get(deadKey) ?? 0, MAX_DEAD_BUTTONS_IN_A_ROW - 1);
     for (const d of docs) {
       if (documents.length >= opts.maxDocuments || outOfTime()) break;
       // Several buttons can share the same words ("View / print" on every
@@ -1289,7 +1302,8 @@ async function runCarrierInner(
       seenHere.set(d.text, nth);
       const id = `${ctx}|${d.text}|${d.href}|${d.context}|${nth}`;
       if (tried.has(id)) continue;
-      tried.add(id);
+      const pageNotAnswering = deadInARow >= MAX_DEAD_BUTTONS_IN_A_ROW;
+      if (!pageNotAnswering) tried.add(id);
       // The policy the button belongs to: its own words, then its card or
       // row when that names exactly one policy, then the page's.
       const rowPolicies = [...new Set(policyNumbersIn(withoutAccounts(d.docCard || d.context)))];
@@ -1305,6 +1319,13 @@ async function runCarrierInner(
       if (existing) {
         skipped.push({ ...meta, existingName: existing });
         opts.log("document-already-saved");
+        continue;
+      }
+      // Listed as missed, not marked as tried: a later visit to the page can
+      // still try it.
+      if (pageNotAnswering) {
+        missed.push({ policy: meta.policy, title: meta.title, posted: meta.posted });
+        opts.log("document-skipped-page-not-answering");
         continue;
       }
       if (d.href && isSafeNavigationUrl(d.href, carrier.siteDomains)) {
@@ -1357,7 +1378,10 @@ async function runCarrierInner(
       // A PDF that arrived but was a copy of one already kept (Liberty
       // Mutual's "Welcome packet" and "Proof of insurance" can be the same
       // file) is not missing.
-      if (got === 0 && now === before && !arrived()) missed.push({ policy: meta.policy, title: meta.title, posted: meta.posted });
+      const dead = got === 0 && now === before && !arrived();
+      if (dead) missed.push({ policy: meta.policy, title: meta.title, posted: meta.posted });
+      deadInARow = dead ? deadInARow + 1 : 0;
+      deadButtonsInARow.set(deadKey, deadInARow);
       if (now !== before) {
         if (got === 0) enqueue(now, policy);
         await page.goto(before).catch(() => undefined);
@@ -1892,7 +1916,7 @@ async function runCarrierInner(
     );
   }
   if (documents.length >= opts.maxDocuments) notes.push(`Stopped at the limit of ${opts.maxDocuments} documents.`);
-  if (ranOut) notes.push("Stopped early to stay inside the time limit; some documents may be missing. Run again: documents already saved are skipped, so the next run carries on.");
+  if (ranOut) notes.push("Stopped early to stay inside the time limit; some policies or documents may not have been read.");
   if (opts.debugDir) {
     await writeFile(join(opts.debugDir, "blocked-requests.json"), JSON.stringify(blockedPaths, null, 2)).catch(() => undefined);
   }
@@ -1900,7 +1924,7 @@ async function runCarrierInner(
     await writeFile(join(opts.debugDir, "pdf-capture-log.json"), JSON.stringify(captureLog, null, 2)).catch(() => undefined);
     await writeFile(join(opts.debugDir, "nav-log.json"), JSON.stringify(navEvents, null, 2)).catch(() => undefined);
   }
-  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, missed, identifiers: [...identifiers], notes };
+  return { documents, pagesVisited, blockedRequests, blockedPaths, skipped, missed, identifiers: [...identifiers], stoppedEarly: ranOut, notes };
 }
 
 /** `text` with bill and billing account numbers taken out: they are never policy numbers. */

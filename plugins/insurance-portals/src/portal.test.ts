@@ -1621,3 +1621,67 @@ test("a listed document whose PDF never arrives is reported as missed, not silen
     server.close();
   }
 });
+
+const docsPage = (rows: string) =>
+  `<header><a href="/docs">Home</a><a href="/docs">My Policies</a><button>Log out</button></header><main><h1>Policy documents</h1><p>Policy 0000001</p>${rows}</main>`;
+const docRow = (n: number, year: number, works: boolean) =>
+  `<div class="row"><button onclick="new Image().src='/clicked?n=${n}';${works ? "window.open('/pdf/dec.pdf')" : ""}">Declarations 03/30/${year}</button></div>`;
+
+async function runAgainstDocsPage(rows: string, deadlineMs: number) {
+  const clicked: number[] = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://x");
+    const html = (b: string) => {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(page(b));
+    };
+    if (url.pathname === "/login") return html(`<form action="/docs" method="get"><input name="username" autocomplete="username"><input type="password" name="password"><button type="submit">Log in</button></form>`);
+    if (url.pathname === "/docs") return html(docsPage(rows));
+    if (url.pathname === "/clicked") {
+      clicked.push(Number(url.searchParams.get("n")));
+      return res.writeHead(204).end();
+    }
+    if (url.pathname === "/pdf/dec.pdf") {
+      res.writeHead(200, { "content-type": "application/pdf" });
+      return res.end(pdf("dec"));
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  const browser = await Browser.launch({ executablePath: chrome!, headless: true });
+  try {
+    const result = await runCarrier(
+      browser,
+      { key: "foremost", name: "Fake", loginUrl: `http://127.0.0.1:${port}/login`, siteDomains: ["127.0.0.1"], senderDomains: [] },
+      { username: "u", password: "p", getCode: async () => "0000", deadline: Date.now() + deadlineMs, maxDocuments: 20, debugDir: null, log: () => undefined },
+    );
+    return { result, clicked };
+  } finally {
+    await browser.close();
+    server.close();
+  }
+}
+
+test("after 3 dead buttons in a row the rest are listed as missed, not clicked; a working button resets the count", { skip: !chrome, timeout: 240_000 }, async () => {
+  const rows = [docRow(1, 2010, false), docRow(2, 2011, false), docRow(3, 2012, true), docRow(4, 2013, false), docRow(5, 2014, false), docRow(6, 2015, false), docRow(7, 2016, false), docRow(8, 2017, true)].join("");
+  const { result, clicked } = await runAgainstDocsPage(rows, 220_000);
+  assert.deepEqual(clicked.slice(0, 6), [1, 2, 3, 4, 5, 6]);
+  assert.ok(result.missed.some((m) => m.posted === "2017-03-30"), "a button not clicked on the first read is still listed");
+  assert.equal(result.stoppedEarly, false);
+});
+
+test("a page of nothing but dead buttons costs far fewer clicks than it has buttons", { skip: !chrome, timeout: 240_000 }, async () => {
+  const rows = Array.from({ length: 12 }, (_, i) => docRow(i, 2010 + i, false)).join("");
+  const { result, clicked } = await runAgainstDocsPage(rows, 220_000);
+  assert.ok(clicked.length <= 6, `clicked ${clicked.length} of 12`);
+  assert.equal(new Set(result.missed.map((m) => m.posted)).size, 12);
+});
+
+test("a run the clock cuts short says so", { skip: !chrome, timeout: 120_000 }, async () => {
+  const rows = Array.from({ length: 8 }, (_, i) => docRow(i, 2010 + i, i % 2 === 1)).join("");
+  const { result, clicked } = await runAgainstDocsPage(rows, 70_000);
+  assert.equal(result.stoppedEarly, true);
+  assert.ok(clicked.length < 8, `stopped before the last button, clicked ${clicked.length}`);
+  assert.ok(result.notes.some((n) => /Stopped early/.test(n)));
+});
